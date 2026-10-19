@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from stride.data.calendar import (
     is_trading_day,
     next_trading_day,
     previous_trading_day,
+    sessions,
     trading_days,
 )
 
@@ -57,3 +59,20 @@ def test_previous_trading_day_skips_holiday_and_weekend() -> None:
 def test_next_trading_day_skips_holiday_and_weekend() -> None:
     assert next_trading_day(date(2026, 11, 25)) == date(2026, 11, 27)
     assert next_trading_day(date(2026, 12, 24)) == date(2026, 12, 28)
+
+
+def test_sessions_give_utc_open_and_close_including_early_close() -> None:
+    frame = sessions(date(2026, 11, 25), date(2026, 11, 27))
+    assert [d.date() for d in frame.index] == [date(2026, 11, 25), date(2026, 11, 27)]
+    assert frame.loc["2026-11-25", "market_open"] == pd.Timestamp("2026-11-25 14:30", tz="UTC")
+    assert frame.loc["2026-11-25", "market_close"] == pd.Timestamp("2026-11-25 21:00", tz="UTC")
+    assert frame.loc["2026-11-27", "market_close"] == pd.Timestamp("2026-11-27 18:00", tz="UTC")
+
+
+def test_sessions_follow_daylight_saving() -> None:
+    frame = sessions(date(2026, 7, 1), date(2026, 7, 1))
+    assert frame["market_open"].iloc[0] == pd.Timestamp("2026-07-01 13:30", tz="UTC")
+
+
+def test_sessions_with_reversed_range_are_empty() -> None:
+    assert sessions(date(2026, 11, 30), date(2026, 11, 23)).empty

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Any
 
 import numpy as np
@@ -22,15 +22,34 @@ TRADING_DAYS = pd.bdate_range("2024-01-01", "2024-01-31")
 SWITCH = pd.Timestamp("2024-01-11")
 
 
-def _epoch(day: date) -> int:
-    return int(datetime.combine(day, datetime.min.time(), UTC).timestamp())
+STEP = pd.Timedelta(minutes=15)
+
+
+def _candles_for(day: str, *, spike_outside: bool = True) -> dict[pd.Timestamp, list[float]]:
+    """15-minute candles for a whole UTC day; price = minutes since 00:00 UTC.
+
+    With `spike_outside`, extreme candles sit just before the open and just after
+    the close so a correct session filter must ignore them.
+    """
+    start = pd.Timestamp(day, tz="UTC")
+    candles: dict[pd.Timestamp, list[float]] = {}
+    for i in range(96):
+        ts = start + i * STEP
+        price = 100.0 + i
+        # Layout: [time, low, high, open, close, volume]
+        candles[ts] = [ts.timestamp(), price - 0.5, price + 0.5, price, price + 0.25, 1.0]
+    if spike_outside:
+        for ts in candles:
+            if ts.hour in (12, 22):
+                candles[ts] = [ts.timestamp(), 1.0, 10_000.0, 500.0, 500.0, 99.0]
+    return candles
 
 
 class CandleSession:
-    """Serves Coinbase-style candles (newest first) for any requested window."""
+    """Serves Coinbase-style 15-minute candles (newest first) for the requested window."""
 
-    def __init__(self, prices: Mapping[date, float]) -> None:
-        self.prices = prices
+    def __init__(self, candles: dict[pd.Timestamp, list[float]]) -> None:
+        self.candles = candles
         self.calls: list[Mapping[str, str]] = []
 
     def get(
@@ -42,50 +61,99 @@ class CandleSession:
         timeout: float,
     ) -> Any:
         self.calls.append(params)
-        start = datetime.fromisoformat(params["start"]).date()
-        end = datetime.fromisoformat(params["end"]).date()
-        candles = [
-            [_epoch(day), price * 0.99, price * 1.01, price, price, 10.0]
-            for day, price in sorted(self.prices.items(), reverse=True)
-            if start <= day <= end
-        ]
+        start = pd.Timestamp(params["start"])
+        end = pd.Timestamp(params["end"])
+        rows = [row for ts, row in sorted(self.candles.items(), reverse=True) if start <= ts <= end]
 
         class Response:
             status_code = 200
 
             def json(self) -> Any:
-                return candles
+                return rows
 
         return Response()
 
 
-def _daily_prices(start: date, days: int) -> dict[date, float]:
-    return {start + timedelta(days=i): 100.0 + i for i in range(days)}
+def _source(session: CandleSession, sleeps: list[float] | None = None) -> CoinbaseSource:
+    log = sleeps if sleeps is not None else []
+    return CoinbaseSource(session=session, clock=lambda: NOW, sleep=log.append)
 
 
-def test_coinbase_returns_contract_columns_for_every_calendar_day() -> None:
-    session = CandleSession(_daily_prices(date(2024, 1, 1), 10))
-    frame = CoinbaseSource(session=session, clock=lambda: NOW).fetch(
-        "BTC-USD", date(2024, 1, 1), date(2024, 1, 10)
-    )
+def _price_at(ts: str) -> float:
+    stamp = pd.Timestamp(ts, tz="UTC")
+    return 100.0 + (stamp.hour * 60 + stamp.minute) // 15
+
+
+def test_summer_session_bar_runs_from_930_to_1600_new_york() -> None:
+    # 2024-07-01, daylight saving: session is 13:30-20:00 UTC.
+    session = CandleSession(_candles_for("2024-07-01"))
+    frame = _source(session).fetch("BTC-USD", date(2024, 7, 1), date(2024, 7, 1))
     assert tuple(frame.columns) == CONTRACT_COLUMNS
-    assert len(frame) == 10
-    assert frame.index[0] == pd.Timestamp("2024-01-01")
-    assert frame.index.is_monotonic_increasing
-    assert (frame["source"] == "coinbase").all()
-    assert frame["close"].iloc[0] == 100.0
-    assert frame["open"].iloc[0] == 100.0
-    assert frame["low"].iloc[0] == pytest.approx(99.0)
+    bar = frame.iloc[0]
+    assert frame.index[0] == pd.Timestamp("2024-07-01")
+    assert bar["open"] == _price_at("2024-07-01 13:30")
+    assert bar["close"] == _price_at("2024-07-01 19:45") + 0.25  # candle ending 16:00 ET
+    assert bar["high"] == _price_at("2024-07-01 19:45") + 0.5
+    assert bar["low"] == _price_at("2024-07-01 13:30") - 0.5
+    assert bar["volume"] == 26  # 26 quarter-hours in 6.5 hours
+    assert bar["source"] == "coinbase"
 
 
-def test_coinbase_paginates_in_windows_of_300_candles() -> None:
-    session = CandleSession(_daily_prices(date(2023, 1, 1), 700))
-    frame = CoinbaseSource(session=session, clock=lambda: NOW).fetch(
-        "BTC-USD", date(2023, 1, 1), date(2024, 11, 30)
+def test_winter_session_bar_shifts_with_daylight_saving() -> None:
+    # 2024-01-10, standard time: session is 14:30-21:00 UTC.
+    frame = _source(CandleSession(_candles_for("2024-01-10"))).fetch(
+        "BTC-USD", date(2024, 1, 10), date(2024, 1, 10)
     )
-    assert len(session.calls) == 3
-    assert len(frame) == 700
-    assert not frame.index.duplicated().any()
+    assert frame["open"].iloc[0] == _price_at("2024-01-10 14:30")
+    assert frame["close"].iloc[0] == _price_at("2024-01-10 20:45") + 0.25
+
+
+def test_early_close_day_ends_at_1300_new_york() -> None:
+    # Black Friday 2024-11-29 closes at 13:00 ET = 18:00 UTC.
+    frame = _source(CandleSession(_candles_for("2024-11-29"))).fetch(
+        "BTC-USD", date(2024, 11, 29), date(2024, 11, 29)
+    )
+    assert frame["close"].iloc[0] == _price_at("2024-11-29 17:45") + 0.25
+    assert frame["volume"].iloc[0] == 14
+
+
+def test_weekends_and_holidays_have_no_bar() -> None:
+    candles: dict[pd.Timestamp, list[float]] = {}
+    for day in pd.date_range("2024-11-27", "2024-12-02"):
+        candles.update(_candles_for(day.date().isoformat(), spike_outside=False))
+    frame = _source(CandleSession(candles)).fetch("BTC-USD", date(2024, 11, 27), date(2024, 12, 2))
+    assert [d.date() for d in frame.index] == [
+        date(2024, 11, 27),
+        date(2024, 11, 29),
+        date(2024, 12, 2),
+    ]
+
+
+def test_session_without_candles_is_missing() -> None:
+    candles = _candles_for("2024-01-10")
+    frame = _source(CandleSession(candles)).fetch("BTC-USD", date(2024, 1, 10), date(2024, 1, 11))
+    assert [d.date() for d in frame.index] == [date(2024, 1, 10)]
+
+
+def test_requests_stay_within_300_candles_and_are_throttled() -> None:
+    candles: dict[pd.Timestamp, list[float]] = {}
+    for day in pd.date_range("2024-01-01", "2024-01-31"):
+        candles.update(_candles_for(day.date().isoformat(), spike_outside=False))
+    session = CandleSession(candles)
+    sleeps: list[float] = []
+    frame = _source(session, sleeps).fetch("BTC-USD", date(2024, 1, 1), date(2024, 1, 31))
+    assert len(frame) == 21  # NYSE trading days in January 2024
+    for params in session.calls:
+        span = pd.Timestamp(params["end"]) - pd.Timestamp(params["start"])
+        assert span / STEP + 1 <= 300
+        assert params["granularity"] == "900"
+    assert len(sleeps) == len(session.calls) - 1
+
+
+def test_empty_range_returns_empty_contract() -> None:
+    frame = _source(CandleSession({})).fetch("BTC-USD", date(2024, 1, 6), date(2024, 1, 7))
+    assert frame.empty
+    assert tuple(frame.columns) == CONTRACT_COLUMNS
 
 
 def test_spot_products_cover_both_crypto_etfs() -> None:
