@@ -1,0 +1,558 @@
+# STRIDE — Technical Specification
+
+**STRIDE** — *Systematic Trend & Risk-Integrated Daily Execution*
+A systematic trend-following trading system with volatility-based risk management.
+
+- Version: 1.0
+- Date: 2026-10-18
+- Author: Jefferson Abarca
+- Status: Approved for Phase 1 (Foundations)
+
+This document is the single source of truth for the system. If code and spec disagree, the spec wins until it is explicitly changed. Any ambiguity must be raised as a question, never resolved by guessing.
+
+---
+
+## 1. Summary and objective
+
+STRIDE evaluates a portfolio of ETFs once per trading day, using rules taken from sustainable, long-lived traders (the Turtles, Paul Tudor Jones, Ray Dalio, Ed Seykota, Larry Hite). It sends real orders to a broker via API **only when a signal changes**. It is a 12-month live experiment, started with **$100 plus $20 monthly deposits**, built as a technical portfolio project.
+
+**Hypotheses**
+
+- **H1 (primary):** over the 12 live months, STRIDE achieves a net-of-cost Sharpe ratio higher than buy-and-hold SPY and higher than a 60/40 SPY/IEF portfolio.
+- **H2 (no overfitting):** live performance stays within ±2 standard deviations of what the backtest predicts for the same period.
+- **H3 (leverage):** a parallel paper account of $10,000 running the same signals with full Kelly leverage achieves higher compound growth than the real account without triggering the kill switch. If H3 holds, full Kelly may move to real money in a later stage.
+
+**Out of scope:** guaranteeing profits; offering signals or advice to third parties; intraday or high-frequency trading; any buy/sell decision made by a language model.
+
+---
+
+## 2. Scope, assumptions and constraints
+
+| Parameter | Value | Note |
+| --- | --- | --- |
+| Starting capital | $100 USD + $20/month | Deposits reinvested by the normal rules; $340 deposited in year 1 |
+| Live duration | 12 months | After backtest and paper trading |
+| Universe | SPY, EFA, IEF, TLT, GLD, SLV, DBC, UUP, IBIT, ETHA | US and international equities, mid and long bonds, gold, silver, commodities, US dollar, bitcoin, ether |
+| Frequency | Daily evaluation after close; execution only on signal | Never buy and sell the same asset on the same day |
+| Live broker | Interactive Brokers (IBKR Pro, Fixed pricing) | Accepts Costa Rica residents, no minimum deposit, fractional shares, API |
+| Paper broker | Alpaca paper or IBKR paper | Same code, `mode: paper` |
+| Data | Free sources only | See section 5 |
+| Language | Python 3.12+ | Optional C++ core in a later phase |
+| Target leverage | 4.0x (full Kelly) | `kelly_fraction: 1.0`, `max_leverage: 4.0` |
+| Effective leverage | min of 5 limits | Recomputed daily, see section 7 |
+| Leveraged ETFs | 2x/3x versions when target exposure exceeds equity | No margin, no loan: max loss = amount deposited |
+| Parallel paper account | $10,000 simulated, margin enabled, full Kelly | Same signals as the real account (H3) |
+| Kill switch | −40% drawdown from peak | Closes all positions and stops the system |
+
+**Leverage constraints the code must respect**
+
+- Below $2,000 of equity there is no margin account. Leverage can only come from leveraged ETFs (section 7, step 2b).
+- In a standard US margin account (Reg T), positions held overnight are limited to roughly 2x.
+- Reaching 4x would require futures or portfolio margin. The parameter stays at 4.0, but the system must never request more than the broker allows.
+
+**Key assumption:** Kelly figures depend on the strategy's real Sharpe. The value is estimated from the backtest and updated with live data; it is never set by hand.
+
+---
+
+## 3. Architecture and daily flow
+
+Data flows one way every trading day, and no order reaches the broker without passing through the risk manager.
+
+```
+ 1. Data (data/)        ->  2. Strategy (strategy/)  ->  3. Risk (risk/)
+    download OHLCV           SMA200, 55/20 breakout       unit = 1% per 1N
+    validate quality         2N stop, pyramiding          L = min of 5 limits <= 4x
+    store in SQLite          output: 0..4 units           veto + kill switch at -40%
+                                                                |
+                                                     only approved orders
+                                                                v
+ 6. Reporting (reporting/) <- 5. Log (SQLite)       <-  4. Execution (execution/)
+    monthly HTML report        signals, orders, fills      target vs current position
+    vs SPY and 60/40           risk and daily equity       20% band, sells first
+    AI summary, read-only      events and alerts           confirm and reconcile
+                                                                ^
+                                                                | orders and fills
+                                                                v
+                                                     Broker selected by MODE
+                                                     backtest: SimBroker
+                                                     paper: Alpaca or IBKR paper
+                                                     live: IBKR, real money
+```
+
+Strategy and risk are pure functions. Only Execution talks to the broker. Switching between backtest, paper and live is changing `mode`.
+
+---
+
+## 4. Tech stack and repository layout
+
+| Need | Tool |
+| --- | --- |
+| Data and computation | pandas, numpy |
+| Configuration | pydantic + pydantic-settings, `config.yaml` + `.env` |
+| Database | SQLite (`data/stride.db`) |
+| Paper broker | `alpaca-py` (official SDK) |
+| Live broker | IBKR API via IB Gateway (`ib_async`) |
+| NYSE calendar | `pandas_market_calendars` |
+| Tests | pytest, pytest-cov |
+| Charts and reports | matplotlib + HTML templates (jinja2) |
+| Daily job | cron on the server (see section 15) |
+| Code quality | ruff (lint + format), mypy |
+
+```
+stride/
+├── config.yaml                  # strategy and risk parameters (versioned)
+├── config.paper_kelly.yaml      # parallel paper account (Phase 4)
+├── .env.example                 # credential template, no real values
+├── pyproject.toml
+├── docs/SPEC.md                 # this document
+├── CLAUDE.md / AGENTS.md        # instructions for coding agents
+├── src/stride/
+│   ├── config.py                # load and validate configuration
+│   ├── data/
+│   │   ├── sources.py           # price download per provider
+│   │   ├── store.py             # SQLite read/write
+│   │   ├── quality.py           # data validation
+│   │   ├── calendar.py          # NYSE trading days
+│   │   └── leveraged.py         # leveraged ETF mapping + synthetic series
+│   ├── indicators.py            # SMA, ATR, rolling highs/lows, EWMA vol
+│   ├── strategy/
+│   │   ├── rules.py             # the "personality" rules
+│   │   └── signals.py           # target units per asset
+│   ├── risk/
+│   │   ├── sizing.py            # volatility-based unit sizing (Turtle units)
+│   │   ├── leverage.py          # Kelly + vol targeting + caps + leveraged ETFs
+│   │   └── guard.py             # hard limits and kill switch (veto)
+│   ├── execution/
+│   │   ├── broker.py            # abstract Broker interface
+│   │   ├── sim_broker.py        # simulated broker for backtest and tests
+│   │   ├── alpaca_broker.py
+│   │   ├── ibkr_broker.py
+│   │   └── orders.py            # current vs target -> orders
+│   ├── backtest/
+│   │   ├── engine.py
+│   │   ├── costs.py
+│   │   └── metrics.py
+│   ├── reporting/
+│   │   ├── report.py            # monthly report
+│   │   ├── alerts.py            # Telegram alerts
+│   │   ├── correlations.py
+│   │   └── llm_summary.py       # optional AI summary (read-only)
+│   └── run_daily.py             # entry point of the daily job
+├── tests/
+└── notebooks/                   # exploration only, never production logic
+```
+
+Design rule: `strategy/` and `risk/` are pure functions (input data → target positions), with no network and no broker. Backtest, paper and live therefore run exactly the same logic.
+
+---
+
+## 5. Data module
+
+The system needs daily OHLCV bars adjusted for dividends and splits; everything else is derived from them.
+
+**Candidate sources (all free)**
+
+| Source | Use | Advantage | To verify |
+| --- | --- | --- | --- |
+| Alpaca Market Data | Daily data in paper/live | Same account as the paper broker | Historical depth and dividend adjustment on the free plan |
+| Tiingo (free plan) | Long history for backtest | Includes adjusted close | Free-plan request limits |
+| Stooq (CSV) | Fallback | No sign-up | Whether prices are adjusted |
+
+**Crypto history:** the bitcoin (IBIT) and ether (ETHA) ETFs exist since 2024. For the backtest, use daily USD prices of BTC (from 2015) and ETH (from 2016) from a free public exchange API (e.g., Gemini or Coinbase); from each ETF's launch onward, use the ETF. The `source` column marks where the series switches.
+
+**Data contract** (`prices` table in SQLite)
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `symbol` | text | One of the universe symbols (or a leveraged ETF from the map) |
+| `date` | ISO date | NYSE trading day; unique key with `symbol` |
+| `open`, `high`, `low`, `close` | real | Adjusted; `low <= open, close <= high` |
+| `volume` | integer | >= 0 |
+| `source` | text | Provider that delivered the row (or `synthetic`) |
+| `fetched_at` | UTC timestamp | Download time |
+
+**Mandatory validations** (`data/quality.py`) — the run stops if any fails:
+
+1. No missing trading days in the last 300 days.
+2. No daily change above 25% without an event flag (split or provider error).
+3. The latest bar is the previous trading day; otherwise the system does not trade that day.
+4. Two sources agree on the close within 0.5% on a sample of days; otherwise log an alert.
+
+**Anti-look-ahead rule:** no function in `strategy/` may read data dated after the evaluation date. A test injects fake future prices and checks that past signals do not change.
+
+---
+
+## 6. Strategy engine: the "personality"
+
+Each asset goes through the same state machine every day after the close. The output is a target number of units between 0 and 4. **Long only, never short.**
+
+**Indicators** (all computed with data up to and including the close of day t)
+
+| Name | Definition | Origin |
+| --- | --- | --- |
+| `SMA200` | Simple average of the last 200 closes | Paul Tudor Jones |
+| `HH55` | Highest high of the previous 55 days (excluding t) | Turtles, system 2 |
+| `LL20` | Lowest low of the previous 20 days (excluding t) | Turtles, system 2 |
+| `N` | 20-day ATR (Wilder / exponential average of true range) | Turtles |
+| `vol60` | 60-day annualized volatility (EWMA) | Volatility targeting |
+
+**Rules per asset, in priority order**
+
+1. **Trend filter:** if `close < SMA200`, target units = 0 and everything open is closed. (`TREND_FILTER`)
+2. **Protective stop (Seykota):** if `close < last_entry − 2N`, target units = 0. (`STOP_2N`)
+3. **Channel exit:** if `close < LL20`, target units = 0. (`EXIT_LL20`)
+4. **Entry:** with no position, if `close > HH55` and the filter passes, target units = 1. (`ENTRY_HH55`)
+5. **Pyramiding:** with an open position, add 1 unit each time `close` rises 0.5N above the last entry, up to 4 units. (`PYRAMID`)
+6. **No change:** otherwise keep current units. (`HOLD`)
+
+Every rule that fires is logged with its name, so every order has a traceable explanation.
+
+**Unit size (Larry Hite / Turtles):** each unit risks 1% of equity against a 1N move.
+
+```
+unit_usd = (risk_per_unit * equity / N) * price
+```
+
+**Exposure caps (before leverage)**
+
+| Cap | Limit | Reason |
+| --- | --- | --- |
+| Per asset | 4 units | Turtle rule |
+| Equities group (SPY, EFA) | 6 units | Highly correlated |
+| Bonds group (IEF, TLT) | 6 units | Highly correlated |
+| Metals group (GLD, SLV) | 6 units | Highly correlated |
+| Crypto group (IBIT, ETHA) | 4 units | Highly correlated, 70–80% historical drawdowns |
+| Total portfolio | 12 units | Turtle rule per direction |
+
+DBC (commodities) and UUP (dollar) share no group: they tend to move differently from the rest and add diversification. When signals exceed a cap, the most recent units are cut first (last in, first out).
+
+All numbers in this section are parameters in `config.yaml`. They are frozen before the live period and not changed during the 12 months; if changed, the experiment restarts.
+
+---
+
+## 7. Risk management and leverage
+
+Leverage is computed every day as the minimum of five limits. The risk manager can veto any order.
+
+**Step 1 — Kelly estimate.** From the daily returns of the unlevered strategy (backtest plus live history, 3-year window):
+
+```
+L* = (mu − r_f) / sigma^2
+```
+
+where `mu` is the expected annual return, `r_f` the risk-free rate and `sigma` the annual volatility. With `kelly_fraction = 1.0` (full Kelly), the target is L* as is.
+
+**Step 2 — Effective leverage**
+
+```
+L = min( kelly_fraction * L*,
+         max_portfolio_vol / sigma_60,
+         max_leverage,
+         L_broker,
+         L_capital )
+```
+
+| Limit | Default | Rule |
+| --- | --- | --- |
+| `kelly_fraction` | 1.0 | Full Kelly, project decision |
+| `max_portfolio_vol` | 0.60 | Max annual portfolio vol; with Sharpe 0.6, full Kelly implies about 60% |
+| `max_leverage` | 4.0 | Absolute cap |
+| `L_broker` | Read from broker | About 2.0 under Reg T for overnight positions |
+| `L_capital` | Margin only with equity >= $2,000; below that, up to 2.5x via leveraged ETFs | See step 2b |
+| `dd_delever_at` | −20% | If drawdown exceeds this, L is multiplied by 0.5 until a new equity high |
+
+If L* is negative or history has fewer than 250 days, L = 1.0.
+
+**Step 2b — Leveraged ETFs (no margin).** When the gross target exposure E exceeds equity P and no margin is available, the system reaches it with 2x/3x ETF versions:
+
+1. Compute k = E / P. If k <= 1, use the normal ETFs.
+2. If k > 1, each asset with a leveraged version uses the smallest multiple m such that total cash (sum of target / m) fits in P.
+3. Assets without a liquid leveraged version stay at 1x.
+4. If it still does not fit, scale all positions down proportionally.
+5. Portfolio leverage through this route never exceeds `max_etf_portfolio_leverage` (2.5).
+6. Each asset is held in exactly one instrument at a time. Switching between normal and leveraged versions counts as a sell plus a buy and respects the rebalance band and the no-same-day rule.
+7. Signals, N and stops are always computed on the **underlying** asset, never on the leveraged ETF, so switching instruments never changes a signal.
+
+**Candidate instrument map** (verify liquidity, spread and fees at IBKR — task T21)
+
+| Asset | Normal | 2x | 3x |
+| --- | --- | --- | --- |
+| S&P 500 | SPY | SSO | UPRO |
+| Long bonds | TLT | UBT | TMF |
+| Gold | GLD | UGL | — |
+| Silver | SLV | AGQ | — |
+| Bitcoin | IBIT | BITX | — |
+| EFA, IEF, DBC, UUP, ETHA | Normal | No known liquid version, stay at 1x | — |
+
+Leveraged ETFs reset daily: in sideways markets they lose value even if the underlying ends flat. The trend filter reduces this because it exits when there is no trend, but the backtest must measure it (section 9).
+
+**Step 3 — Risk manager veto** (`risk/guard.py`). An order is rejected if it:
+
+- would open a short position;
+- exceeds 60% of equity;
+- would be the 13th order of the day (max 12);
+- would buy an asset sold the same day, or vice versa;
+- would leave margin excess liquidity below 25% of the broker requirement;
+- comes on a day whose data failed section 5 validations.
+
+**Step 4 — Kill switch.** If equity falls 40% from its all-time high, the system:
+
+1. cancels pending orders;
+2. closes all positions at market at the next open;
+3. writes the `KILL_SWITCH` file and sends an alert;
+4. does not trade again until a human deletes that file by hand.
+
+The kill switch also fires if broker positions differ from system positions by more than 1% for two consecutive days.
+
+---
+
+## 8. Execution and broker connection
+
+The same code runs in simulation, paper and live; only the `Broker` implementation loaded by `mode` changes.
+
+**`Broker` interface** (`execution/broker.py`)
+
+| Method | Returns |
+| --- | --- |
+| `get_account()` | Equity, cash, buying power, margin requirement |
+| `get_positions()` | Quantity and average price per symbol |
+| `submit_order(symbol, side, notional, type, limit_price)` | Order ID |
+| `get_order(order_id)` | Status, filled quantity, average price, commission |
+| `cancel_all()` | Number of cancelled orders |
+| `is_market_open(date)` | Whether NYSE is open that day |
+
+Implementations: `SimBroker` (backtest, tests), `AlpacaBroker` (paper), `IBKRBroker` (paper and live).
+
+**Modes**
+
+| `mode` | Broker | Real money |
+| --- | --- | --- |
+| `backtest` | `SimBroker` | No |
+| `paper` | Alpaca paper or IBKR paper | No |
+| `live` | IBKR | Yes; also requires `LIVE_CONFIRM=I_UNDERSTAND_REAL_MONEY` in `.env` |
+
+**Parallel paper account:** a second system instance runs the same daily job with `config.paper_kelly.yaml` ($10,000 simulated, margin enabled, `kelly_fraction: 1.0`) and its own database `data/paper_kelly.db`. Same signals; only capital and available leverage differ.
+
+**Order flow**
+
+1. `orders.py` compares broker positions with targets and computes the dollar difference per symbol.
+2. A difference below 20% of the target weight, or below $1, creates no order (rebalance band).
+3. Sells go before buys, to free cash.
+4. Orders are sent for the next day's open: limit orders at previous close ±0.5%, or market-on-open if the broker does not accept limits on fractional orders.
+5. Every order passes `risk/guard.py` before submission.
+6. Mid-session, the system checks each order's status; unfilled limits are cancelled at the close and re-evaluated next day.
+7. At the end, reconciliation: broker positions vs expected (see kill switch).
+
+**Monthly deposits:** when account cash increases without a sale that explains it, the system records a deposit in `cash_flows`. On the next run, the higher equity enlarges target positions and the deposit is invested by the normal rules; with no active signals it stays in cash. **The system never buys just because money arrived.**
+
+**Daily schedule** (New York time)
+
+| Time | Action |
+| --- | --- |
+| 16:30 | Download data, validate, signals, risk, orders for tomorrow |
+| 09:25 | Submit orders for the open |
+| 12:00 | Check fills |
+| 16:05 | Cancel pending orders and reconcile |
+
+All broker calls retry with exponential backoff (max 3) and **never resend an unconfirmed order** without first confirming the previous one does not exist, to avoid duplicates.
+
+---
+
+## 9. Backtester and validation
+
+The backtest uses the same `strategy/` and `risk/` logic as live, with `SimBroker` filling at the open of the day after the signal.
+
+**Simulation assumptions**
+
+| Element | Model |
+| --- | --- |
+| Signal | Close of day t |
+| Execution | Open of day t+1 |
+| Spread and slippage | 5 bps per side (10 bps for crypto), configurable per symbol |
+| Commission | IBKR Pro Fixed: `min(max(0.005 * shares, 1.00), 0.01 * notional)` per order |
+| Margin interest | Benchmark rate + 1.5% per year on borrowed amount |
+| Uninvested cash | Earns the risk-free rate |
+| Dividends | Included via adjusted prices |
+| Leveraged ETFs | Before launch: underlying daily return × m, minus annual fee and financing cost; validated against the real ETF where both series exist |
+| Deposits | $20 on the first trading day of each month, as in live |
+| Period | From 2007 for traditional ETFs and from 2015 for crypto (spot price before their ETFs existed) to today |
+
+Note on commissions: with small orders, IBKR's 1%-of-trade-value cap is the binding term, so **every order costs about 1%**. This is the dominant cost of the real account and must be modeled exactly.
+
+**Validation protocol**
+
+1. **Walk-forward:** 5-year windows to estimate parameters and 1 year out of sample, rolling yearly. Only out-of-sample results are reported.
+2. **Sensitivity:** change each parameter ±20% (e.g., 55 → 44 and 66 days). If Sharpe drops more than 30%, the parameter is fragile and is logged as a risk.
+3. **Block bootstrap:** 5,000 resamples of daily returns in 20-day blocks for confidence intervals on Sharpe and max drawdown.
+4. **Anti-look-ahead test:** see section 5.
+5. **Leverage comparison:** run with fixed L at 1x, 2x, 3x and 4x, and with the dynamic L of section 7.
+
+**Always-reported metrics**
+
+| Metric | Definition |
+| --- | --- |
+| CAGR | Compound annual growth rate (time-weighted) |
+| Volatility | Annualized std of daily returns |
+| Sharpe | (Return − risk-free) / volatility |
+| Sortino | Like Sharpe, downside volatility only |
+| Max drawdown | Largest peak-to-trough fall |
+| Calmar | CAGR / max drawdown |
+| Turnover | Annual traded amount / average equity |
+| Total costs | Spread + commissions + interest + leveraged ETF fees, % per year |
+| Average exposure | Average leverage used |
+| Benchmarks | Buy-and-hold SPY; 60/40 SPY/IEF rebalanced monthly |
+
+Quality alarm: an out-of-sample Sharpe above 1.5 is treated as a sign of a methodological error and audited before continuing (look-ahead, costs, survivorship bias, badly adjusted data).
+
+---
+
+## 10. Logs, reports and monitoring
+
+Every decision is stored in SQLite, including days with no trades; this log is the experiment's evidence.
+
+| Table | One row per | Key columns |
+| --- | --- | --- |
+| `runs` | Daily run | date, mode, status (ok/error/no data), duration, code version (git hash) |
+| `signals` | Asset and day | indicators, rule fired, current and target units |
+| `risk_decisions` | Day | L*, effective L, binding limit, drawdown, vetoes applied |
+| `orders` | Order sent | symbol, side, amount, type, limit price, originating rule |
+| `fills` | Execution | price, quantity, commission, slippage vs previous close |
+| `equity` | Day | equity, cash, gross exposure, leverage |
+| `cash_flows` | Deposit or withdrawal | date, amount, type, how it was detected |
+| `events` | Event | type (alert, error, kill switch, reconciliation), detail |
+
+With monthly deposits, returns are measured as **time-weighted return (TWR)**: deposits never count as gains. Reports also show total deposited vs balance, to see the dollar gain.
+
+**Monthly report** (`reporting/report.py`, HTML)
+
+- Equity curve vs SPY and 60/40.
+- Section 9 metrics for the month and cumulative.
+- Trade list with the rule that originated each trade.
+- Backtest-vs-reality gap: simulated vs real return for the same period, and average slippage.
+- Leverage used and which limit bound it each day.
+- Correlation matrix of the universe (3-year daily returns; flag pairs above 0.7).
+
+**AI summary (optional):** `llm_summary.py` reads the report and writes what the system did and why. Read-only database access; it can never create orders or change parameters. Off by default.
+
+**Alerts** (Telegram) when: a daily run fails or does not run; data fails validation; the risk manager vetoes an order; reconciliation differs; drawdown crosses −20% or the kill switch fires.
+
+---
+
+## 11. Configuration and security
+
+Parameters live in `config.yaml` (versioned); credentials in `.env` (never versioned). Reference files are in the repository root.
+
+**Security rules**
+
+- `.env`, `data/` and `KILL_SWITCH` are in `.gitignore` from the first commit.
+- No credential appears in logs, reports, error messages or AI prompts.
+- API keys are created with minimum permissions: trading yes, withdrawals and transfers no.
+- `config.py` validates types and ranges at startup; an out-of-range value (e.g., `max_leverage: 10`) stops the system.
+- `live` mode requires the exact `LIVE_CONFIRM` value; without it, the system starts in `paper` and says so in the log.
+- Coding agents (Claude Code, Antigravity) never receive real credentials and never run in `live` mode.
+
+---
+
+## 12. Phases and exit criteria
+
+No phase starts until the previous one meets its criterion; real money enters only in Phase 5.
+
+1. **Foundations:** repository, configuration, database, data download.
+   - Exit: data for the 10 assets loaded (from 2007; crypto from 2015) with all section 5 validations green.
+2. **Strategy and risk:** indicators, rules, unit sizing, leverage and risk manager, as pure functions.
+   - Exit: test coverage >= 90% in `strategy/` and `risk/`, and the anti-look-ahead test passing.
+3. **Backtest:** engine, costs, metrics and full validation protocol.
+   - Exit: out-of-sample Sharpe above SPY's and below 1.5, stable sensitivity, documented results.
+4. **Paper trading (2 months minimum) and start of the parallel Kelly account:** daily job running with `mode: paper`.
+   - Exit: 40 consecutive trading days without failures, clean reconciliation, and orders identical to what the backtest would produce for those days.
+5. **Live (12 months):** `mode: live` with $100 + $20/month at IBKR and frozen parameters.
+   - Success criterion: H1, H2 and H3 evaluated in the final report; the parallel Kelly account runs the same 12 months.
+6. **Optional, C++ core:** rewrite the backtest engine with pybind11.
+   - Exit: results identical to the Python engine within 1e-9 and a measured speedup.
+7. **Optional, research:** scalping simulator that demonstrates, with real spreads, commissions and latency, the break-even win rate of seconds-scale strategies.
+
+---
+
+## 13. Task backlog for coding agents
+
+Rules for agents:
+
+- One task per branch and per pull request, with the ID in the title (`T05: price downloader`).
+- Every new function ships with tests in `tests/`; `pytest` and `ruff check` must pass.
+- Do not change values in `config.yaml` or create new parameters unless asked.
+- Never use real credentials, never run `mode: live`, and never touch the "do not assign" files.
+- If this spec is ambiguous, leave the question in the pull request instead of inventing.
+
+| ID | Task | Files | Acceptance criterion | Phase |
+| --- | --- | --- | --- | --- |
+| T01 | Folder structure, `pyproject.toml`, ruff and pytest config | root, `src/stride/`, `tests/` | `pytest` and `ruff check` run with no errors | 1 |
+| T02 | `.gitignore` and `.env.example` per section 11 | `.gitignore`, `.env.example` | `.env`, `data/` and `KILL_SWITCH` ignored | 1 |
+| T03 | Load and validate `config.yaml` with pydantic | `config.py` | A test rejects `max_leverage: 10`; another accepts the reference file | 1 |
+| T04 | `prices` table and upsert in SQLite | `data/store.py` | Inserting the same row twice does not duplicate it | 1 |
+| T05 | Daily price downloader for one symbol | `data/sources.py` | Returns a DataFrame with the section 5 contract columns | 1 |
+| T06 | The 4 data validations | `data/quality.py` | One synthetic-data test per failing validation | 1 |
+| T07 | NYSE calendar: `is_trading_day(date)` | `data/calendar.py` | 2026-11-26 (Thanksgiving) returns `False` | 1 |
+| T08 | Indicators: SMA, ATR, rolling highs/lows excluding t, EWMA vol | `indicators.py` | Tests against hand-computed values on a 30-day series | 2 |
+| T09 | Section 6 state machine | `strategy/rules.py`, `strategy/signals.py` | One test per rule, each with its rule name in the output | 2 |
+| T10 | Unit sizing and exposure caps | `risk/sizing.py` | Tests for each cap; trimming removes the most recent unit first | 2 |
+| T11 | Cost model: spread, IBKR commission, margin interest | `backtest/costs.py` | Tests with known amounts, including the 1% cap on small orders | 3 |
+| T12 | Section 9 metrics | `backtest/metrics.py` | Tests against a series with known results | 3 |
+| T13 | `SimBroker` filling at the open of t+1 | `execution/sim_broker.py` | An order sent on t fills at the `open` of t+1 with spread applied | 3 |
+| T14 | Anti-look-ahead test | `tests/test_lookahead.py` | Injecting fake future prices changes no past signal | 3 |
+| T15 | HTML report with equity curve and metrics table | `reporting/report.py` | Generates an HTML file from a test database | 3 |
+| T16 | Telegram alerts | `reporting/alerts.py` | Sends a test message with a test bot | 4 |
+| T17 | Daily job script and cron setup guide | `run_daily.py`, `README.md` | `python -m stride.run_daily --mode backtest` finishes without errors | 4 |
+| T18 | `AlpacaBroker` for paper only | `execution/alpaca_broker.py` | Reads account and positions in paper; refuses to start with non-paper keys | 4 |
+| T19 | Daily BTC/ETH history from a free public API, spliced with IBIT/ETHA | `data/sources.py` | Continuous series with no gaps; `source` marks the spot-to-ETF switch | 1 |
+| T20 | Correlation matrix of daily returns across the 10 assets | `reporting/correlations.py` | 3-year matrix in the report; flags pairs above 0.7 | 3 |
+| T21 | Verify candidate leveraged ETFs and build synthetic series | `data/leveraged.py` | Liquidity/spread/fee table; synthetic vs real differs < 2%/yr where both exist | 1 |
+| T22 | `cash_flows` table and time-weighted return | `data/store.py`, `backtest/metrics.py` | With $20 deposits and 0% return, TWR is 0% | 3 |
+| T23 | Separate config and database for the parallel Kelly paper account | `config.paper_kelly.yaml`, `run_daily.py` | Both instances run the same day without sharing database or credentials | 4 |
+
+**Do not assign to agents** (written or reviewed line by line by a human): `risk/leverage.py`, `risk/guard.py`, the kill switch, `execution/orders.py`, `execution/ibkr_broker.py`, enabling `mode: live`, and any change to risk parameters.
+
+---
+
+## 14. Known risks and limitations
+
+The biggest risk is full Kelly itself: it maximizes growth in theory, but with typical drawdowns of 60–80%, so the −40% kill switch will likely fire at some point.
+
+| Risk | Effect | Mitigation |
+| --- | --- | --- |
+| Full Kelly with overestimated mu | If real Sharpe is lower, full Kelly over-bets and grows less than lower leverage | L* recomputed with live data; report compares against fixed 2x (half Kelly) |
+| Kill switch vs full Kelly | Normal full-Kelly drawdowns exceed −40%; the system may stop within the year | Deliberate: not losing the account takes priority; the event is a documented result |
+| $100 capital | No margin; commissions weigh heavily | Leverage module validated in backtest and paper with larger simulated capital |
+| Broker commissions | IBKR's 1% cap on small orders costs ~$20/yr (~7% of a ~$300 account) | Modeled exactly in the backtest; low turnover by design; evaluate commission-free brokers |
+| Broker maintenance minimum | An IBKR page says accounts under $100 may be closed | Verify the rule for the account's entity before depositing |
+| One year is short | 12-month result is mostly noise | H2 evaluates consistency with the backtest, not just profit |
+| Backtest overfitting | Simulated results better than real ones | Walk-forward, sensitivity, bootstrap, Sharpe > 1.5 alarm |
+| Free data quality | Badly adjusted prices create false signals | Section 5 validations and two-source comparison |
+| Operational failures | Server down, no internet, API outage | Free cloud server; alerts on missed runs; no trading if anything fails |
+| Broker API changes | Rejected orders or incomplete data | Isolated `Broker` interface; integration tests in paper before each change |
+| Crypto price gaps | BTC/ETH trade 24/7, the ETF does not: a weekend crash opens far below the stop | 4-unit crypto cap and volatility sizing (smaller dollar positions) |
+| Leveraged ETF decay | Lose value in sideways markets; ~1% annual fee | Used only when target exposure exceeds capital; trend filter; measured with synthetic series |
+| Deposits hiding losses | Balance can rise from $20 deposits while the strategy loses | TWR and total-deposited-vs-balance report |
+| Taxes and regulation (Costa Rica) | Tax treatment of foreign-broker gains is unclear | Keep statements; consult an accountant before year end |
+| Use for third parties | Publishing signals could fall under SUGEVAL regulation | The system trades only the owner's account; code and results are what is public |
+
+Nothing in this document is financial advice or a promise of returns; the experiment may end with losses.
+
+---
+
+## 15. Deployment (proposed, zero cost)
+
+| Piece | Tool | Cost |
+| --- | --- | --- |
+| Code | Private GitHub repository | $0 |
+| 24/7 server | Oracle Cloud "Always Free" VM (ARM; 2 OCPU / 12 GB since June 2026) | $0 |
+| Broker connection | IB Gateway in Docker with IBC auto-login and daily auto-restart | $0 |
+| Daily job | cron on the server | $0 |
+| Alerts | Telegram bot | $0 |
+| Backups | Daily database copy to a private location | $0 |
+| AI summary | Off by default | $0 |
+
+Notes:
+
+- Oracle reduced its free tier in June 2026 without public notice; everything runs in Docker with daily backups so moving servers takes about an hour.
+- IB Gateway periodically requires approving a login in IBKR Mobile (2FA). If not approved, the system does not trade that day and alerts — it fails safe.
+- Alternative: if Alpaca accepts Costa Rica residents for live accounts, no gateway is needed and the job can run on GitHub Actions (2,000 free minutes/month on private repos; STRIDE needs ~250).

@@ -1,0 +1,68 @@
+# STRIDE configuration — see docs/SPEC.md sections 6, 7, 8 and 11.
+# Values are frozen before the live period. Changing them restarts the experiment.
+
+mode: paper                 # backtest | paper | live
+
+universe: [SPY, EFA, IEF, TLT, GLD, SLV, DBC, UUP, IBIT, ETHA]
+
+groups:
+  equities: [SPY, EFA]
+  bonds: [IEF, TLT]
+  metals: [GLD, SLV]
+  crypto: [IBIT, ETHA]
+
+leveraged_etfs:             # candidates, to be verified at the broker (T21)
+  SPY: {2: SSO, 3: UPRO}
+  TLT: {2: UBT, 3: TMF}
+  GLD: {2: UGL}
+  SLV: {2: AGQ}
+  IBIT: {2: BITX}
+
+strategy:
+  sma_filter: 200
+  entry_breakout: 55
+  exit_breakout: 20
+  atr_period: 20
+  stop_n: 2.0
+  pyramid_step_n: 0.5
+  max_units_per_asset: 4
+
+risk:
+  risk_per_unit: 0.01
+  max_units_group: 6
+  max_units_crypto: 4
+  max_units_total: 12
+  kelly_fraction: 1.0
+  max_leverage: 4.0
+  max_etf_portfolio_leverage: 2.5
+  max_portfolio_vol: 0.60
+  dd_delever_at: 0.20
+  kill_switch_dd: 0.40
+  margin_min_equity: 2000
+  margin_buffer: 0.25
+  min_history_days_for_kelly: 250
+
+execution:
+  rebalance_band: 0.20
+  min_order_usd: 1.0
+  limit_offset: 0.005
+  max_orders_per_day: 12
+  max_order_pct_equity: 0.60
+
+cash_flows:
+  monthly_deposit_usd: 20
+  deposit_day: first_trading_day
+
+costs:
+  spread_bps: 5
+  spread_bps_crypto: 10
+  commission_per_share: 0.005      # IBKR Pro Fixed
+  commission_min_per_order: 1.00
+  commission_max_pct_of_value: 0.01
+  leveraged_etf_fee: 0.0095        # approximate annual fee
+  margin_spread: 0.015
+
+data:
+  db_path: data/stride.db
+  history_start: "2007-01-01"
+  crypto_history_start: "2015-01-01"
