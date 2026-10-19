@@ -26,6 +26,8 @@ Lookback = Annotated[int, Field(ge=2)]
 UnitCap = Annotated[int, Field(ge=1)]
 Fraction = Annotated[float, Field(gt=0, lt=1)]
 NonNegative = Annotated[float, Field(ge=0)]
+# YAML dates arrive as strings ("2007-01-01"); parse them even in strict mode.
+IsoDate = Annotated[date, Field(strict=False)]
 
 
 class ConfigError(Exception):
@@ -33,7 +35,8 @@ class ConfigError(Exception):
 
 
 class _Section(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # strict: a YAML typo such as `max_leverage: true` must fail, not become 1.0.
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
 
 class StrategyConfig(_Section):
@@ -105,8 +108,8 @@ class CostsConfig(_Section):
 
 class DataConfig(_Section):
     db_path: Annotated[str, Field(min_length=1)]
-    history_start: date
-    crypto_history_start: date
+    history_start: IsoDate
+    crypto_history_start: IsoDate
 
     @model_validator(mode="after")
     def _crypto_not_before_history(self) -> Self:

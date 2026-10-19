@@ -214,3 +214,27 @@ def test_live_without_confirmation_falls_back_to_paper(
 def test_non_live_modes_are_kept(tmp_path: Path, mode: str) -> None:
     path = _write(tmp_path, _with(None, "mode", mode))
     assert load_config(path, env={}).mode == mode
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("risk", "max_leverage", True),
+        ("costs", "commission_min_per_order", False),
+        ("risk", "max_leverage", "2.0"),
+        ("strategy", "sma_filter", 200.0),
+        ("strategy", "entry_breakout", "55"),
+        ("risk", "min_history_days_for_kelly", True),
+    ],
+)
+def test_wrong_scalar_types_are_rejected_not_coerced(
+    tmp_path: Path, section: str, key: str, value: Any
+) -> None:
+    path = _write(tmp_path, _with(section, key, value))
+    with pytest.raises(ConfigError, match=key):
+        load_config(path, env={})
+
+
+def test_integer_is_accepted_for_float_field(tmp_path: Path) -> None:
+    path = _write(tmp_path, _with("risk", "max_leverage", 3))
+    assert load_config(path, env={}).risk.max_leverage == 3.0
