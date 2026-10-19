@@ -39,6 +39,11 @@ class _Section(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
 
+class LeveragedEtfFilters(_Section):
+    max_median_spread: Fraction
+    min_net_assets_usd: NonNegative
+
+
 class StrategyConfig(_Section):
     sma_filter: Lookback
     entry_breakout: Lookback
@@ -139,6 +144,7 @@ class StrideConfig(_Section):
     universe: Annotated[list[Ticker], Field(min_length=1)]
     groups: dict[str, list[Ticker]]
     leveraged_etfs: dict[Ticker, Annotated[dict[Literal[2, 3], Ticker], Field(min_length=1)]]
+    leveraged_etf_filters: LeveragedEtfFilters
     strategy: StrategyConfig
     risk: RiskConfig
     execution: ExecutionConfig
