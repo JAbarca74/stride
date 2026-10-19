@@ -83,6 +83,36 @@ class FakeSession:
         return self.response
 
 
+@pytest.fixture(autouse=True)
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record retry backoffs instead of sleeping."""
+    recorded: list[float] = []
+    monkeypatch.setattr("stride.data.sources.time.sleep", recorded.append)
+    return recorded
+
+
+class SequenceSession:
+    """Returns the given responses (or raises the given errors) in order."""
+
+    def __init__(self, outcomes: list[FakeResponse | Exception]) -> None:
+        self.outcomes = outcomes
+        self.calls = 0
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, str],
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> FakeResponse:
+        outcome = self.outcomes[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 def _tiingo(session: FakeSession) -> TiingoSource:
     return TiingoSource(api_key=FAKE_KEY, session=session, clock=lambda: NOW)
 
@@ -296,3 +326,36 @@ def test_alpaca_http_error_does_not_leak_keys() -> None:
         source.fetch_unadjusted_close("SPY", date(2026, 10, 15), date(2026, 10, 16))
     assert FAKE_KEY not in str(info.value)
     assert FAKE_SECRET not in str(info.value)
+
+
+def test_transient_errors_are_retried_with_backoff(sleeps: list[float]) -> None:
+    session = SequenceSession(
+        [
+            requests.ConnectionError("reset"),
+            FakeResponse(503, {}),
+            FakeResponse(200, TIINGO_PAYLOAD),
+        ]
+    )
+    source = TiingoSource(api_key=FAKE_KEY, session=session, clock=lambda: NOW)
+    frame = source.fetch("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert len(frame) == 2
+    assert session.calls == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_retries_stop_after_three(sleeps: list[float]) -> None:
+    session = SequenceSession([FakeResponse(429, {})] * 4)
+    source = TiingoSource(api_key=FAKE_KEY, session=session, clock=lambda: NOW)
+    with pytest.raises(SourceError, match="HTTP 429"):
+        source.fetch("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert session.calls == 4
+    assert sleeps == [1.0, 2.0, 4.0]
+
+
+def test_client_errors_are_not_retried(sleeps: list[float]) -> None:
+    session = SequenceSession([FakeResponse(401, {})])
+    source = TiingoSource(api_key=FAKE_KEY, session=session, clock=lambda: NOW)
+    with pytest.raises(SourceError, match="HTTP 401"):
+        source.fetch("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert session.calls == 1
+    assert sleeps == []

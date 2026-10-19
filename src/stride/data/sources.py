@@ -8,6 +8,7 @@ fetched_at. Prices are adjusted for dividends and splits.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
@@ -20,6 +21,9 @@ DATA_API_KEY_ENV = "DATA_API_KEY"
 ALPACA_KEY_ENV = "ALPACA_API_KEY"
 ALPACA_SECRET_ENV = "ALPACA_SECRET_KEY"
 HTTP_OK = 200
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 1.0
+RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 REQUEST_TIMEOUT_SECONDS = 30
 
 Clock = Callable[[], datetime]
@@ -93,14 +97,31 @@ def _get_json(
     params: Mapping[str, str],
     headers: Mapping[str, str],
 ) -> Any:
-    """GET `url` and return its JSON. Errors never echo the URL, params or headers."""
-    try:
-        response = session.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
-    except requests.RequestException as exc:
-        raise SourceError(f"{provider} request for {symbol} failed: {type(exc).__name__}") from None
-    if response.status_code != HTTP_OK:
-        raise SourceError(f"{provider} returned HTTP {response.status_code} for {symbol}")
-    return response.json()
+    """GET `url` and return its JSON. Errors never echo the URL, params or headers.
+
+    Network errors and HTTP 429/5xx are retried up to `MAX_RETRIES` times with
+    exponential backoff (SPEC section 8); other HTTP errors fail at once.
+    """
+    for attempt in range(MAX_RETRIES + 1):
+        retry = attempt < MAX_RETRIES
+        try:
+            response = session.get(
+                url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS
+            )
+        except requests.RequestException as exc:
+            if retry:
+                time.sleep(RETRY_BACKOFF_SECONDS * 2**attempt)
+                continue
+            raise SourceError(
+                f"{provider} request for {symbol} failed: {type(exc).__name__}"
+            ) from None
+        if response.status_code in RETRY_STATUS and retry:
+            time.sleep(RETRY_BACKOFF_SECONDS * 2**attempt)
+            continue
+        if response.status_code != HTTP_OK:
+            raise SourceError(f"{provider} returned HTTP {response.status_code} for {symbol}")
+        return response.json()
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _close_series(dates: list[Any], closes: list[float]) -> pd.Series:
