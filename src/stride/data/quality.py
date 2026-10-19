@@ -1,8 +1,11 @@
 """Data-quality validations (SPEC section 5).
 
-Validations 1-3 stop the run if any fails: the system does not trade that day.
-Validation 4 never stops the run: a mismatch in the historical sample is an alert,
-and a mismatch on the latest bar blocks orders for that symbol only.
+Validations 1 and 2 stop the run if any fails: the system does not trade that day.
+Validation 3 acts per symbol: if the primary source lacks bar t, that symbol is
+blocked for the day (position kept, no orders); if it lacks bar t for every
+symbol, the whole run stops. Validation 4 never stops the run: a mismatch in the
+historical sample, or a secondary source without bar t, is an alert, and a
+mismatch on the latest bar blocks orders for that symbol only.
 
 Thresholds come from `config.yaml` (`data.quality`). Apart from the NYSE calendar,
 the functions are pure: the caller supplies prices and the evaluation day.
@@ -102,13 +105,19 @@ def check_daily_changes(
 
 
 def check_latest_bar(prices: pd.DataFrame, evaluation_date: date) -> CheckResult:
-    """Validation 3: the most recent bar is the evaluation day t."""
+    """Validation 3: the primary source has the bar of evaluation day t.
+
+    A failure blocks this symbol only; `raise_on_blocking_failure` stops the run
+    when every symbol fails it.
+    """
     if prices.empty:
-        return CheckResult(LATEST_BAR, False, "no bars")
+        return CheckResult(LATEST_BAR, False, "no bars", BLOCK_SYMBOL)
     latest = pd.Timestamp(prices.index.max()).date()
     if latest == evaluation_date:
-        return CheckResult(LATEST_BAR, True)
-    return CheckResult(LATEST_BAR, False, f"latest bar is {latest}, expected {evaluation_date}")
+        return CheckResult(LATEST_BAR, True, severity=BLOCK_SYMBOL)
+    return CheckResult(
+        LATEST_BAR, False, f"latest bar is {latest}, expected {evaluation_date}", BLOCK_SYMBOL
+    )
 
 
 def _relative_diff(primary: pd.Series, secondary: pd.Series) -> pd.Series:
@@ -191,6 +200,8 @@ def validate(
     unadjusted close series are given.
     """
     expected = expected_trading_days(evaluation_date, config.missing_days_lookback)
+    # A missing bar for day t itself is validation 3's job (per symbol), not 1's.
+    expected = expected[expected < pd.Timestamp(evaluation_date)]
     results = [
         check_no_missing_days(prices, expected, config.missing_days_lookback),
         check_daily_changes(prices, config.max_daily_change, flagged_dates),
@@ -215,16 +226,28 @@ def validate(
 
 
 def raise_on_blocking_failure(results: Iterable[CheckResult]) -> None:
-    """Raise `DataQualityError` if any run-stopping check failed."""
+    """Raise `DataQualityError` if a run-stopping check failed, or if the primary
+    source lacks bar t for every symbol."""
+    results = list(results)
     failed = [r for r in results if r.severity == STOP_RUN and not r.passed]
+    symbols = {r.symbol for r in results}
+    missing_t = {r.symbol for r in results if r.name == LATEST_BAR and not r.passed}
+    if symbols and missing_t == symbols:
+        raise DataQualityError("primary source lacks bar t for every symbol; skipping the run")
     if failed:
         raise DataQualityError("; ".join(f"{r.symbol or '?'} {r.name}: {r.detail}" for r in failed))
 
 
 def blocked_symbols(results: Iterable[CheckResult]) -> set[str]:
-    """Symbols whose orders must be blocked today (failed latest-bar source check)."""
+    """Symbols whose orders must be blocked today: the primary source lacks bar t
+    (validation 3) or the latest close differs between sources (validation 4)."""
     return {
         r.symbol
         for r in results
         if r.severity == BLOCK_SYMBOL and not r.passed and r.symbol is not None
     }
+
+
+def alerts(results: Iterable[CheckResult]) -> list[CheckResult]:
+    """Every failed check; each one is sent as an alert, whatever its severity."""
+    return [r for r in results if not r.passed]
