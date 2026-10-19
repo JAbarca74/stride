@@ -238,3 +238,34 @@ def test_wrong_scalar_types_are_rejected_not_coerced(
 def test_integer_is_accepted_for_float_field(tmp_path: Path) -> None:
     path = _write(tmp_path, _with("risk", "max_leverage", 3))
     assert load_config(path, env={}).risk.max_leverage == 3.0
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("missing_days_lookback", 0),
+        ("max_daily_change", 0),
+        ("max_daily_change", 1.5),
+        ("source_close_tolerance", 0),
+        ("latest_bar_max_diff", 1),
+    ],
+)
+def test_out_of_range_quality_thresholds_are_rejected(tmp_path: Path, key: str, value: Any) -> None:
+    data = _reference()
+    data["data"]["quality"][key] = value
+    with pytest.raises(ConfigError, match=key):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_latest_bar_limit_below_sample_tolerance_is_rejected(tmp_path: Path) -> None:
+    data = _reference()
+    data["data"]["quality"]["latest_bar_max_diff"] = 0.001
+    with pytest.raises(ConfigError, match="latest_bar_max_diff must not be below"):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_quality_section_is_required(tmp_path: Path) -> None:
+    data = _reference()
+    del data["data"]["quality"]
+    with pytest.raises(ConfigError, match="quality"):
+        load_config(_write(tmp_path, data), env={})

@@ -66,3 +66,8 @@ data:
   db_path: data/stride.db
   history_start: "2007-01-01"
   crypto_history_start: "2015-01-01"
+  quality:                         # section 5 validations; data parameters, not frozen
+    missing_days_lookback: 300     # NYSE trading days (validation 1)
+    max_daily_change: 0.25         # unflagged close-to-close move (validation 2)
+    source_close_tolerance: 0.005  # historical sample, alert only (validation 4)
+    latest_bar_max_diff: 0.02      # latest bar; blocks that symbol for the day (validation 4)

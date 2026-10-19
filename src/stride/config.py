@@ -106,10 +106,26 @@ class CostsConfig(_Section):
     margin_spread: NonNegative
 
 
+class DataQualityConfig(_Section):
+    """Thresholds for the section 5 validations (data parameters, not strategy)."""
+
+    missing_days_lookback: Annotated[int, Field(ge=1)]
+    max_daily_change: Annotated[float, Field(gt=0, le=1)]
+    source_close_tolerance: Fraction
+    latest_bar_max_diff: Fraction
+
+    @model_validator(mode="after")
+    def _latest_not_stricter_than_sample(self) -> Self:
+        if self.latest_bar_max_diff < self.source_close_tolerance:
+            raise ValueError("latest_bar_max_diff must not be below source_close_tolerance")
+        return self
+
+
 class DataConfig(_Section):
     db_path: Annotated[str, Field(min_length=1)]
     history_start: IsoDate
     crypto_history_start: IsoDate
+    quality: DataQualityConfig
 
     @model_validator(mode="after")
     def _crypto_not_before_history(self) -> Self:
