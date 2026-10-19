@@ -16,8 +16,19 @@ Phase 1 — Foundations. See [`docs/SPEC.md`](docs/SPEC.md) for the full specifi
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env      # fill in paper-trading keys only
+cp .env.example .env      # data-only (Tiingo) and paper-trading keys only, never live
 pytest
+```
+
+## Loading data (Phase 1)
+
+Keys are read from `.env` and never printed. Downloads are incremental and cached in `data/stride.db`.
+
+```bash
+python -m stride.data.update prices        # download or extend every series
+python -m stride.data.update validate      # SPEC section 5 validations
+python -m stride.data.update check-alpaca  # Alpaca free-plan closes vs Tiingo
+python -m stride.data.update t21           # synthetic vs real leveraged ETFs
 ```
 
 ## Repository guide

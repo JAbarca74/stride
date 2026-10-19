@@ -122,3 +122,9 @@ def read_prices(
     frame["date"] = pd.to_datetime(frame["date"])
     frame["fetched_at"] = pd.to_datetime(frame["fetched_at"], utc=True)
     return frame.set_index("date")
+
+
+def last_price_date(conn: sqlite3.Connection, symbol: str) -> date | None:
+    """Date of the newest stored bar for `symbol`, or None if there is none."""
+    row = conn.execute("SELECT MAX(date) FROM prices WHERE symbol = ?", (symbol,)).fetchone()
+    return None if row[0] is None else date.fromisoformat(row[0])
