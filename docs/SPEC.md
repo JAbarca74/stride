@@ -3,12 +3,14 @@
 **STRIDE** — *Systematic Trend & Risk-Integrated Daily Execution*
 A systematic trend-following trading system with volatility-based risk management.
 
-- Version: 1.0
-- Date: 2026-10-18
+- Version: 1.1
+- Date: 2026-10-19
 - Author: Jefferson Abarca
 - Status: Approved for Phase 1 (Foundations)
 
 This document is the single source of truth for the system. If code and spec disagree, the spec wins until it is explicitly changed. Any ambiguity must be raised as a question, never resolved by guessing.
+
+**Changes in 1.1** (owner decisions from the Phase 1 review): data validations 1, 3 and 4 clarified and their thresholds moved to `config.yaml` (section 5); daily run moved to 18:00 New York time (section 8); crypto spot history built from 16:00 ET session bars and ratio-spliced onto the ETFs (section 5); data sources fixed (section 5); leveraged ETF filters and synthetic-series formula with FRED DTB3 (sections 7 and 9); CI on GitHub Actions (section 15).
 
 ---
 
@@ -158,7 +160,17 @@ The system needs daily OHLCV bars adjusted for dividends and splits; everything 
 | Tiingo (free plan) | Long history for backtest | Includes adjusted close | Free-plan request limits |
 | Stooq (CSV) | Fallback | No sign-up | Whether prices are adjusted |
 
-**Crypto history:** the bitcoin (IBIT) and ether (ETHA) ETFs exist since 2024. For the backtest, use daily USD prices of BTC (from 2015) and ETH (from 2016) from a free public exchange API (e.g., Gemini or Coinbase); from each ETF's launch onward, use the ETF. The `source` column marks where the series switches.
+**Sources (decided in 1.1)**
+
+- **Primary: Tiingo**, adjusted history since 2007.
+- **Second source for validation 4: Alpaca**, only if its free plan delivers consolidated (SIP) daily bars: request `feed=sip` and `adjustment=raw`. The Basic plan serves SIP history except the latest 15 minutes, so the day's bar is available at the 18:00 run; this must be confirmed with paper keys. If Alpaca only gives the IEX feed, its closes can differ from the official close and would raise false alarms; the second source is then Stooq.
+- Validation 4 compares **unadjusted** closes of recent days: each provider adjusts dividends differently, so comparing adjusted history produces false differences.
+
+**Crypto history:** the bitcoin (IBIT) and ether (ETHA) ETFs exist since 2024. For the backtest, use USD spot prices of BTC and ETH from Coinbase Exchange's free public API (BTC-USD from 2015-07-20, ETH-USD from 2016-05-18; Gemini opened in October 2015 and does not help). Each asset enters the backtest once it has enough history for its indicators (about 200 days for `SMA200`).
+
+- **Session bars, not UTC candles.** The UTC daily candle closes at 20:00 ET in summer and 19:00 ET in winter, 3 to 4 hours after the ETF's close, and would give the backtest information the ETF never had and different ATRs. Spot bars are built from 15-minute candles on NYSE trading days only: open = 9:30 ET, high/low = extremes between 9:30 and the session close, close = price at the session close (16:00 ET, or the early close). Weekend gaps then appear in spot exactly as in the ETF, which is the crypto risk this spec wants to measure.
+- **Ratio splice (mandatory).** Without scaling, the series would jump from tens of thousands of dollars (BTC) to tens of dollars (ETF) and break `SMA200`, `HH55` and `N` for months. Spot prices before the switch are multiplied by `ETF close / spot 16:00 close` on the ETF's first full trading day; from that day on, the ETF is used. Raw spot bars are stored untouched; the spliced series is built by a separate function. Because position size uses `N / price`, scaling changes no signal outside the splice point.
+- The `source` column marks where the series switches.
 
 **Data contract** (`prices` table in SQLite)
 
@@ -171,12 +183,14 @@ The system needs daily OHLCV bars adjusted for dividends and splits; everything 
 | `source` | text | Provider that delivered the row (or `synthetic`) |
 | `fetched_at` | UTC timestamp | Download time |
 
-**Mandatory validations** (`data/quality.py`) — the run stops if any fails:
+**Mandatory validations** (`data/quality.py`). Validations 1–3 stop the run if any fails; validation 4 never stops the run. Thresholds live in `config.yaml` under `data.quality`; they are data parameters, not strategy parameters, so changing them does not restart the experiment.
 
-1. No missing trading days in the last 300 days.
+1. No missing bars in the last 300 **NYSE trading days** (from the T07 calendar). For assets with less history (e.g., ETHA, BITX), the window is all available history.
 2. No daily change above 25% without an event flag (split or provider error).
-3. The latest bar is the previous trading day; otherwise the system does not trade that day.
-4. Two sources agree on the close within 0.5% on a sample of days; otherwise log an alert.
+3. The latest bar is **day t**, the evaluation day: the signal uses the close of t and executes at the open of t+1. If the bar for t is not available by the end of the run window (section 8), the system does not trade that day and sends an alert.
+4. Two sources are compared on **unadjusted** closes of recent days:
+   - on the historical sample, a difference above 0.5% only logs an alert;
+   - if the **latest bar** of a symbol differs by more than 2% between sources, orders for **that symbol** are blocked that day; the rest of the portfolio trades normally. This covers the dangerous case: trading on a wrong price for today.
 
 **Anti-look-ahead rule:** no function in `strategy/` may read data dated after the evaluation date. A test injects fake future prices and checks that past signals do not change.
 
@@ -273,7 +287,9 @@ If L* is negative or history has fewer than 250 days, L = 1.0.
 6. Each asset is held in exactly one instrument at a time. Switching between normal and leveraged versions counts as a sell plus a buy and respects the rebalance band and the no-same-day rule.
 7. Signals, N and stops are always computed on the **underlying** asset, never on the leveraged ETF, so switching instruments never changes a signal.
 
-**Candidate instrument map** (verify liquidity, spread and fees at IBKR — task T21)
+**Candidate instrument map** (verified in task T21)
+
+For Phase 1, public data is enough: under SEC rule 6c-11 issuers publish on their website the 30-day median bid-ask spread, the expense ratio and net assets. A leveraged ETF is used only if its **30-day median spread is at most 0.20%** and its **net assets are at least $50 million**; one that fails is dropped and its asset trades at 1x (or at the other multiple, if that one passes). IBKR-specific checks (permissions for leveraged products, fractional-share support per ETF, actual commission) are done in Phase 4 with the paper account, never with real credentials.
 
 | Asset | Normal | 2x | 3x |
 | --- | --- | --- | --- |
@@ -293,7 +309,8 @@ Leveraged ETFs reset daily: in sideways markets they lose value even if the unde
 - would be the 13th order of the day (max 12);
 - would buy an asset sold the same day, or vice versa;
 - would leave margin excess liquidity below 25% of the broker requirement;
-- comes on a day whose data failed section 5 validations.
+- comes on a day whose data failed section 5 validations 1–3;
+- is for a symbol whose latest bar failed the two-source check (section 5, validation 4).
 
 **Step 4 — Kill switch.** If equity falls 40% from its all-time high, the system:
 
@@ -349,7 +366,7 @@ Implementations: `SimBroker` (backtest, tests), `AlpacaBroker` (paper), `IBKRBro
 
 | Time | Action |
 | --- | --- |
-| 16:30 | Download data, validate, signals, risk, orders for tomorrow |
+| 18:00 | Download data (retrying until 20:00 if the bar for today is missing), validate, signals, risk, orders for tomorrow. Free providers publish the adjusted close some time after 16:00; if the bar for today is still missing at 20:00, no trading that day and an alert |
 | 09:25 | Submit orders for the open |
 | 12:00 | Check fills |
 | 16:05 | Cancel pending orders and reconcile |
@@ -370,10 +387,11 @@ The backtest uses the same `strategy/` and `risk/` logic as live, with `SimBroke
 | Execution | Open of day t+1 |
 | Spread and slippage | 5 bps per side (10 bps for crypto), configurable per symbol |
 | Commission | IBKR Pro Fixed: `min(max(0.005 * shares, 1.00), 0.01 * notional)` per order |
-| Margin interest | Benchmark rate + 1.5% per year on borrowed amount |
+| Risk-free rate | 3-month T-bill, FRED series `DTB3` (free); the value known at t−1 is used on day t, never a later one |
+| Margin interest | Risk-free rate + 1.5% per year on borrowed amount |
 | Uninvested cash | Earns the risk-free rate |
 | Dividends | Included via adjusted prices |
-| Leveraged ETFs | Before launch: underlying daily return × m, minus annual fee and financing cost; validated against the real ETF where both series exist |
+| Leveraged ETFs | Before launch, synthetic daily return = m × underlying return − (m − 1) × (DTB3 + spread) / 252 − annual fee / 252. The spread is not invented: it is calibrated per asset on the period where both the real ETF and the underlying exist, and the synthetic series must differ from the real one by less than 2% per year |
 | Deposits | $20 on the first trading day of each month, as in live |
 | Period | From 2007 for traditional ETFs and from 2015 for crypto (spot price before their ETFs existed) to today |
 
@@ -544,6 +562,7 @@ Nothing in this document is financial advice or a promise of returns; the experi
 | Piece | Tool | Cost |
 | --- | --- | --- |
 | Code | Private GitHub repository | $0 |
+| CI | GitHub Actions on Ubuntu, Python 3.12: pytest, ruff check, ruff format --check, mypy on every PR and push to `main` (1–2 min per run; Windows runners count double on private repos). No merge with CI red | $0 |
 | 24/7 server | Oracle Cloud "Always Free" VM (ARM; 2 OCPU / 12 GB since June 2026) | $0 |
 | Broker connection | IB Gateway in Docker with IBC auto-login and daily auto-restart | $0 |
 | Daily job | cron on the server | $0 |
