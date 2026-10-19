@@ -116,3 +116,31 @@ def test_connect_creates_parent_folder(tmp_path: Path) -> None:
     reopened = connect(db_path)
     assert _count(reopened) == 1
     reopened.close()
+
+
+def test_timestamp_bounds_include_the_start_day(conn: sqlite3.Connection) -> None:
+    rows = [_row(date=pd.Timestamp(day)) for day in ("2026-10-14", "2026-10-15", "2026-10-16")]
+    upsert_prices(conn, pd.DataFrame(rows))
+    stored = read_prices(conn, "SPY")
+    again = read_prices(conn, "SPY", start=stored.index[1], end=stored.index[2])
+    assert list(again.index) == list(stored.index[1:])
+
+
+def test_fractional_volume_is_rejected(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="whole number"):
+        upsert_prices(conn, pd.DataFrame([_row(volume=1000.9)]))
+    assert _count(conn) == 0
+
+
+def test_whole_float_volume_is_accepted(conn: sqlite3.Connection) -> None:
+    upsert_prices(conn, pd.DataFrame([_row(volume=1000.0)]))
+    assert read_prices(conn, "SPY")["volume"].iloc[0] == 1000
+
+
+@pytest.mark.parametrize(
+    ("column", "value"), [("symbol", None), ("source", None), ("close", float("nan"))]
+)
+def test_empty_values_are_rejected(conn: sqlite3.Connection, column: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=column):
+        upsert_prices(conn, pd.DataFrame([_row(**{column: value})]))
+    assert _count(conn) == 0

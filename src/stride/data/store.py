@@ -77,12 +77,19 @@ def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
     missing = [c for c in PRICE_COLUMNS if c not in frame.columns]
     if missing:
         raise ValueError(f"missing price columns: {missing}")
+    # Reject bad downloads instead of coercing them into plausible rows.
+    empty = [c for c in PRICE_COLUMNS if frame[c].isna().any()]
+    if empty:
+        raise ValueError(f"empty values in price columns: {empty}")
+    volume = pd.to_numeric(frame["volume"])
+    if not (volume == volume.round()).all():
+        raise ValueError("volume must be a whole number")
     rows = list(
         zip(
             frame["symbol"].astype(str).tolist(),
             pd.to_datetime(frame["date"]).dt.strftime("%Y-%m-%d").tolist(),
             *(frame[c].astype(float).tolist() for c in ("open", "high", "low", "close")),
-            frame["volume"].astype("int64").tolist(),
+            volume.astype("int64").tolist(),
             frame["source"].astype(str).tolist(),
             [ts.isoformat() for ts in pd.to_datetime(frame["fetched_at"], utc=True)],
             strict=True,
@@ -102,12 +109,14 @@ def read_prices(
     """Prices for `symbol` indexed by `date` (timezone-naive), oldest first."""
     query = "SELECT * FROM prices WHERE symbol = ?"
     params: list[str] = [symbol]
+    # Bind plain ISO dates: a Timestamp's isoformat() adds "T00:00:00", which sorts
+    # after the stored "YYYY-MM-DD" text and would drop the start day.
     if start is not None:
         query += " AND date >= ?"
-        params.append(start.isoformat())
+        params.append(pd.Timestamp(start).date().isoformat())
     if end is not None:
         query += " AND date <= ?"
-        params.append(end.isoformat())
+        params.append(pd.Timestamp(end).date().isoformat())
     query += " ORDER BY date"
     frame = pd.read_sql_query(query, conn, params=params)
     frame["date"] = pd.to_datetime(frame["date"])
