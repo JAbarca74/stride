@@ -10,6 +10,7 @@ import requests
 
 from stride.data.sources import (
     CONTRACT_COLUMNS,
+    AlpacaSource,
     SourceError,
     TiingoSource,
     fetch_daily,
@@ -194,3 +195,104 @@ def test_downloaded_frame_can_be_stored() -> None:
     assert upsert_prices(conn, frame) == 2
     assert read_prices(conn, "SPY")["close"].tolist() == [583.0, 588.0]
     conn.close()
+
+
+def test_tiingo_unadjusted_close_uses_raw_close() -> None:
+    session = FakeSession(FakeResponse(200, TIINGO_PAYLOAD))
+    close = _tiingo(session).fetch_unadjusted_close("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert close.tolist() == [584.0, 589.0]
+    assert list(close.index) == [pd.Timestamp("2026-10-15"), pd.Timestamp("2026-10-16")]
+    assert close.index.name == "date"
+
+
+FAKE_SECRET = "test-secret-not-real"
+
+
+def _alpaca_bar(day: str, close: float) -> dict[str, Any]:
+    # Daily bars are stamped at midnight New York time, in UTC (04:00 in summer).
+    return {
+        "t": f"{day}T04:00:00Z",
+        "o": close - 1,
+        "h": close + 1,
+        "l": close - 2,
+        "c": close,
+        "v": 1_000,
+        "n": 10,
+        "vw": close,
+    }
+
+
+class PagedSession:
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        self.pages = pages
+        self.calls: list[dict[str, Any]] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, str],
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> FakeResponse:
+        self.calls.append({"url": url, "params": dict(params), "headers": dict(headers)})
+        return FakeResponse(200, self.pages[len(self.calls) - 1])
+
+
+def _alpaca(session: PagedSession) -> AlpacaSource:
+    return AlpacaSource(
+        api_key=FAKE_KEY, secret_key=FAKE_SECRET, session=session, clock=lambda: NOW
+    )
+
+
+ALPACA_PAGES: list[dict[str, Any]] = [
+    {"bars": [_alpaca_bar("2026-10-15", 584.0)], "symbol": "SPY", "next_page_token": "abc"},
+    {"bars": [_alpaca_bar("2026-10-16", 589.0)], "symbol": "SPY", "next_page_token": None},
+]
+
+
+def test_alpaca_requests_sip_feed_and_follows_pages() -> None:
+    session = PagedSession(ALPACA_PAGES)
+    close = _alpaca(session).fetch_unadjusted_close("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert close.tolist() == [584.0, 589.0]
+    assert list(close.index) == [pd.Timestamp("2026-10-15"), pd.Timestamp("2026-10-16")]
+    first, second = session.calls
+    assert first["url"] == "https://data.alpaca.markets/v2/stocks/SPY/bars"
+    assert first["params"]["feed"] == "sip"
+    assert first["params"]["adjustment"] == "raw"
+    assert first["params"]["timeframe"] == "1Day"
+    assert "page_token" not in first["params"]
+    assert second["params"]["page_token"] == "abc"
+    assert first["headers"] == {"APCA-API-KEY-ID": FAKE_KEY, "APCA-API-SECRET-KEY": FAKE_SECRET}
+    assert FAKE_KEY not in first["url"]
+
+
+def test_alpaca_fetch_returns_adjusted_contract() -> None:
+    session = PagedSession(ALPACA_PAGES)
+    frame = _alpaca(session).fetch("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert tuple(frame.columns) == CONTRACT_COLUMNS
+    assert (frame["source"] == "alpaca").all()
+    assert session.calls[0]["params"]["adjustment"] == "all"
+    assert frame["close"].tolist() == [584.0, 589.0]
+
+
+def test_alpaca_winter_timestamp_keeps_new_york_date() -> None:
+    page = {"bars": [{**_alpaca_bar("2026-12-01", 600.0), "t": "2026-12-01T05:00:00Z"}]}
+    close = _alpaca(PagedSession([page])).fetch_unadjusted_close(
+        "SPY", date(2026, 12, 1), date(2026, 12, 1)
+    )
+    assert list(close.index) == [pd.Timestamp("2026-12-01")]
+
+
+def test_alpaca_without_keys_refuses_to_start() -> None:
+    with pytest.raises(SourceError, match="ALPACA_API_KEY and ALPACA_SECRET_KEY"):
+        AlpacaSource(env={"ALPACA_API_KEY": FAKE_KEY})
+
+
+def test_alpaca_http_error_does_not_leak_keys() -> None:
+    session = FakeSession(FakeResponse(403, {"message": "forbidden"}))
+    source = AlpacaSource(api_key=FAKE_KEY, secret_key=FAKE_SECRET, session=session)
+    with pytest.raises(SourceError, match="alpaca returned HTTP 403") as info:
+        source.fetch_unadjusted_close("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert FAKE_KEY not in str(info.value)
+    assert FAKE_SECRET not in str(info.value)
