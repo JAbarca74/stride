@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Protocol
 
 import pandas as pd
@@ -272,3 +272,103 @@ def fetch_daily(source: PriceSource, symbol: str, start: date, end: date) -> pd.
     if end < start:
         raise ValueError("end must not be before start")
     return source.fetch(symbol, start, end)
+
+
+# Spot pairs used before each crypto ETF existed (SPEC section 5, task T19).
+CRYPTO_SPOT_PRODUCTS = {"IBIT": "BTC-USD", "ETHA": "ETH-USD"}
+
+
+class CoinbaseSource:
+    """Daily USD spot candles from Coinbase Exchange's public API (no key needed).
+
+    `symbol` is a Coinbase product id such as `BTC-USD`. Each candle covers one UTC
+    calendar day and is dated by that day.
+    """
+
+    name = "coinbase"
+    url = "https://api.exchange.coinbase.com/products/{product}/candles"
+    max_candles = 300  # API limit per request
+
+    def __init__(self, session: HttpSession | None = None, clock: Clock = _utc_now) -> None:
+        self._session: HttpSession = session or requests.Session()
+        self._clock = clock
+
+    def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        rows: list[list[float]] = []
+        chunk_start = start
+        while chunk_start <= end:
+            chunk_end = min(end, chunk_start + timedelta(days=self.max_candles - 1))
+            rows.extend(self._get(symbol, chunk_start, chunk_end))
+            chunk_start = chunk_end + timedelta(days=1)
+        # Candle layout: [time, low, high, open, close, volume], time in epoch seconds.
+        bars = pd.DataFrame(rows, columns=["time", "low", "high", "open", "close", "volume"])
+        bars["date"] = pd.to_datetime(bars["time"], unit="s")
+        bars = bars[(bars["date"] >= pd.Timestamp(start)) & (bars["date"] <= pd.Timestamp(end))]
+        return to_contract(bars, symbol, self.name, self._clock())
+
+    def _get(self, product: str, start: date, end: date) -> list[list[float]]:
+        params = {
+            "granularity": "86400",
+            "start": datetime.combine(start, time(), UTC).isoformat(),
+            "end": datetime.combine(end, time(), UTC).isoformat(),
+        }
+        try:
+            response = self._session.get(
+                self.url.format(product=product),
+                params=params,
+                headers={"User-Agent": "stride"},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise SourceError(
+                f"coinbase request for {product} failed: {type(exc).__name__}"
+            ) from None
+        if response.status_code != 200:  # noqa: PLR2004
+            raise SourceError(f"coinbase returned HTTP {response.status_code} for {product}")
+        candles: list[list[float]] = response.json()
+        return candles
+
+
+def splice_spot_with_etf(
+    spot: pd.DataFrame,
+    etf: pd.DataFrame,
+    symbol: str,
+    trading_days: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """One continuous series for a crypto ETF: scaled spot history, then the ETF itself.
+
+    Spot bars are kept only on NYSE trading days before the ETF's first bar. Their
+    prices are multiplied by `etf_close / spot_close` on that first day, so the series
+    has no jump at the switch and daily returns before it are the spot returns.
+    Spot volume is converted to ETF-share equivalents with the same ratio. The `source`
+    column keeps the provider of each row, which marks the spot-to-ETF switch.
+
+    Raises `SourceError` if the spot series lacks the switch day or if any trading day
+    between the first and last bar is missing.
+    """
+    if etf.empty:
+        raise SourceError(f"{symbol}: ETF series is empty")
+    etf = etf.sort_index()
+    switch = pd.Timestamp(etf.index[0])
+    spot_on_switch = spot["close"][spot.index == switch]
+    if spot_on_switch.empty:
+        raise SourceError(f"{symbol}: spot series has no bar on the switch day {switch.date()}")
+    ratio = float(etf["close"].iloc[0]) / float(spot_on_switch.iloc[0])
+
+    days = pd.DatetimeIndex(trading_days).normalize()
+    before = spot[(spot.index < switch) & spot.index.isin(days)].copy()
+    for column in ("open", "high", "low", "close"):
+        before[column] = before[column] * ratio
+    before["volume"] = (before["volume"] / ratio).round().astype("int64")
+
+    combined = pd.concat([before, etf]).sort_index()
+    combined["symbol"] = symbol
+    combined.index.name = "date"
+
+    first, last = combined.index.min(), combined.index.max()
+    expected = days[(days >= first) & (days <= last)]
+    missing = expected.difference(combined.index)
+    if len(missing) > 0:
+        shown = ", ".join(day.date().isoformat() for day in missing[:5])
+        raise SourceError(f"{symbol}: {len(missing)} missing trading days after splice: {shown}")
+    return combined.loc[:, list(CONTRACT_COLUMNS)]
