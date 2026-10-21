@@ -61,10 +61,25 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+_CASH_FLOWS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cash_flows (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT    NOT NULL,
+    amount      REAL    NOT NULL CHECK (amount > 0),
+    type        TEXT    NOT NULL CHECK (type IN ('deposit', 'withdrawal')),
+    detected_by TEXT    NOT NULL,
+    recorded_at TEXT    NOT NULL
+)
+"""
+
+CASH_FLOW_TYPES = ("deposit", "withdrawal")
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create the `prices` table if it does not exist."""
+    """Create the `prices` and `cash_flows` tables if they do not exist."""
     with conn:
         conn.execute(_SCHEMA)
+        conn.execute(_CASH_FLOWS_SCHEMA)
 
 
 def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
@@ -128,3 +143,35 @@ def last_price_date(conn: sqlite3.Connection, symbol: str) -> date | None:
     """Date of the newest stored bar for `symbol`, or None if there is none."""
     row = conn.execute("SELECT MAX(date) FROM prices WHERE symbol = ?", (symbol,)).fetchone()
     return None if row[0] is None else date.fromisoformat(row[0])
+
+
+def record_cash_flow(
+    conn: sqlite3.Connection,
+    day: date,
+    amount: float,
+    kind: str,
+    detected_by: str,
+    *,
+    recorded_at: pd.Timestamp | None = None,
+) -> None:
+    """Store one deposit or withdrawal (SPEC section 10). `amount` is positive;
+    `detected_by` says how it was found (e.g. "cash increase without a sale")."""
+    if kind not in CASH_FLOW_TYPES:
+        raise ValueError(f"type must be one of {CASH_FLOW_TYPES}")
+    stamp = recorded_at if recorded_at is not None else pd.Timestamp.now(tz="UTC")
+    with conn:
+        conn.execute(
+            "INSERT INTO cash_flows (date, amount, type, detected_by, recorded_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (day.isoformat(), float(amount), kind, detected_by, stamp.isoformat()),
+        )
+
+
+def net_cash_flows(conn: sqlite3.Connection) -> pd.Series:
+    """Net external flow per day: deposits positive, withdrawals negative."""
+    frame = pd.read_sql_query(
+        "SELECT date, SUM(CASE type WHEN 'deposit' THEN amount ELSE -amount END) AS net"
+        " FROM cash_flows GROUP BY date ORDER BY date",
+        conn,
+    )
+    return pd.Series(frame["net"].to_numpy(dtype=float), index=pd.to_datetime(frame["date"]))

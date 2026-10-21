@@ -27,6 +27,30 @@ def _excess(returns: pd.Series, risk_free: float | pd.Series) -> pd.Series:
     return returns - rf / TRADING_DAYS_PER_YEAR
 
 
+def time_weighted_returns(equity: pd.Series, flows: pd.Series | None = None) -> pd.Series:
+    """Daily time-weighted returns: deposits and withdrawals never count as gains.
+
+    `equity` is the end-of-day value; `flows` is the net external flow per day
+    (deposits positive), which arrives as cash during that day, so
+    r_t = (E_t - F_t) / E_{t-1} - 1.
+    """
+    equity = equity.sort_index().astype(float)
+    flow = (
+        flows.groupby(level=0).sum().reindex(equity.index).fillna(0.0)
+        if flows is not None
+        else pd.Series(0.0, index=equity.index)
+    )
+    previous = equity.shift(1)
+    returns: pd.Series = ((equity - flow) / previous - 1).iloc[1:]
+    return returns
+
+
+def deposits_vs_balance(equity: pd.Series, flows: pd.Series) -> pd.DataFrame:
+    """Total deposited (net of withdrawals) against the balance, per day."""
+    flow = flows.groupby(level=0).sum().reindex(equity.index).fillna(0.0)
+    return pd.DataFrame({"deposited": flow.cumsum(), "balance": equity})
+
+
 def cagr(returns: pd.Series) -> float:
     """Compound annual growth rate of the time-weighted return."""
     if returns.empty:
