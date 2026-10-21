@@ -88,6 +88,8 @@ class RiskConfig(_Section):
     margin_min_equity: NonNegative
     margin_buffer: Fraction
     min_history_days_for_kelly: Annotated[int, Field(ge=1)]
+    reconciliation_tolerance: Fraction
+    reconciliation_floor_usd: NonNegative
 
     @model_validator(mode="after")
     def _consistent_limits(self) -> Self:
