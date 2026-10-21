@@ -1,6 +1,6 @@
 # Design proposal: leverage, risk guard and kill switch
 
-**Status: proposal for owner review. No code is written until it is approved** (CLAUDE.md rule 7, SPEC section 13: these modules are human-reviewed).
+**Status: approved by the owner on 2026-10-21, with the decisions below (SPEC 1.3).** Each module goes in its own PR, which the owner reviews line by line before merging.
 
 Covers `src/stride/risk/leverage.py`, `src/stride/risk/guard.py` and the kill switch (`src/stride/risk/kill_switch.py` for the decision, plus a small I/O part in execution). All parameters already exist in `config.yaml`; none are added or changed.
 
@@ -116,3 +116,15 @@ At startup, if `KILL_SWITCH` exists, the system does nothing but log and alert. 
 5. **Kill switch timing:** evaluated on the daily close (at the 18:00 run), not intraday?
 
 Once these are answered and this document is approved, I will write the three modules with their tests, each in its own PR for line-by-line review.
+
+## Decisions (owner, 2026-10-21)
+
+1. **`sigma_60` is forward-looking:** σ = √(w′Σw) × √252, with w the target weights of today without leverage and Σ the EWMA covariance matrix (span 60, zero-mean, the same weighting as `vol60`). With no positions σ = 0 and the vol-target limit does not apply.
+2. **L may go below 1.** The "L* negative or < 250 days" fallback replaces only the Kelly term with 1.0; every other limit still applies. The 0.5 deleveraging is applied after the minimum.
+3. **Drawdown on a time-weighted index** (deposits and withdrawals excluded): drawdown = 1 − index / historical maximum. The maximum is stored in the database (`risk_state`), survives restarts, and is reset only by an explicit human action recorded in `events` when the `KILL_SWITCH` file is deleted.
+4. **Reconciliation per symbol with a floor:** a break when |broker − system| > max(1% of the symbol's value, $1), or when a symbol is held on only one side. Two consecutive days of breaks fire the kill switch. Thresholds go in `config.yaml` (`risk.reconciliation_tolerance: 0.01`, `risk.reconciliation_floor_usd: 1.0`).
+5. **Evaluated at the 18:00 close run.** −40% is a trigger, not a guaranteed maximum loss (intraday falls and opening gaps can exceed it). Equity = closes × broker positions + cash, compared with the broker's reported equity; differences are logged.
+
+**Tests:** besides the planned cases, property-based tests with `hypothesis` check invariants over thousands of random scenarios: L never exceeds any applicable limit or 4.0, there are never short positions, no approved order exceeds 60% of equity or the daily count, and the kill switch always fires at or beyond −40%.
+
+**Interpretation to confirm in the leverage PR:** below $2,000 the broker's margin limit (1.0 for a cash account) is not applied, because leverage there comes only from leveraged ETFs, not from margin. Otherwise L_broker = 1.0 would make the ETF route impossible.
