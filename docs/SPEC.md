@@ -189,7 +189,7 @@ The system needs daily OHLCV bars adjusted for dividends and splits; everything 
 **Mandatory validations** (`data/quality.py`). Validations 1 and 2 stop the run if any fails; validation 3 acts per symbol (below); validation 4 never stops the run. Thresholds live in `config.yaml` under `data.quality`; they are data parameters, not strategy parameters, so changing them does not restart the experiment.
 
 1. No missing bars in the last 300 **NYSE trading days** (from the T07 calendar). For assets with less history (e.g., ETHA, BITX), the window is all available history.
-2. No daily change above 25% without an event flag (split or provider error).
+2. No daily change above 25% without an event flag (split or provider error), within the same window of the last 300 NYSE trading days as validation 1. Older genuine moves (e.g., ETH's +53% on 2017-03-13) do not stop today's run.
 3. The latest bar is **day t**, the evaluation day: the signal uses the close of t and executes at the open of t+1. At the end of the run window (section 8):
    - if the **primary** source lacks bar t for a symbol, **that symbol is blocked** for the day (the position is kept, no orders are sent) and an alert is sent;
    - if the primary source lacks bar t for **all** symbols, the whole run is skipped and an alert is sent;

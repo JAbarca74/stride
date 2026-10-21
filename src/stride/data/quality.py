@@ -86,14 +86,24 @@ def check_no_missing_days(
 
 
 def check_daily_changes(
-    prices: pd.DataFrame, max_change: float, flagged_dates: Collection[date] = ()
+    prices: pd.DataFrame,
+    max_change: float,
+    flagged_dates: Collection[date] = (),
+    window_start: date | None = None,
 ) -> CheckResult:
-    """Validation 2: no close-to-close change above `max_change` unless the day is flagged."""
+    """Validation 2: no close-to-close change above `max_change` unless the day is flagged.
+
+    Only changes dated on or after `window_start` count (SPEC 1.2: the same window of
+    the last 300 NYSE trading days as validation 1), so genuine moves deep in the past,
+    such as early crypto history, do not stop today's run.
+    """
     close = prices["close"].copy()
     close.index = _dates(close.index)
     close = close.sort_index()
     change = close.pct_change().abs()
     is_jump = (change > max_change).to_numpy() & ~close.index.isin(_dates(flagged_dates))
+    if window_start is not None:
+        is_jump &= close.index >= pd.Timestamp(window_start)
     jumps = pd.DatetimeIndex(close.index[is_jump])
     if len(jumps) == 0:
         return CheckResult(MAX_DAILY_CHANGE, True)
@@ -204,7 +214,12 @@ def validate(
     expected = expected[expected < pd.Timestamp(evaluation_date)]
     results = [
         check_no_missing_days(prices, expected, config.missing_days_lookback),
-        check_daily_changes(prices, config.max_daily_change, flagged_dates),
+        check_daily_changes(
+            prices,
+            config.max_daily_change,
+            flagged_dates,
+            window_start=expected[0].date() if len(expected) else None,
+        ),
         check_latest_bar(prices, evaluation_date),
     ]
     if primary_raw_close is not None and secondary_raw_close is not None:
