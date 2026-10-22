@@ -325,10 +325,12 @@ Leveraged ETFs reset daily: in sideways markets they lose value even if the unde
 - would open a short position;
 - exceeds 60% of equity;
 - would be the 13th order of the day (max 12);
-- would buy an asset sold the same day, or vice versa;
+- would buy an asset sold the same day, or vice versa, counted by **underlying** (SPY, SSO and UPRO are one asset). **Exception (1.4):** an instrument switch (e.g. SPY → SSO) may sell and buy the same day only if (1) the orders are marked as an instrument switch by the leverage module, (2) the underlying's net exposure changes by less than the rebalance band, and (3) the sell goes first. Any other combination, such as an exit by signal followed by an entry in the leveraged version, stays forbidden. In a cash account, buying with the proceeds of an unsettled sale is allowed; the 20-day minimum hold prevents selling those shares before the original sale settles;
 - would leave margin excess liquidity below 25% of the broker requirement;
 - comes on a day whose data failed section 5 validations 1–2;
 - is for a symbol blocked by section 5 validation 3 (primary source lacks bar t) or validation 4 (latest bar differs between sources).
+- comes while the system is **halted** by a reconciliation break (step 4); the kill-switch liquidation is the only exception;
+- would sell a symbol that is not held, or more than is held (a 1-cent rounding tolerance, usable once per position).
 
 **Step 4 — Kill switch.** Evaluated once a day, at the 18:00 run on the close. If the time-weighted index falls 40% from its historical maximum, the system:
 
