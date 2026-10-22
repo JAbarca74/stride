@@ -86,13 +86,20 @@ Data flows one way. Strategy and risk are **pure functions** (no network, no fil
   <img src="docs/assets/leverage.svg" alt="Effective leverage is the minimum of five limits: Kelly, volatility target, absolute cap, broker limit and capital limit." width="100%">
 </p>
 
-Leverage is recomputed every day as the minimum of five limits, up to full Kelly and never above 4x. Below $2,000 there is no margin: extra exposure can only come from 2x/3x ETFs, so the maximum loss is the amount deposited.
+Leverage is recomputed every day as the minimum of five limits, up to full Kelly and never above 4x. The real account never borrows (`allow_margin: false`): extra exposure can only come from 2x/3x ETFs, so the maximum loss is the amount deposited.
 
 <p align="center">
   <img src="docs/assets/drawdown.svg" alt="Past a 20% drawdown leverage is halved; at 40% the kill switch closes every position." width="100%">
 </p>
 
-A drawdown past −20% halves leverage until a new high, and −40% trips a kill switch that closes every position and stops the system until a human resets it.
+A drawdown past −20% halves leverage until a new high. The system then has two separate brakes:
+
+| Trigger | Action |
+| :-- | :-- |
+| Drawdown of −40% on the time-weighted index | **Kill switch:** cancel pending orders, liquidate every position at the next open using the positions the broker reports, write `KILL_SWITCH` and stop until a human deletes it |
+| Reconciliation break on two consecutive days | **Halt:** freeze the system without liquidating (no new orders, positions kept), write `HALT` and alert until a human fixes the mismatch and resolves it |
+
+A halt does not sell: when the system is not sure what it holds, selling blind can make things worse. The kill switch stays armed during a halt. −40% is a trigger, not a guaranteed maximum loss: a gap at the next open can push the real loss further.
 
 ### Safety by design
 
