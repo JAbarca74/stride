@@ -36,6 +36,10 @@ class SourceError(Exception):
     """A provider could not deliver prices."""
 
 
+class HasStatus(Protocol):
+    status_code: int
+
+
 class HttpResponse(Protocol):
     status_code: int
 
@@ -100,7 +104,17 @@ def _get_json(
     params: Mapping[str, str],
     headers: Mapping[str, str],
 ) -> Any:
-    """GET `url` and return its JSON. Errors never echo the URL, params or headers.
+    """GET `url` and return its JSON. Errors never echo the URL, params or headers."""
+    response = _get_with_retry(
+        lambda: session.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS),
+        provider=provider,
+        symbol=symbol,
+    )
+    return response.json()
+
+
+def _get_with_retry[R: HasStatus](get: Callable[[], R], *, provider: str, symbol: str) -> R:
+    """Call `get` until it returns HTTP 200.
 
     Network errors and HTTP 429/5xx are retried up to `MAX_RETRIES` times with
     exponential backoff (SPEC section 8); other HTTP errors fail at once.
@@ -108,9 +122,7 @@ def _get_json(
     for attempt in range(MAX_RETRIES + 1):
         retry = attempt < MAX_RETRIES
         try:
-            response = session.get(
-                url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS
-            )
+            response = get()
         except requests.RequestException as exc:
             if retry:
                 time.sleep(RETRY_BACKOFF_SECONDS * 2**attempt)
@@ -123,7 +135,7 @@ def _get_json(
             continue
         if response.status_code != HTTP_OK:
             raise SourceError(f"{provider} returned HTTP {response.status_code} for {symbol}")
-        return response.json()
+        return response
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -465,3 +477,83 @@ class FredRateSource:
         )
         rate.index.name = "date"
         return rate.dropna().sort_index()
+
+
+class HttpTextSession(Protocol):
+    def get(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, str],
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> TextResponse: ...
+
+
+STOOQ_CSV_HEADER = "Date,Open,High,Low,Close,Volume"
+
+
+class StooqSource:
+    """Stooq daily CSV (no key). The fallback second source (SPEC 1.2, section 5).
+
+    Used for validation 4 only if Alpaca's free-plan closes do not match the official
+    close. US tickers take the `.us` suffix (`SPY` -> `spy.us`).
+
+    Stooq may answer with a JavaScript browser-verification page instead of CSV. That
+    page is never solved or bypassed: it becomes a `SourceError`, so the comparison is
+    skipped and validation 4 raises its alert as for any missing secondary source.
+
+    Whether Stooq adjusts its prices for dividends is not confirmed (SPEC section 5,
+    "To verify"). `fetch_unadjusted_close` returns Stooq's `Close` as is; until the
+    adjustment is confirmed, only the latest-bar check is reliable with this source.
+    """
+
+    name = "stooq"
+    url = "https://stooq.com/q/d/l/"
+
+    def __init__(self, session: HttpTextSession | None = None, clock: Clock = _utc_now) -> None:
+        self._session: HttpTextSession = session or requests.Session()
+        self._clock = clock
+
+    @staticmethod
+    def ticker(symbol: str) -> str:
+        return f"{symbol.lower()}.us"
+
+    def _csv(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        params = {
+            "s": self.ticker(symbol),
+            "i": "d",
+            "d1": start.strftime("%Y%m%d"),
+            "d2": end.strftime("%Y%m%d"),
+        }
+        response = _get_with_retry(
+            lambda: self._session.get(
+                self.url,
+                params=params,
+                headers={"User-Agent": "stride"},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            ),
+            provider=self.name,
+            symbol=symbol,
+        )
+        text = response.text.lstrip("\ufeff").strip()
+        if text.startswith(STOOQ_CSV_HEADER):
+            frame = pd.read_csv(io.StringIO(text))
+            frame.columns = [column.lower() for column in frame.columns]
+            return frame
+        if text == "No data":
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
+        if "<html" in text[:200].lower():
+            raise SourceError(
+                f"{self.name} returned a browser-verification page instead of CSV for {symbol}"
+            )
+        raise SourceError(f"{self.name} returned an unexpected response for {symbol}")
+
+    def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        """Daily bars in the section 5 contract."""
+        return to_contract(self._csv(symbol, start, end), symbol, self.name, self._clock())
+
+    def fetch_unadjusted_close(self, symbol: str, start: date, end: date) -> pd.Series:
+        """Stooq closes, for validation 4 (see the class note on adjustment)."""
+        frame = self._csv(symbol, start, end)
+        return _close_series(list(frame["date"]), [float(c) for c in frame["close"]])
