@@ -29,6 +29,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    "pandas-stubs",
     "types-PyYAML",
     "types-requests",
 ]
@@ -56,3 +57,7 @@ ignore = ["PLR0913"]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["pandas_market_calendars", "pandas_market_calendars.*"]
+ignore_missing_imports = true
