@@ -7,6 +7,7 @@ fetched_at. Prices are adjusted for dividends and splits.
 
 from __future__ import annotations
 
+import io
 import os
 import time
 from collections.abc import Callable, Mapping
@@ -418,3 +419,49 @@ def splice_spot_with_etf(
         shown = ", ".join(day.date().isoformat() for day in missing[:5])
         raise SourceError(f"{symbol}: {len(missing)} missing trading days after splice: {shown}")
     return combined.loc[:, list(CONTRACT_COLUMNS)]
+
+
+class TextResponse(Protocol):
+    status_code: int
+
+    @property
+    def text(self) -> str: ...
+
+
+class TextSession(Protocol):
+    def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> TextResponse: ...
+
+
+class FredRateSource:
+    """Daily 3-month T-bill rate (FRED series DTB3) as an annual fraction. No key needed.
+
+    FRED leaves holidays empty; those days are dropped. Use
+    `leveraged.rate_known_at_t_minus_1` to align it without look-ahead.
+    """
+
+    name = "fred"
+    url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+    def __init__(self, series_id: str = "DTB3", session: TextSession | None = None) -> None:
+        self._series_id = series_id
+        self._session: TextSession = session or requests.Session()
+
+    def fetch_rate(self) -> pd.Series:
+        try:
+            response = self._session.get(
+                self.url, params={"id": self._series_id}, timeout=REQUEST_TIMEOUT_SECONDS
+            )
+        except requests.RequestException as exc:
+            raise SourceError(
+                f"fred request for {self._series_id} failed: {type(exc).__name__}"
+            ) from None
+        if response.status_code != HTTP_OK:
+            raise SourceError(f"fred returned HTTP {response.status_code} for {self._series_id}")
+        frame = pd.read_csv(io.StringIO(response.text))
+        frame.columns = ["date", "value"]
+        values = pd.to_numeric(frame["value"], errors="coerce")
+        rate = pd.Series(
+            values.to_numpy() / 100, index=pd.DatetimeIndex(frame["date"]), name="rate"
+        )
+        rate.index.name = "date"
+        return rate.dropna().sort_index()

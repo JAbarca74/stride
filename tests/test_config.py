@@ -269,3 +269,30 @@ def test_quality_section_is_required(tmp_path: Path) -> None:
     del data["data"]["quality"]
     with pytest.raises(ConfigError, match="quality"):
         load_config(_write(tmp_path, data), env={})
+
+
+def test_reference_leverage_switch_and_ethu() -> None:
+    config = load_config(REFERENCE, env={})
+    assert config.leverage_switch.enter_k == 1.25
+    assert config.leverage_switch.exit_k == 0.95
+    assert config.leverage_switch.min_hold_days == 20
+    assert config.leveraged_etfs["ETHA"] == {2: "ETHU"}
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("enter_k", 1.0, "enter_k"),
+        ("exit_k", 0, "exit_k"),
+        ("exit_k", 1.3, "exit_k must be below enter_k"),
+        ("min_hold_days", -1, "min_hold_days"),
+        ("min_hold_days", 20.5, "min_hold_days"),
+    ],
+)
+def test_invalid_leverage_switch_is_rejected(
+    tmp_path: Path, key: str, value: Any, message: str
+) -> None:
+    data = _reference()
+    data["leverage_switch"][key] = value
+    with pytest.raises(ConfigError, match=message):
+        load_config(_write(tmp_path, data), env={})
