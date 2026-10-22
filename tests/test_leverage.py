@@ -9,11 +9,10 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from stride.config import load_config
+from stride.config import RiskConfig, load_config
 from stride.indicators import ewma_volatility
 from stride.risk.leverage import (
-    BROKER,
-    CAPITAL,
+    CAPACITY,
     KELLY,
     MAX_LEVERAGE,
     VOL_TARGET,
@@ -28,7 +27,8 @@ from stride.risk.leverage import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = load_config(ROOT / "config.yaml", env={})
-RISK = CONFIG.risk  # kelly 1.0, vol 0.60, max 4.0, etf 2.5, dd 0.20, margin $2,000
+RISK = CONFIG.risk  # kelly 1.0, vol 0.60, max 4.0, etf 2.5, dd 0.20, no margin
+MARGIN = RISK.model_copy(update={"allow_margin": True})  # the paper Kelly account
 SWITCH = CONFIG.leverage_switch  # enter 1.25, exit 0.95, hold 20
 ELIGIBLE = {"SPY": {2: "SSO", 3: "UPRO"}, "TLT": {3: "TMF"}, "GLD": {2: "UGL"}}
 NO_ESTIMATE = KellyEstimate(None, math.nan, math.nan, 0)
@@ -39,7 +39,9 @@ def _kelly(l_star: float) -> KellyEstimate:
     return KellyEstimate(l_star, 0.1, 0.2, 756)
 
 
-def _lev(kelly: KellyEstimate = NO_ESTIMATE, **kw: float | bool) -> tuple[float, str, bool]:
+def _lev(
+    kelly: KellyEstimate = NO_ESTIMATE, *, risk: RiskConfig = RISK, **kw: float | bool
+) -> tuple[float, str, bool]:
     args: dict[str, float | bool] = {
         "sigma": 0.0,
         "broker_leverage": 2.0,
@@ -47,7 +49,7 @@ def _lev(kelly: KellyEstimate = NO_ESTIMATE, **kw: float | bool) -> tuple[float,
         "drawdown": 0.0,
         "delever_active": False,
     } | kw
-    decision = effective_leverage(kelly, risk=RISK, **args)  # type: ignore[arg-type]
+    decision = effective_leverage(kelly, risk=risk, **args)  # type: ignore[arg-type]
     return decision.leverage, decision.binding_limit, decision.delever_active
 
 
@@ -141,16 +143,47 @@ def test_vol_target_binds() -> None:
 
 
 def test_max_leverage_binds() -> None:
-    assert _lev(_kelly(9.0), equity=5_000, broker_leverage=6.0)[:2] == (4.0, MAX_LEVERAGE)
+    # Margin 2.0 x ETFs 2.5 = capacity 5.0, so the 4.0 cap binds.
+    assert _lev(_kelly(9.0), risk=MARGIN, equity=5_000, broker_leverage=2.0)[:2] == (
+        4.0,
+        MAX_LEVERAGE,
+    )
 
 
-def test_broker_binds_with_a_margin_account() -> None:
-    assert _lev(_kelly(3.0), equity=5_000, broker_leverage=2.0)[:2] == (2.0, BROKER)
+def test_capacity_without_margin_is_2_5_whatever_the_balance() -> None:
+    # SPEC 1.4: the real account never borrows; the cash account's 1.0 is the loan.
+    assert _lev(_kelly(3.0), equity=500, broker_leverage=1.0)[:2] == (2.5, CAPACITY)
+    assert _lev(_kelly(3.0), equity=5_000, broker_leverage=2.0)[:2] == (2.5, CAPACITY)
 
 
-def test_capital_binds_below_2000() -> None:
-    # No margin: the cash account's broker limit (1.0) is not applied, the ETF cap is.
-    assert _lev(_kelly(3.0), equity=500, broker_leverage=1.0)[:2] == (2.5, CAPITAL)
+def test_capacity_with_margin_multiplies_loan_and_etfs() -> None:
+    # Paper Kelly account: Reg T 1.2 x 2.5 = 3.0.
+    leverage, binding, _ = _lev(_kelly(3.5), risk=MARGIN, equity=5_000, broker_leverage=1.2)
+    assert leverage == pytest.approx(3.0)
+    assert binding == CAPACITY
+    # Below $2,000 there is no margin even when it is allowed.
+    assert _lev(_kelly(3.5), risk=MARGIN, equity=500, broker_leverage=2.0)[:2] == (2.5, CAPACITY)
+
+
+def test_crossing_2000_never_lowers_capacity() -> None:
+    for risk in (RISK, MARGIN):
+        below = _lev(_kelly(9.0), risk=risk, equity=1_999, broker_leverage=2.0)[0]
+        above = _lev(_kelly(9.0), risk=risk, equity=2_000, broker_leverage=2.0)[0]
+        assert above >= below
+
+
+def test_borrow_is_reported() -> None:
+    decision = effective_leverage(
+        _kelly(2.0),
+        sigma=0.0,
+        broker_leverage=1.6,
+        equity=5_000,
+        drawdown=0.0,
+        delever_active=False,
+        risk=MARGIN,
+    )
+    assert decision.borrow == 1.6
+    assert decision.limits[CAPACITY] == pytest.approx(4.0)
 
 
 def test_fallback_replaces_only_the_kelly_term() -> None:
@@ -194,7 +227,7 @@ def test_deleveraging_starts_stays_and_resets() -> None:
 )
 def test_invalid_inputs_are_rejected(kw: dict[str, float]) -> None:
     with pytest.raises(ValueError):
-        _lev(_kelly(2.0), **kw)
+        _lev(_kelly(2.0), risk=MARGIN, **kw)  # with margin a zero broker limit is invalid
 
 
 # Step 2b: instruments.
@@ -299,10 +332,11 @@ finite = st.floats(min_value=0.0, max_value=10.0, allow_nan=False)
 @given(
     l_star=st.one_of(st.none(), st.floats(min_value=0.01, max_value=50)),
     sigma=finite,
-    broker=st.floats(min_value=0.1, max_value=10),
+    broker=st.floats(min_value=1.0, max_value=10),
     equity=st.floats(min_value=0, max_value=1e7),
     drawdown=st.floats(min_value=0, max_value=1),
     active=st.booleans(),
+    allow_margin=st.booleans(),
 )
 def test_leverage_never_exceeds_any_limit(  # noqa: PLR0917
     l_star: float | None,
@@ -311,6 +345,7 @@ def test_leverage_never_exceeds_any_limit(  # noqa: PLR0917
     equity: float,
     drawdown: float,
     active: bool,
+    allow_margin: bool,
 ) -> None:
     kelly = KellyEstimate(l_star, 0.1, 0.2, 756)
     decision = effective_leverage(
@@ -320,16 +355,17 @@ def test_leverage_never_exceeds_any_limit(  # noqa: PLR0917
         equity=equity,
         drawdown=drawdown,
         delever_active=active,
-        risk=RISK,
+        risk=MARGIN if allow_margin else RISK,
     )
     assert 0 < decision.leverage <= RISK.max_leverage
     assert all(decision.leverage <= limit + 1e-12 for limit in decision.limits.values())
     expected = min(decision.limits.values()) * (0.5 if decision.delever_active else 1.0)
     assert decision.leverage == pytest.approx(expected)
-    if equity < RISK.margin_min_equity:
-        assert decision.leverage <= RISK.max_etf_portfolio_leverage
+    if not allow_margin or equity < RISK.margin_min_equity:  # no loan: 2.5x at most
+        assert decision.borrow == 1.0
+        assert decision.leverage <= RISK.max_etf_portfolio_leverage + 1e-12
     else:
-        assert decision.leverage <= broker
+        assert decision.leverage <= broker * RISK.max_etf_portfolio_leverage + 1e-12
 
 
 assets = st.sampled_from(["SPY", "TLT", "GLD", "EFA", "DBC"])
@@ -383,3 +419,27 @@ def test_portfolio_volatility_is_bounded_by_its_parts(w: list[float], seed: int)
     sigma = forward_volatility(weights, returns)
     parts = sum(abs(x) * forward_volatility({s: 1.0}, returns) for s, x in weights.items())
     assert 0 <= sigma <= parts + 1e-9
+
+
+def test_margin_doubles_the_cash_available_for_instruments() -> None:
+    result = choose_instruments(
+        {"SPY": 1_800},
+        1_000.0,
+        eligible=ELIGIBLE,
+        current={},
+        switch=SWITCH,
+        max_etf_portfolio_leverage=2.5,
+        borrow=2.0,
+    )
+    assert result["SPY"].symbol == "SPY"  # k = 1,800 / 2,000 = 0.9: no leveraged ETF needed
+    assert result["SPY"].cash_usd == pytest.approx(1_800)
+    with pytest.raises(ValueError, match="borrow"):
+        choose_instruments(
+            {"SPY": 1},
+            1.0,
+            eligible=ELIGIBLE,
+            current={},
+            switch=SWITCH,
+            max_etf_portfolio_leverage=2.5,
+            borrow=0.5,
+        )
