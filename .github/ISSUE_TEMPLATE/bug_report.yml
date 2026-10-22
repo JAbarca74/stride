@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as the spec says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problems go through the Security tab, not here.**
+        Never paste keys, tokens, account numbers or the content of your `.env`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Commands, config changes and data needed. Remove anything private.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options: [backtest, paper, not applicable]
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: OS, Python version, STRIDE commit
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log lines with any identifiers removed.
+      render: text
