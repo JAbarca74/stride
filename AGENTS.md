@@ -12,7 +12,8 @@ Read `CLAUDE.md` and `docs/SPEC.md` first. The same rules apply to every agent w
 
 - Do not create or edit: `src/stride/risk/leverage.py`, `src/stride/risk/guard.py`, the kill switch, `src/stride/execution/orders.py`, `src/stride/execution/ibkr_broker.py`.
 - Do not change values in `config.yaml` or add parameters unless the task says so.
-- Do not use real credentials, set `LIVE_CONFIRM`, or run with `mode: live`.
+- Do not set `LIVE_CONFIRM` or run with `mode: live`.
+- Credentials: data-only API keys (Tiingo) and **paper-trading** keys (Alpaca paper) in `.env` may be used for development and verification. Live-trading credentials are never allowed. Never print, log or commit any key, and confirm `.env` is git-ignored first.
 - Do not add dependencies that are not listed in SPEC section 4 without explaining why in the PR.
 
 ## Definition of done
