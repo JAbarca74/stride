@@ -297,6 +297,19 @@ def test_alpaca_requests_sip_feed_and_follows_pages() -> None:
     assert FAKE_KEY not in first["url"]
 
 
+def test_alpaca_end_is_last_new_york_second_of_a_past_day() -> None:
+    session = PagedSession(ALPACA_PAGES)
+    _alpaca(session).fetch_unadjusted_close("SPY", date(2026, 10, 15), date(2026, 10, 16))
+    assert session.calls[0]["params"]["end"] == "2026-10-17T03:59:59Z"
+
+
+def test_alpaca_end_for_today_stays_outside_the_recent_sip_window() -> None:
+    # NOW is 2026-10-19 20:30 UTC: the Basic plan rejects the latest 15 minutes.
+    session = PagedSession([{"bars": [_alpaca_bar("2026-10-19", 590.0)]}])
+    _alpaca(session).fetch_unadjusted_close("SPY", date(2026, 10, 19), date(2026, 10, 19))
+    assert session.calls[0]["params"]["end"] == "2026-10-19T20:14:00Z"
+
+
 def test_alpaca_fetch_returns_adjusted_contract() -> None:
     session = PagedSession(ALPACA_PAGES)
     frame = _alpaca(session).fetch("SPY", date(2026, 10, 15), date(2026, 10, 16))
