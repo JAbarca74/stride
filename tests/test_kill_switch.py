@@ -20,6 +20,7 @@ from stride.execution.kill_switch_file import (
     main,
     manual_reset,
     resolve_halt,
+    state_paths,
 )
 from stride.risk.kill_switch import (
     DRAWDOWN,
@@ -212,33 +213,54 @@ def test_reset_needs_the_file_deleted_and_a_name(conn: sqlite3.Connection, tmp_p
     assert "by Owner: account reviewed" in detail
 
 
+@pytest.mark.parametrize(
+    ("index", "peak"), [(math.nan, 1.0), (1.0, math.inf), (-0.1, 1.0), (1.0, 0.0)]
+)
+def test_save_twr_refuses_bad_values(conn: sqlite3.Connection, index: float, peak: float) -> None:
+    save_twr(conn, 0.9, 1.1)
+    with pytest.raises(ValueError, match="finite"):
+        save_twr(conn, index, peak)
+    assert load_twr(conn) == (0.9, 1.1)  # the stored state is untouched
+
+
+def test_state_paths_are_anchored_at_the_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = state_paths(ROOT / "config.yaml")
+    assert paths.db == ROOT / "data" / "stride.db"
+    assert (paths.kill_switch, paths.halt) == (ROOT / "KILL_SWITCH", ROOT / "HALT")
+    monkeypatch.chdir(tmp_path)  # another working directory changes nothing
+    assert state_paths(ROOT / "config.yaml") == paths
+
+
+def test_cli_without_a_config_refuses_instead_of_using_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    args = ["reset", "--by", "Owner", "--reason", "ok"]
+    assert main(args) == 2
+    assert "error" in capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []  # no stray database was created
+
+
 def test_cli_status_and_reset(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db, switch = str(tmp_path / "s.db"), str(tmp_path / "KILL_SWITCH")
-    assert main(["status", "--file", switch]) == 0
+    halt_file = str(tmp_path / "HALT")
+    assert main(["status", "--file", switch, "--halt-file", halt_file, "--db", db]) == 0
     assert "kill switch: inactive; not halted" in capsys.readouterr().out
     Path(switch).write_text("x", encoding="utf-8")
-    assert main(["status", "--file", switch]) == 0
+    assert main(["status", "--file", switch, "--halt-file", halt_file, "--db", db]) == 0
     assert "kill switch: ACTIVE" in capsys.readouterr().out
-    assert main(["reset", "--db", db, "--file", switch]) == 2  # missing --by/--reason
-    args = ["reset", "--by", "Owner", "--reason", "ok", "--db", db, "--file", switch]
+    paths = ["--db", db, "--file", switch, "--halt-file", halt_file]
+    assert main(["reset", *paths]) == 2  # missing --by/--reason
+    args = ["reset", "--by", "Owner", "--reason", "ok", *paths]
     assert main(args) == 1  # file still there
     Path(switch).unlink()
     assert main(args) == 0
     assert "reset recorded" in capsys.readouterr().out
-    halt_file = str(tmp_path / "HALT")
     Path(halt_file).write_text("x", encoding="utf-8")
-    resolve = [
-        "resolve-halt",
-        "--by",
-        "Owner",
-        "--reason",
-        "fixed",
-        "--db",
-        db,
-        "--halt-file",
-        halt_file,
-    ]
-    assert main(["status", "--file", switch, "--halt-file", halt_file]) == 0
+    resolve = ["resolve-halt", "--by", "Owner", "--reason", "fixed", *paths]
+    assert main(["status", *paths]) == 0
     assert "HALTED" in capsys.readouterr().out
     assert main(resolve) == 1
     Path(halt_file).unlink()
