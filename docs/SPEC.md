@@ -325,10 +325,12 @@ Leveraged ETFs reset daily: in sideways markets they lose value even if the unde
 - would open a short position;
 - exceeds 60% of equity;
 - would be the 13th order of the day (max 12);
-- would buy an asset sold the same day, or vice versa;
+- would buy an asset sold the same day, or vice versa, counted by **underlying** (SPY, SSO and UPRO are one asset). **Exception (1.4):** an instrument switch (e.g. SPY → SSO) may sell and buy the same day only if (1) the orders are marked as an instrument switch by the leverage module, (2) the underlying's net exposure changes by less than the rebalance band, and (3) the sell goes first. Any other combination, such as an exit by signal followed by an entry in the leveraged version, stays forbidden. In a cash account, buying with the proceeds of an unsettled sale is allowed; the 20-day minimum hold prevents selling those shares before the original sale settles;
 - would leave margin excess liquidity below 25% of the broker requirement;
 - comes on a day whose data failed section 5 validations 1–2;
 - is for a symbol blocked by section 5 validation 3 (primary source lacks bar t) or validation 4 (latest bar differs between sources).
+- comes while the system is **halted** by a reconciliation break (step 4); the kill-switch liquidation is the only exception;
+- would sell a symbol that is not held, or more than is held (a 1-cent rounding tolerance, usable once per position).
 
 **Step 4 — Kill switch.** Evaluated once a day, at the 18:00 run on the close. If the time-weighted index falls 40% from its historical maximum, the system:
 
@@ -337,7 +339,16 @@ Leveraged ETFs reset daily: in sideways markets they lose value even if the unde
 3. writes the `KILL_SWITCH` file and sends an alert;
 4. does not trade again until a human deletes that file by hand.
 
-The kill switch also fires on a **reconciliation break on two consecutive days**. A symbol breaks when |broker value − system value| exceeds the larger of 1% of the symbol's value and $1 (the floor avoids firing on rounding of fractional shares in a small account). A symbol the broker holds and the system does not expect, or the reverse, is also a break. The thresholds live in `config.yaml` (`risk.reconciliation_tolerance`, `risk.reconciliation_floor_usd`).
+**Two levels (1.4).** A reconciliation break does not liquidate: when the system is not sure what it holds, selling blind can make things worse and costs about 1% per order.
+
+| Trigger | Action |
+| --- | --- |
+| Drawdown of −40% (time-weighted index) | **Kill switch:** liquidate everything at the next open, using the positions **the broker reports**; write `KILL_SWITCH` |
+| Reconciliation break on two consecutive days (any symbols) | **Halt:** freeze the system (no new orders, positions kept), write `HALT`, alert, and wait for a person to resolve it |
+
+During a halt the drawdown kill switch stays armed: liquidating with the broker's positions is safe even when the system is out of sync. Breaks on different symbols on consecutive days count, because they suggest a system problem rather than an isolated case. A person resolves a halt by fixing the reconciliation, deleting `HALT` by hand and recording it (`resolve-halt`); a halt does not reset the drawdown peak.
+
+**Reconciliation break.** A symbol breaks when |broker value − system value| exceeds the larger of 1% of the symbol's value and $1 (the floor avoids firing on rounding of fractional shares in a small account). A symbol the broker holds and the system does not expect, or the reverse, is also a break. The thresholds live in `config.yaml` (`risk.reconciliation_tolerance`, `risk.reconciliation_floor_usd`).
 
 **−40% is a trigger, not a guaranteed maximum loss.** A fall during the day, or a gap at the next open when the positions are closed, can push the real loss beyond 40%.
 
