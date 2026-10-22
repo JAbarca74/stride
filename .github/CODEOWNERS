@@ -1,0 +1,6 @@
+# Every change needs the maintainer's review; these paths decide how much money is at risk.
+*                                    @JAbarca74
+/src/stride/risk/                    @JAbarca74
+/src/stride/execution/               @JAbarca74
+/config.yaml                         @JAbarca74
+/.github/                            @JAbarca74
