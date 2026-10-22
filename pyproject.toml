@@ -48,7 +48,7 @@ Documentation = "https://github.com/JAbarca74/stride/blob/main/docs/SPEC.md"
 Issues = "https://github.com/JAbarca74/stride/issues"
 
 [project.optional-dependencies]
-alpaca = ["alpaca-py>=0.30"]
+alpaca = ["alpaca-py>=0.44.0"]
 ibkr = ["ib_async>=1.0"]
 dev = [
     "pytest>=8.0",
