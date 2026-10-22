@@ -193,6 +193,22 @@ def test_fallback_replaces_only_the_kelly_term() -> None:
     assert binding == VOL_TARGET
 
 
+@pytest.mark.parametrize("l_star", [math.nan, math.inf, -1.0, 0.0])
+def test_unusable_l_star_falls_back_to_one(l_star: float) -> None:
+    assert _lev(_kelly(l_star))[:2] == (1.0, KELLY)
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    l_star=st.one_of(st.none(), st.floats(allow_nan=True, allow_infinity=True)),
+    sigma=st.floats(min_value=0, max_value=5),
+)
+def test_leverage_is_always_finite_and_within_the_caps(l_star: float | None, sigma: float) -> None:
+    leverage, _, _ = _lev(KellyEstimate(l_star, 0.1, 0.2, 756), sigma=sigma)
+    assert math.isfinite(leverage)
+    assert 0 <= leverage <= min(RISK.max_leverage, RISK.max_etf_portfolio_leverage)
+
+
 def test_zero_sigma_drops_the_vol_target() -> None:
     assert (
         VOL_TARGET

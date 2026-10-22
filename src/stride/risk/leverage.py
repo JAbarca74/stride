@@ -157,8 +157,11 @@ def effective_leverage(
         raise ValueError("broker_leverage must be positive with a margin account")
     borrow = broker_leverage if margin else 1.0
 
+    # Fail safe: an L* that is not a positive finite number counts as no estimate.
+    l_star = kelly.l_star
+    usable = l_star is not None and math.isfinite(l_star) and l_star > 0
     limits: dict[str, float] = {
-        KELLY: risk.kelly_fraction * kelly.l_star if kelly.l_star is not None else 1.0,
+        KELLY: risk.kelly_fraction * l_star if usable and l_star is not None else 1.0,
         MAX_LEVERAGE: risk.max_leverage,
         CAPACITY: borrow * risk.max_etf_portfolio_leverage,
     }

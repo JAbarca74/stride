@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -284,7 +285,10 @@ def load_twr(conn: sqlite3.Connection) -> tuple[float, float]:
 
 def save_twr(conn: sqlite3.Connection, index: float, peak: float) -> None:
     """Store the index and peak. The peak never goes down here; only
-    `reset_twr_peak` can lower it."""
+    `reset_twr_peak` can lower it. A non-finite or negative value is refused, so a
+    bad index can never be stored as the peak."""
+    if not (math.isfinite(index) and math.isfinite(peak)) or index < 0 or peak <= 0:
+        raise ValueError("the index must be finite and non-negative, the peak finite and positive")
     _, stored_peak = load_twr(conn)
     stamp = _now()
     with conn:

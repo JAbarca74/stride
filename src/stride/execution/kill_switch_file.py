@@ -19,6 +19,10 @@ The halt (SPEC 1.4) uses the `HALT` file the same way: `halt` writes it,
 kept), and after a person fixes the reconciliation and deletes the file by
 hand, `resolve-halt --by "Name" --reason "..."` records it. A halt does not
 reset the drawdown peak.
+
+The database and both files live next to `config.yaml` (see `state_paths`), never
+relative to the working directory: a run started from another folder must still
+see an active kill switch, and a reset must reach the real database.
 """
 
 from __future__ import annotations
@@ -27,10 +31,12 @@ import argparse
 import sqlite3
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
+from stride.config import ConfigError, load_config
 from stride.data.store import connect, record_event, reset_twr_peak
 from stride.risk.kill_switch import KillDecision
 
@@ -40,6 +46,22 @@ HALT_FILE = "HALT"
 
 class KillSwitchError(Exception):
     """The kill switch is in a state that does not allow the requested action."""
+
+
+@dataclass(frozen=True)
+class StatePaths:
+    db: Path
+    kill_switch: Path
+    halt: Path
+
+
+def state_paths(config_path: str | Path = "config.yaml") -> StatePaths:
+    """The database and the KILL_SWITCH and HALT files, anchored at the folder of
+    `config_path` as `data.update` does. Raises `ConfigError` if it cannot be read."""
+    path = Path(config_path).resolve()
+    root = path.parent
+    config = load_config(path)
+    return StatePaths(root / config.data.db_path, root / KILL_SWITCH_FILE, root / HALT_FILE)
 
 
 def is_active(path: str | Path = KILL_SWITCH_FILE) -> bool:
@@ -118,24 +140,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("command", choices=["status", "reset", "resolve-halt"])
     parser.add_argument("--by", default="", help="who resets (required for reset)")
     parser.add_argument("--reason", default="", help="why it is safe to trade again")
-    parser.add_argument("--db", default="data/stride.db")
-    parser.add_argument("--file", default=KILL_SWITCH_FILE)
-    parser.add_argument("--halt-file", default=HALT_FILE)
+    parser.add_argument("--config", default="config.yaml", help="paths are relative to it")
+    parser.add_argument("--db", help="default: data.db_path next to the config")
+    parser.add_argument("--file", help="default: KILL_SWITCH next to the config")
+    parser.add_argument("--halt-file", help="default: HALT next to the config")
     args = parser.parse_args(argv)
+    db, switch, halt_file = args.db, args.file, args.halt_file
+    if db is None or switch is None or halt_file is None:
+        try:
+            paths = state_paths(args.config)
+        except ConfigError as exc:
+            sys.stdout.write(f"error: {exc}\n")
+            return 2
+        db, switch, halt_file = db or paths.db, switch or paths.kill_switch, halt_file or paths.halt
     if args.command == "status":
-        kill = "ACTIVE" if is_active(args.file) else "inactive"
-        halted = "HALTED" if is_halted(args.halt_file) else "not halted"
+        kill = "ACTIVE" if is_active(switch) else "inactive"
+        halted = "HALTED" if is_halted(halt_file) else "not halted"
         sys.stdout.write(f"kill switch: {kill}; {halted}\n")
         return 0
     if not args.by.strip() or not args.reason.strip():
         sys.stdout.write(f"{args.command} needs --by and --reason\n")
         return 2
-    conn = connect(args.db)
+    conn = connect(db)
     try:
         if args.command == "reset":
-            manual_reset(conn, args.by, args.reason, args.file)
+            manual_reset(conn, args.by, args.reason, switch)
         else:
-            resolve_halt(conn, args.by, args.reason, args.halt_file)
+            resolve_halt(conn, args.by, args.reason, halt_file)
     except KillSwitchError as exc:
         sys.stdout.write(f"error: {exc}\n")
         return 1
