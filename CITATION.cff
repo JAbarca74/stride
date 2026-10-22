@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use STRIDE in your work, please cite it as below."
+title: "STRIDE: Systematic Trend & Risk-Integrated Daily Execution"
+abstract: >-
+  A systematic trend-following trading system with volatility-based risk
+  management, Kelly-capped leverage and a kill switch, built as a 12-month
+  live experiment and an open technical portfolio project.
+type: software
+authors:
+  - family-names: Abarca
+    given-names: Jefferson
+repository-code: "https://github.com/JAbarca74/stride"
+license: MIT
+version: 0.1.0
+date-released: 2026-10-22
+keywords:
+  - algorithmic trading
+  - trend following
+  - risk management
+  - Kelly criterion
+  - backtesting
+  - quantitative finance
