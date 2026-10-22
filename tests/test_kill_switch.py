@@ -100,6 +100,23 @@ def test_non_finite_drawdown_fires() -> None:
     assert kill_switch_decision(TwrState(math.nan, 1.0), 0.40, [], []).fire
 
 
+@pytest.mark.parametrize("peak", [0.0, -1.0, math.nan, math.inf])
+def test_unusable_peak_fires_instead_of_crashing(peak: float) -> None:
+    assert kill_switch_decision(TwrState(0.5, peak), 0.40, [], []).fire
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    index=st.floats(allow_nan=True, allow_infinity=True),
+    peak=st.floats(allow_nan=True, allow_infinity=True),
+)
+def test_decision_never_raises_and_fires_on_any_bad_state(index: float, peak: float) -> None:
+    decision = kill_switch_decision(TwrState(index, peak), 0.40, [], [])
+    healthy = math.isfinite(peak) and peak > 0 and math.isfinite(index)
+    if not healthy:
+        assert decision.fire
+
+
 # Reconciliation per symbol with a $1 floor.
 
 
@@ -117,6 +134,26 @@ def test_large_positions_use_one_percent() -> None:
 def test_one_sided_symbols_are_breaks() -> None:
     assert reconciliation_breaks({"SPY": 50.0}, {}, TOL, FLOOR) == ["SPY"]
     assert reconciliation_breaks({}, {"GLD": 0.5}, TOL, FLOOR) == ["GLD"]
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_non_finite_values_are_breaks(bad: float) -> None:
+    assert reconciliation_breaks({"SPY": 50.0}, {"SPY": bad}, TOL, FLOOR) == ["SPY"]
+    assert reconciliation_breaks({"SPY": bad}, {"SPY": 50.0}, TOL, FLOOR) == ["SPY"]
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    expected=st.floats(allow_nan=True, allow_infinity=True),
+    actual=st.floats(allow_nan=True, allow_infinity=True),
+)
+def test_a_symbol_is_clean_only_when_both_values_are_finite_and_close(
+    expected: float, actual: float
+) -> None:
+    clean = reconciliation_breaks({"SPY": expected}, {"SPY": actual}, TOL, FLOOR) == []
+    if clean:
+        assert math.isfinite(expected) and math.isfinite(actual)
+        assert abs(actual - expected) <= max(TOL * max(abs(expected), abs(actual)), FLOOR)
 
 
 def test_equity_from_positions_as_in_the_backtest() -> None:
