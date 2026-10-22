@@ -3,12 +3,14 @@
 **STRIDE** — *Systematic Trend & Risk-Integrated Daily Execution*
 A systematic trend-following trading system with volatility-based risk management.
 
-- Version: 1.2
+- Version: 1.3
 - Date: 2026-10-19
 - Author: Jefferson Abarca
 - Status: Approved for Phase 1 (Foundations)
 
 This document is the single source of truth for the system. If code and spec disagree, the spec wins until it is explicitly changed. Any ambiguity must be raised as a question, never resolved by guessing.
+
+**Changes in 1.3** (owner decisions on the risk modules): forward-looking `sigma_60` from target weights and an EWMA covariance matrix; the Kelly fallback replaces only the Kelly term, so L may go below 1; the drawdown is measured on a time-weighted index whose peak is stored in the database; reconciliation per symbol with a $1 floor; −40% is a trigger, not a guaranteed maximum loss (section 7).
 
 **Changes in 1.2** (owner decisions on data and leverage): credentials rule for development (section 11); missing bar for day t handled per symbol (section 5); download etiquette: incremental downloads, local cache, backoff on HTTP 429 (section 5); Stooq replaces Alpaca as second source if Alpaca's free closes do not match the official close (section 5); issuer facts in `reference/etf_facts.yaml` and per-ETF expense ratios (sections 7 and 9); ETHU added as 2x candidate for ETHA (section 7); hysteresis on instrument switching (section 7, step 2b) and switch reporting in the backtest (section 9).
 
@@ -281,7 +283,13 @@ L = min( kelly_fraction * L*,
 | `L_capital` | Margin only with equity >= $2,000; below that, up to 2.5x via leveraged ETFs | See step 2b |
 | `dd_delever_at` | −20% | If drawdown exceeds this, L is multiplied by 0.5 until a new equity high |
 
-If L* is negative or history has fewer than 250 days, L = 1.0.
+**Decided in 1.3:**
+
+- **`sigma_60` is forward-looking:** σ = √(w′Σw) × √252, where w are today's **target weights without leverage** (target dollars / equity) and Σ is the **EWMA covariance matrix** of daily returns (span 60, the same EWMA as `vol60`). This reflects a new position the same day and accounts for correlations. With no positions σ = 0 and the vol-target limit does not apply (no division by zero).
+- **Kelly fallback:** if L* is negative or history has fewer than 250 days, only the **Kelly term** is replaced by 1.0. The other limits still apply, so L may be **below 1** (that is the purpose of the vol target).
+- **Order of operations:** L = min(limits); then, while the drawdown deleveraging is active, L × 0.5.
+- **Drawdown basis:** a **time-weighted return index** that excludes deposits and withdrawals; drawdown = 1 − index / historical maximum. The historical maximum is **stored in the database** and survives restarts. It is reset only by an explicit human action recorded in the `events` table, when the `KILL_SWITCH` file is deleted.
+- **Below $2,000 (no margin):** the broker's margin limit does not apply to leverage obtained through leveraged ETFs; `L_capital` = `max_etf_portfolio_leverage`. From $2,000 up, `L_broker` applies and `L_capital` does not.
 
 **Step 2b — Leveraged ETFs (no margin).** When the gross target exposure E exceeds equity P and no margin is available, the system reaches it with 2x/3x ETF versions:
 
@@ -321,14 +329,18 @@ Leveraged ETFs reset daily: in sideways markets they lose value even if the unde
 - comes on a day whose data failed section 5 validations 1–2;
 - is for a symbol blocked by section 5 validation 3 (primary source lacks bar t) or validation 4 (latest bar differs between sources).
 
-**Step 4 — Kill switch.** If equity falls 40% from its all-time high, the system:
+**Step 4 — Kill switch.** Evaluated once a day, at the 18:00 run on the close. If the time-weighted index falls 40% from its historical maximum, the system:
 
 1. cancels pending orders;
 2. closes all positions at market at the next open;
 3. writes the `KILL_SWITCH` file and sends an alert;
 4. does not trade again until a human deletes that file by hand.
 
-The kill switch also fires if broker positions differ from system positions by more than 1% for two consecutive days.
+The kill switch also fires on a **reconciliation break on two consecutive days**. A symbol breaks when |broker value − system value| exceeds the larger of 1% of the symbol's value and $1 (the floor avoids firing on rounding of fractional shares in a small account). A symbol the broker holds and the system does not expect, or the reverse, is also a break. The thresholds live in `config.yaml` (`risk.reconciliation_tolerance`, `risk.reconciliation_floor_usd`).
+
+**−40% is a trigger, not a guaranteed maximum loss.** A fall during the day, or a gap at the next open when the positions are closed, can push the real loss beyond 40%.
+
+Equity is computed from **closing prices × the broker's positions + cash**, exactly as in the backtest, and compared with the equity the broker reports; any difference is logged.
 
 ---
 
