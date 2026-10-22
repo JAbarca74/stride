@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" width="960" height="300" role="img" aria-labelledby="t d">
+  <title id="t">STRIDE daily flow</title>
+  <desc id="d">Data, strategy, risk, execution, log and reporting run once per trading day. Every order passes the risk manager, which approves or vetoes it before execution talks to the broker.</desc>
+  <style>
+    :root { --bg:#ffffff; --border:#d0d7de; --fg:#1f2328; --muted:#59636e; --box:#f6f8fa; --core:#ddf4ff; --core-b:#54aeff; --ok:#1a7f37; --veto:#cf222e; --flow:#8c959f; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0d1117; --border:#30363d; --fg:#e6edf3; --muted:#9198a1; --box:#161b22; --core:#0c2d6b; --core-b:#1f6feb; --ok:#3fb950; --veto:#f85149; --flow:#6e7681; }
+    }
+    .card { fill:var(--bg); stroke:var(--border); }
+    .box { fill:var(--box); stroke:var(--border); stroke-width:1.5; }
+    .core { fill:var(--core); stroke:var(--core-b); }
+    .name { font:700 15px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--fg); text-anchor:middle; }
+    .note { font:500 12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); text-anchor:middle; }
+    .small { font:600 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--muted); }
+    .link { stroke:var(--flow); stroke-width:2; fill:none; stroke-dasharray:4 4; animation:flow 1s linear infinite; }
+    .track { stroke:var(--border); stroke-width:2; fill:none; }
+    .bracket { stroke:var(--core-b); stroke-width:1.5; fill:none; }
+    .head { fill:var(--flow); }
+    .pkt { fill:var(--flow); }
+    .ok { fill:var(--ok); }
+    .veto { fill:var(--veto); }
+    .xmark { stroke:var(--veto); stroke-width:3; stroke-linecap:round; }
+    @keyframes flow { to { stroke-dashoffset:-8; } }
+    @media (prefers-reduced-motion: reduce) { .link { animation:none; } }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="card" x="0.5" y="0.5" width="959" height="299" rx="16"/>
+
+  <path class="bracket" d="M180,46 V38 H458 V46"/>
+  <text class="small" x="319" y="30" text-anchor="middle">pure core: no network, no I/O, no clock</text>
+
+  <rect class="box" x="20" y="56" width="130" height="90" rx="10"/>
+  <text class="name" x="85" y="86">Data</text>
+  <text class="note" x="85" y="110">OHLCV, validated</text>
+  <text class="note" x="85" y="128">SQLite cache</text>
+
+  <rect class="box core" x="176" y="56" width="130" height="90" rx="10"/>
+  <text class="name" x="241" y="86">Strategy</text>
+  <text class="note" x="241" y="110">SMA 200 filter</text>
+  <text class="note" x="241" y="128">55/20 breakouts</text>
+
+  <rect class="box core" x="332" y="56" width="130" height="90" rx="10"/>
+  <text class="name" x="397" y="86">Risk</text>
+  <text class="note" x="397" y="110">1% per 1N, L ≤ 4x</text>
+  <text class="note" x="397" y="128">veto, kill at −40%</text>
+
+  <rect class="box" x="488" y="56" width="130" height="90" rx="10"/>
+  <text class="name" x="553" y="86">Execution</text>
+  <text class="note" x="553" y="110">target vs current</text>
+  <text class="note" x="553" y="128">sells first</text>
+
+  <rect class="box" x="644" y="56" width="130" height="90" rx="10"/>
+  <text class="name" x="709" y="86">Log</text>
+  <text class="note" x="709" y="110">signals, fills</text>
+  <text class="note" x="709" y="128">daily equity</text>
+
+  <rect class="box" x="800" y="56" width="140" height="90" rx="10"/>
+  <text class="name" x="870" y="86">Reporting</text>
+  <text class="note" x="870" y="110">monthly HTML</text>
+  <text class="note" x="870" y="128">vs SPY and 60/40</text>
+
+  <path class="link" d="M151,101 H173" marker-end="url(#arrow)"/>
+  <path class="link" d="M307,101 H329" marker-end="url(#arrow)"/>
+  <path class="link" d="M463,101 H485" marker-end="url(#arrow)"/>
+  <path class="link" d="M619,101 H641" marker-end="url(#arrow)"/>
+  <path class="link" d="M775,101 H797" marker-end="url(#arrow)"/>
+
+  <path class="link" d="M553,149 V213" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <rect class="box" x="478" y="216" width="150" height="64" rx="10"/>
+  <text class="name" x="553" y="240">Broker by mode</text>
+  <text class="note" x="553" y="262">sim · paper · live</text>
+
+  <path class="track" d="M85,176 H870"/>
+  <text class="small" x="20" y="206">order flow</text>
+  <text class="small" x="20" y="224">approved → executed</text>
+  <text class="small" x="20" y="242">vetoed → stopped at risk</text>
+
+  <!-- approved order: pauses at the risk gate, turns green, continues -->
+  <g>
+    <circle class="pkt" r="7">
+      <animateMotion dur="6s" repeatCount="indefinite" path="M85,176 H870" keyPoints="0;0.4;0.4;1" keyTimes="0;0.3;0.45;1" calcMode="linear"/>
+    </circle>
+    <circle class="ok" r="7" opacity="0">
+      <animateMotion dur="6s" repeatCount="indefinite" path="M85,176 H870" keyPoints="0;0.4;0.4;1" keyTimes="0;0.3;0.45;1" calcMode="linear"/>
+      <animate attributeName="opacity" dur="6s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.36;0.4;0.97;1"/>
+    </circle>
+  </g>
+
+  <!-- vetoed order: stops at the risk gate and disappears -->
+  <g>
+    <circle class="pkt" r="7" opacity="0">
+      <animateMotion dur="6s" begin="3s" repeatCount="indefinite" path="M85,176 H870" keyPoints="0;0.4;0.4" keyTimes="0;0.3;1" calcMode="linear"/>
+      <animate attributeName="opacity" dur="6s" begin="3s" repeatCount="indefinite" values="1;1;0;0" keyTimes="0;0.3;0.31;1"/>
+    </circle>
+    <circle class="veto" r="7" opacity="0">
+      <animateMotion dur="6s" begin="3s" repeatCount="indefinite" path="M85,176 H870" keyPoints="0;0.4;0.4" keyTimes="0;0.3;1" calcMode="linear"/>
+      <animate attributeName="opacity" dur="6s" begin="3s" repeatCount="indefinite" values="0;0;1;0;0" keyTimes="0;0.3;0.31;0.45;1"/>
+    </circle>
+    <g opacity="0">
+      <path class="xmark" d="M387,190 L407,210 M407,190 L387,210"/>
+      <animate attributeName="opacity" dur="6s" begin="3s" repeatCount="indefinite" values="0;0;1;0;0" keyTimes="0;0.3;0.31;0.5;1"/>
+    </g>
+  </g>
+</svg>
