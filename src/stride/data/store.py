@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -85,13 +86,32 @@ CREATE TABLE IF NOT EXISTS equity (
 """
 EQUITY_COLUMNS = ("equity", "cash", "gross_exposure", "leverage")
 
+_RISK_STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS risk_state (
+    key        TEXT PRIMARY KEY,
+    value      REAL NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+
+_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS events (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    at     TEXT NOT NULL,
+    type   TEXT NOT NULL,
+    detail TEXT NOT NULL
+)
+"""
+
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create the `prices`, `cash_flows` and `equity` tables if they do not exist."""
+    """Create every table (prices, cash_flows, equity, risk_state, events) if missing."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
         conn.execute(_EQUITY_SCHEMA)
+        conn.execute(_RISK_STATE_SCHEMA)
+        conn.execute(_EVENTS_SCHEMA)
 
 
 def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
@@ -230,3 +250,68 @@ def read_equity(
     frame = pd.read_sql_query(query + " ORDER BY date", conn, params=params)
     frame["date"] = pd.to_datetime(frame["date"])
     return frame.set_index("date")
+
+
+def _now() -> str:
+    return pd.Timestamp.now(tz="UTC").isoformat()
+
+
+def record_event(conn: sqlite3.Connection, kind: str, detail: str, at: str | None = None) -> None:
+    """Append one row to `events` (SPEC section 10): alerts, errors, kill switch, resets."""
+    with conn:
+        conn.execute(
+            "INSERT INTO events (at, type, detail) VALUES (?, ?, ?)", (at or _now(), kind, detail)
+        )
+
+
+def read_events(conn: sqlite3.Connection, kind: str | None = None) -> list[tuple[str, str, str]]:
+    query = "SELECT at, type, detail FROM events"
+    params: tuple[str, ...] = ()
+    if kind is not None:
+        query += " WHERE type = ?"
+        params = (kind,)
+    return [tuple(row) for row in conn.execute(query + " ORDER BY id", params).fetchall()]
+
+
+TWR_INDEX = "twr_index"
+TWR_PEAK = "twr_peak"
+
+
+def load_twr(conn: sqlite3.Connection) -> tuple[float, float]:
+    """Stored time-weighted index and its peak; (1.0, 1.0) before the first run."""
+    rows = dict(conn.execute("SELECT key, value FROM risk_state").fetchall())
+    return float(rows.get(TWR_INDEX, 1.0)), float(rows.get(TWR_PEAK, 1.0))
+
+
+def save_twr(conn: sqlite3.Connection, index: float, peak: float) -> None:
+    """Store the index and peak. The peak never goes down here; only
+    `reset_twr_peak` can lower it. A non-finite or negative value is refused, so a
+    bad index can never be stored as the peak."""
+    if not (math.isfinite(index) and math.isfinite(peak)) or index < 0 or peak <= 0:
+        raise ValueError("the index must be finite and non-negative, the peak finite and positive")
+    _, stored_peak = load_twr(conn)
+    stamp = _now()
+    with conn:
+        conn.executemany(
+            "INSERT INTO risk_state (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+            " updated_at = excluded.updated_at",
+            [(TWR_INDEX, index, stamp), (TWR_PEAK, max(peak, stored_peak), stamp)],
+        )
+
+
+def reset_twr_peak(conn: sqlite3.Connection, by: str, reason: str) -> None:
+    """Explicit human reset of the peak to the current index (SPEC 1.3), recorded
+    in `events`. Only called by the manual kill-switch reset."""
+    if not by.strip():
+        raise ValueError("a reset needs the name of the person doing it")
+    index, peak = load_twr(conn)
+    stamp = _now()
+    with conn:
+        conn.execute(
+            "INSERT INTO risk_state (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+            " updated_at = excluded.updated_at",
+            (TWR_PEAK, index, stamp),
+        )
+    record_event(conn, "PEAK_RESET", f"by {by}: {reason} (peak {peak:.6f} -> {index:.6f})", stamp)

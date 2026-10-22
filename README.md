@@ -9,6 +9,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/JAbarca74/stride/actions/workflows/ci.yml"><img src="https://github.com/JAbarca74/stride/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/JAbarca74/stride/actions/workflows/security.yml"><img src="https://github.com/JAbarca74/stride/actions/workflows/security.yml/badge.svg" alt="Security"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&amp;logoColor=black" alt="Ruff"></a>
   <img src="https://img.shields.io/badge/types-mypy%20strict-2A6DB2" alt="mypy strict">
