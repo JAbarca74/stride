@@ -130,10 +130,14 @@ def check_order(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -
         reasons.append(DATA_FAILED)
     if asset is not None and asset in ctx.blocked:
         reasons.append(SYMBOL_BLOCKED)
-    held = ctx.positions_usd.get(order.symbol, 0.0)
-    if order.side == "sell" and (held <= 0 or order.notional > held + SHORT_TOLERANCE_USD):
+    if order.side == "sell" and not _can_sell(order, ctx):
         reasons.append(SHORT)
-    if not ctx.equity > 0 or order.notional > config.execution.max_order_pct_equity * ctx.equity:
+    # Fail safe: a non-finite equity cannot bound the order size, so it is vetoed.
+    if (
+        not math.isfinite(ctx.equity)
+        or not ctx.equity > 0
+        or order.notional > config.execution.max_order_pct_equity * ctx.equity
+    ):
         reasons.append(ORDER_TOO_LARGE)
     if len(ctx.approved_today) >= config.execution.max_orders_per_day:
         reasons.append(TOO_MANY_ORDERS)
@@ -146,14 +150,25 @@ def check_order(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -
         and not _allowed_switch(order, asset, ctx, config)
     ):
         reasons.append(SAME_DAY_REVERSAL)
-    if (
-        order.side == "buy"
-        and ctx.margin_requirement > 0
-        and ctx.excess_liquidity - order.notional
-        < config.risk.margin_buffer * ctx.margin_requirement
-    ):
+    if order.side == "buy" and not _margin_ok(order, ctx, config):
         reasons.append(MARGIN_BUFFER)
     return GuardDecision(order, not reasons, tuple(reasons))
+
+
+def _can_sell(order: ProposedOrder, ctx: GuardContext) -> bool:
+    """The sell stays within the held value. A non-finite holding cannot be
+    checked, so it fails (fail safe)."""
+    held = ctx.positions_usd.get(order.symbol, 0.0)
+    return math.isfinite(held) and held > 0 and order.notional <= held + SHORT_TOLERANCE_USD
+
+
+def _margin_ok(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -> bool:
+    """Excess liquidity after the buy keeps the margin buffer. Non-finite or
+    negative margin figures cannot be checked, so they fail (fail safe)."""
+    requirement, excess = ctx.margin_requirement, ctx.excess_liquidity
+    if not (math.isfinite(requirement) and math.isfinite(excess)) or requirement < 0:
+        return False
+    return requirement == 0 or excess - order.notional >= config.risk.margin_buffer * requirement
 
 
 def _after(order: ProposedOrder, ctx: GuardContext) -> GuardContext:
@@ -192,8 +207,7 @@ def check_liquidation(order: ProposedOrder, ctx: GuardContext) -> GuardDecision:
         reasons.append(KILL_SWITCH)
     if not math.isfinite(order.notional) or order.notional <= 0:
         reasons.append(INVALID_ORDER)
-    held = ctx.positions_usd.get(order.symbol, 0.0)
-    if held <= 0 or order.notional > held + SHORT_TOLERANCE_USD:
+    if not _can_sell(order, ctx):
         reasons.append(SHORT)
     return GuardDecision(order, not reasons, tuple(reasons))
 
