@@ -282,3 +282,17 @@ def test_alert_only_failure_does_not_stop_the_run() -> None:
     raise_on_blocking_failure(
         [CheckResult(NO_MISSING_DAYS, True), CheckResult(SOURCES_AGREE, False, severity=ALERT)]
     )
+
+
+def test_jump_before_the_window_is_ignored() -> None:
+    prices = _prices()
+    prices.loc[DAYS[5] :, "close"] *= 1.5  # a genuine old move, like early ETH history
+    assert not check_daily_changes(prices, 0.25).passed
+    assert check_daily_changes(prices, 0.25, window_start=DAYS[10].date()).passed
+
+
+def test_validate_uses_the_300_day_window_for_validation_2() -> None:
+    prices = _prices()
+    prices.loc[DAYS[5] :, "close"] *= 1.5  # more than 300 trading days before EVAL
+    results = {r.name: r for r in validate("ETH", prices, EVAL, QUALITY)}
+    assert results[MAX_DAILY_CHANGE].passed
