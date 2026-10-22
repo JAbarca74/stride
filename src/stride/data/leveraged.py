@@ -1,8 +1,8 @@
 """Leveraged ETF selection and synthetic history (SPEC sections 7 and 9, task T21).
 
 A leveraged ETF is eligible only if its 30-day median bid-ask spread and its net
-assets pass the filters in `config.yaml`. Before an ETF existed, its history is
-simulated from the underlying:
+assets (from `reference/etf_facts.yaml`) pass the filters in `config.yaml`.
+Before an ETF existed, its history is simulated from the underlying:
 
     r_syn(t) = m * r_u(t) - (m - 1) * (rf(t-1) + spread) / 252 - fee / 252
 
@@ -13,10 +13,21 @@ the synthetic series must stay within 2% per year of it.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Annotated, Literal
 
 import numpy as np
 import pandas as pd
+import yaml
+from pydantic import BaseModel, ConfigDict, Field
+
+from stride.config import LeveragedEtfFilters
+
+logger = logging.getLogger(__name__)
 
 TRADING_DAYS_PER_YEAR = 252
 MAX_TRACKING_DIFF_PER_YEAR = 0.02  # SPEC section 9: synthetic vs real
@@ -24,25 +35,50 @@ SPREAD_SEARCH = (-0.05, 0.10)  # bracket for the calibrated financing spread
 _BISECTION_STEPS = 60
 
 
-@dataclass(frozen=True)
-class EtfFacts:
-    """Issuer-published facts (SEC rule 6c-11) for one leveraged ETF."""
+DEFAULT_FACTS_PATH = Path(__file__).resolve().parents[3] / "reference" / "etf_facts.yaml"
+
+
+class EtfFacts(BaseModel):
+    """Issuer facts for one leveraged ETF (`reference/etf_facts.yaml`, SPEC 7)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     ticker: str
     underlying: str
-    multiple: int
-    median_spread_30d: float  # fraction, e.g. 0.0004 for 0.04%
-    net_assets_usd: float | None  # None when the issuer page does not show it
-    expense_ratio: float  # net annual fee, fraction
+    multiple: Literal[2, 3]
+    expense_ratio: Annotated[float, Field(ge=0, lt=0.1)] | None
+    aum_usd: Annotated[float, Field(ge=0)] | None
+    median_spread_30d: Annotated[float, Field(ge=0, lt=1)] | None
+    as_of: date | None
+    source: list[str]
 
 
-def passes_filters(facts: EtfFacts, max_median_spread: float, min_net_assets_usd: float) -> bool:
-    """Whether the ETF may be used; unknown net assets never pass."""
-    if facts.net_assets_usd is None:
+def load_etf_facts(path: str | Path = DEFAULT_FACTS_PATH) -> dict[str, EtfFacts]:
+    """Read and validate the issuer facts file, keyed by ticker."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    return {ticker: EtfFacts(ticker=ticker, **fields) for ticker, fields in raw.items()}
+
+
+def passes_filters(facts: EtfFacts, filters: LeveragedEtfFilters) -> bool:
+    """Whether the ETF may be used. Any missing fact fails the filters."""
+    if facts.median_spread_30d is None or facts.aum_usd is None:
         return False
     return (
-        facts.median_spread_30d <= max_median_spread and facts.net_assets_usd >= min_net_assets_usd
+        facts.median_spread_30d <= filters.max_median_spread
+        and facts.aum_usd >= filters.min_aum_usd
     )
+
+
+def expense_ratio_for(ticker: str, facts: Mapping[str, EtfFacts], fallback: float) -> float:
+    """The ETF's own net expense ratio; `costs.leveraged_etf_fee` only as a fallback,
+    which logs a warning (SPEC 1.2, section 9)."""
+    known = facts.get(ticker)
+    if known is not None and known.expense_ratio is not None:
+        return known.expense_ratio
+    logger.warning(
+        "no expense ratio for %s in etf_facts.yaml; using fallback %.4f", ticker, fallback
+    )
+    return fallback
 
 
 def rate_known_at_t_minus_1(rate: pd.Series, days: pd.DatetimeIndex) -> pd.Series:

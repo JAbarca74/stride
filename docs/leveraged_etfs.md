@@ -1,24 +1,23 @@
-# Leveraged ETF verification (task T21)
+# Leveraged ETF verification (task T21, SPEC 1.2)
 
-Rule (SPEC section 7, `config.yaml` → `leveraged_etf_filters`): a leveraged ETF is eligible only if its **30-day median bid-ask spread ≤ 0.20%** and its **net assets ≥ $50 million**. An ETF that fails is dropped and its asset trades at 1x, or at the other multiple if that one passes. Missing data counts as a fail until it is verified.
+**Source of truth: [`reference/etf_facts.yaml`](../reference/etf_facts.yaml).** It holds `expense_ratio`, `aum_usd`, `median_spread_30d`, `as_of` and the source URLs per instrument. This page only summarises it.
 
-Source: the issuers' own fund pages (published under SEC rule 6c-11), read on **2026-10-19**. These figures change daily; re-check before Phase 4. IBKR-specific checks (permissions for leveraged products, fractional shares, real commission) are done in Phase 4 with the paper account.
+Rule (SPEC section 7, `config.yaml` → `leveraged_etf_filters`): a leveraged ETF is eligible only if its **30-day median bid-ask spread ≤ 0.20%** and its **net assets ≥ $50 million**. A missing value fails until it is filled in. An ETF that fails is dropped: the asset trades at 1x, or at the other multiple if that one passes (TLT may go directly from 1x to TMF at 3x). Switching uses the hysteresis in `leverage_switch` (step 2b).
 
-| Asset | ETF | Multiple | Issuer | 30-day median spread | Net assets | Net expense ratio | Inception | Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SPY | SSO | 2x | ProShares | 0.01% | $8.87B | 0.84% (gross 0.88%) | 2006-06-19 | **Pass** |
-| SPY | UPRO | 3x | ProShares | 0.02% | $5.40B | 0.88% | 2009-06-23 | **Pass** |
-| TLT | UBT | 2x | ProShares | 0.35% | $68.6M | 0.95% (gross 0.98%) | 2010-01-19 | **Fail**: spread above 0.20% |
-| TLT | TMF | 3x | Direxion | 0.04% (as of 2026-10-16) | not shown on the fund page | 0.90% (gross 1.01%) | 2009-04-16 | **Pending**: net assets to verify |
-| GLD | UGL | 2x | ProShares | 0.02% | $716M | 0.95% | 2008-12-01 | **Pass** |
-| SLV | AGQ | 2x | ProShares | 0.06% | $1.11B | 0.95% | 2008-12-01 | **Pass** |
-| IBIT | BITX | 2x | Volatility Shares | not retrieved | not retrieved | not retrieved | | **Pending**: the fund page is behind a disclaimer that was not accepted |
+## Pre-filled from SEC EDGAR (2026-10-19)
 
-## Notes for the owner
+| Asset | ETF | Multiple | Net expense ratio | Net assets | As of | Spread (owner to fill) |
+| --- | --- | --- | --- | --- | --- | --- |
+| SPY | SSO | 2x | 0.84% (497K) | $8.38B (N-PORT) | 2026-05-31 | — |
+| SPY | UPRO | 3x | 0.88% (497K) | $5.55B (N-PORT) | 2026-05-31 | — |
+| TLT | UBT | 2x | 0.95% (497K) | $64.0M (N-PORT) | 2026-05-31 | — |
+| TLT | TMF | 3x | 0.90% (497K) | $2.20B (N-PORT) | 2026-07-31 | — |
+| GLD | UGL | 2x | 0.95% (10-K fee) | $641M (10-Q equity) | 2026-06-30 | — |
+| SLV | AGQ | 2x | 0.95% (10-K fee) | $1.27B (10-Q equity) | 2026-06-30 | — |
+| IBIT | BITX | 2x | owner | owner | — | — |
+| ETHA | ETHU | 2x | owner | owner | — | — |
 
-- **TLT at 2x drops out** (UBT's spread is 0.35%). TLT can only use TMF at 3x, once TMF's net assets are confirmed. `config.yaml` still lists UBT, because the map is a parameter; the filter is applied when instruments are chosen.
-- **Ether:** Volatility Shares also lists **ETHU (2x Ether ETF)**. SPEC section 7 says ETHA has no known liquid leveraged version, so ETHU is not in the map. Adding it is the owner's decision.
-- **Fees:** `costs.leveraged_etf_fee` is one value (0.95%), but the net expense ratios above range from 0.84% to 0.95%. The synthetic series should use each ETF's own fee (owner to confirm).
+For reference only, and **not** entered in the facts file: on 2026-10-19 the ProShares fund pages showed 30-day median spreads of SSO 0.01%, UPRO 0.02%, UBT 0.35% (fails), UGL 0.02% and AGQ 0.06%. The Direxion page showed 0.04% for TMF. The owner collects the official values.
 
 ## Synthetic series (SPEC section 9)
 
@@ -28,6 +27,7 @@ Source: the issuers' own fund pages (published under SEC rule 6c-11), read on **
 r_syn(t) = m * r_underlying(t) - (m - 1) * (DTB3(t-1) + spread) / 252 - fee / 252
 ```
 
+- `fee` is the ETF's own net expense ratio from the facts file (`expense_ratio_for`). `costs.leveraged_etf_fee` is used only as a fallback, and doing so logs a warning.
 - `DTB3` comes from FRED (`FredRateSource`, no key). `rate_known_at_t_minus_1` uses the last value published before day t.
-- `calibrate_spread` finds the financing spread per asset on the overlap between the real ETF and its underlying. `Calibration.passes` requires a difference of less than 2% per year.
-- **Pending:** running the calibration on real prices needs Tiingo data (`DATA_API_KEY`).
+- `calibrate_spread` finds the financing spread per asset on the overlap between the real ETF and its underlying. `Calibration.passes` requires less than 2% per year.
+- **Pending:** the calibration on real prices needs Tiingo data (`DATA_API_KEY`).

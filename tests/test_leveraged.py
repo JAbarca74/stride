@@ -12,6 +12,8 @@ from stride.data.leveraged import (
     EtfFacts,
     annualized_return,
     calibrate_spread,
+    expense_ratio_for,
+    load_etf_facts,
     passes_filters,
     rate_known_at_t_minus_1,
     synthetic_prices,
@@ -35,27 +37,84 @@ def _rate(value: float = 0.04) -> pd.Series:
     return pd.Series(value, index=DAYS)
 
 
-# Filters (SPEC section 7).
+# Filters and issuer facts (SPEC section 7).
 
 
 def test_reference_filters_are_loaded_from_config() -> None:
     assert FILTERS.max_median_spread == 0.002
-    assert FILTERS.min_net_assets_usd == 50_000_000
+    assert FILTERS.min_aum_usd == 50_000_000
+
+
+def _facts(spread: float | None, aum: float | None, fee: float | None = 0.0095) -> EtfFacts:
+    return EtfFacts(
+        ticker="X",
+        underlying="Y",
+        multiple=2,
+        expense_ratio=fee,
+        aum_usd=aum,
+        median_spread_30d=spread,
+        as_of=None,
+        source=[],
+    )
 
 
 @pytest.mark.parametrize(
-    ("spread", "assets", "expected"),
+    ("spread", "aum", "expected"),
     [
         (0.0001, 8.9e9, True),  # SSO-like
         (0.0035, 68.6e6, False),  # UBT-like: spread too wide
         (0.0004, 40e6, False),  # too small
         (0.002, 50e6, True),  # exactly at both limits
-        (0.0004, None, False),  # net assets unknown
+        (0.0004, None, False),  # assets unknown
+        (None, 8.9e9, False),  # spread unknown
     ],
 )
-def test_filters(spread: float, assets: float | None, expected: bool) -> None:
-    facts = EtfFacts("X", "Y", 2, spread, assets, 0.0095)
-    assert passes_filters(facts, FILTERS.max_median_spread, FILTERS.min_net_assets_usd) is expected
+def test_filters(spread: float | None, aum: float | None, expected: bool) -> None:
+    assert passes_filters(_facts(spread, aum), FILTERS) is expected
+
+
+def test_reference_facts_file_loads_and_covers_every_mapped_etf() -> None:
+    facts = load_etf_facts()
+    config = load_config(ROOT / "config.yaml", env={})
+    mapped = {etf for versions in config.leveraged_etfs.values() for etf in versions.values()}
+    assert mapped <= set(facts)
+    for ticker, fact in facts.items():
+        assert fact.underlying in config.leveraged_etfs
+        assert config.leveraged_etfs[fact.underlying][fact.multiple] == ticker
+
+
+def test_reference_facts_leave_owner_fields_empty() -> None:
+    facts = load_etf_facts()
+    assert facts["ETHU"].underlying == "ETHA"
+    for ticker in ("BITX", "ETHU"):
+        assert facts[ticker].expense_ratio is None
+        assert facts[ticker].aum_usd is None
+    assert all(f.median_spread_30d is None for f in facts.values())
+
+
+def test_facts_file_rejects_unknown_fields(tmp_path: Path) -> None:
+    path = tmp_path / "facts.yaml"
+    path.write_text(
+        "SSO: {underlying: SPY, multiple: 2, expense_ratio: 0.0084, aum_usd: 1,"
+        " median_spread_30d: null, as_of: null, source: [], typo: 1}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="typo"):
+        load_etf_facts(path)
+
+
+def test_expense_ratio_comes_from_facts() -> None:
+    facts = {"X": _facts(0.001, 1e9, fee=0.0084)}
+    assert expense_ratio_for("X", facts, fallback=0.0095) == 0.0084
+
+
+@pytest.mark.parametrize("facts", [{}, {"X": _facts(0.001, 1e9, fee=None)}])
+def test_missing_expense_ratio_falls_back_with_warning(
+    facts: dict[str, EtfFacts], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("WARNING", logger="stride.data.leveraged"):
+        assert expense_ratio_for("X", facts, fallback=0.0095) == 0.0095
+    assert "using fallback" in caplog.text
 
 
 # Risk-free rate known at t-1.
