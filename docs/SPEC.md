@@ -339,7 +339,16 @@ Leveraged ETFs reset daily: in sideways markets they lose value even if the unde
 3. writes the `KILL_SWITCH` file and sends an alert;
 4. does not trade again until a human deletes that file by hand.
 
-The kill switch also fires on a **reconciliation break on two consecutive days**. A symbol breaks when |broker value − system value| exceeds the larger of 1% of the symbol's value and $1 (the floor avoids firing on rounding of fractional shares in a small account). A symbol the broker holds and the system does not expect, or the reverse, is also a break. The thresholds live in `config.yaml` (`risk.reconciliation_tolerance`, `risk.reconciliation_floor_usd`).
+**Two levels (1.4).** A reconciliation break does not liquidate: when the system is not sure what it holds, selling blind can make things worse and costs about 1% per order.
+
+| Trigger | Action |
+| --- | --- |
+| Drawdown of −40% (time-weighted index) | **Kill switch:** liquidate everything at the next open, using the positions **the broker reports**; write `KILL_SWITCH` |
+| Reconciliation break on two consecutive days (any symbols) | **Halt:** freeze the system (no new orders, positions kept), write `HALT`, alert, and wait for a person to resolve it |
+
+During a halt the drawdown kill switch stays armed: liquidating with the broker's positions is safe even when the system is out of sync. Breaks on different symbols on consecutive days count, because they suggest a system problem rather than an isolated case. A person resolves a halt by fixing the reconciliation, deleting `HALT` by hand and recording it (`resolve-halt`); a halt does not reset the drawdown peak.
+
+**Reconciliation break.** A symbol breaks when |broker value − system value| exceeds the larger of 1% of the symbol's value and $1 (the floor avoids firing on rounding of fractional shares in a small account). A symbol the broker holds and the system does not expect, or the reverse, is also a break. The thresholds live in `config.yaml` (`risk.reconciliation_tolerance`, `risk.reconciliation_floor_usd`).
 
 **−40% is a trigger, not a guaranteed maximum loss.** A fall during the day, or a gap at the next open when the positions are closed, can push the real loss beyond 40%.
 

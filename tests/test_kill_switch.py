@@ -14,9 +14,12 @@ from stride.data.store import connect, load_twr, read_events, save_twr
 from stride.execution.kill_switch_file import (
     KillSwitchError,
     fire,
+    halt,
     is_active,
+    is_halted,
     main,
     manual_reset,
+    resolve_halt,
 )
 from stride.risk.kill_switch import (
     DRAWDOWN,
@@ -79,15 +82,17 @@ def test_fires_at_minus_40_not_before() -> None:
     assert decision.fire and decision.reasons == (DRAWDOWN,)
 
 
-def test_reconciliation_needs_two_consecutive_days() -> None:
-    assert not kill_switch_decision(TwrState(), 0.40, ["SPY"], []).fire
-    assert not kill_switch_decision(TwrState(), 0.40, [], ["SPY"]).fire
-    decision = kill_switch_decision(TwrState(), 0.40, ["SPY"], ["GLD"])
-    assert decision.fire and decision.reasons == (RECONCILIATION,)
+def test_reconciliation_halts_after_two_consecutive_days_but_never_liquidates() -> None:
+    assert not kill_switch_decision(TwrState(), 0.40, ["SPY"], []).halt
+    assert not kill_switch_decision(TwrState(), 0.40, [], ["SPY"]).halt
+    decision = kill_switch_decision(TwrState(), 0.40, ["SPY"], ["GLD"])  # any symbols
+    assert decision.halt and not decision.fire
+    assert decision.reasons == (RECONCILIATION,)
 
 
-def test_both_reasons_together() -> None:
+def test_drawdown_kill_stays_armed_during_a_halt() -> None:
     decision = kill_switch_decision(TwrState(0.5, 1.0), 0.40, ["SPY"], ["SPY"])
+    assert decision.fire and decision.halt
     assert decision.reasons == (DRAWDOWN, RECONCILIATION)
 
 
@@ -139,26 +144,26 @@ def test_peak_survives_restarts_and_never_falls(conn: sqlite3.Connection, tmp_pa
 
 def test_fire_writes_the_file_once(conn: sqlite3.Connection, tmp_path: Path) -> None:
     switch = tmp_path / "KILL_SWITCH"
-    decision = KillDecision(True, (DRAWDOWN,), 0.41)
+    decision = KillDecision(True, False, (DRAWDOWN,), 0.41)
     assert fire(conn, decision, switch)
     assert is_active(switch)
     first = switch.read_text(encoding="utf-8")
     assert "DRAWDOWN; drawdown 41.00%" in first
-    assert not fire(conn, KillDecision(True, (RECONCILIATION,), 0.1), switch)
+    assert not fire(conn, KillDecision(True, False, (DRAWDOWN,), 0.5), switch)
     assert switch.read_text(encoding="utf-8") == first  # first reason kept
     assert [e[1] for e in read_events(conn)] == ["KILL_SWITCH", "KILL_SWITCH_STILL_ACTIVE"]
 
 
 def test_no_fire_no_file(conn: sqlite3.Connection, tmp_path: Path) -> None:
     switch = tmp_path / "KILL_SWITCH"
-    assert not fire(conn, KillDecision(False, (), 0.1), switch)
+    assert not fire(conn, KillDecision(False, True, (RECONCILIATION,), 0.1), switch)
     assert not is_active(switch)
 
 
 def test_reset_needs_the_file_deleted_and_a_name(conn: sqlite3.Connection, tmp_path: Path) -> None:
     switch = tmp_path / "KILL_SWITCH"
     save_twr(conn, 0.55, 1.0)
-    fire(conn, KillDecision(True, (DRAWDOWN,), 0.45), switch)
+    fire(conn, KillDecision(True, False, (DRAWDOWN,), 0.45), switch)
     with pytest.raises(KillSwitchError, match="delete the KILL_SWITCH file"):
         manual_reset(conn, "Owner", "reviewed", switch)
     switch.unlink()  # the human deletes it by hand
@@ -173,16 +178,35 @@ def test_reset_needs_the_file_deleted_and_a_name(conn: sqlite3.Connection, tmp_p
 def test_cli_status_and_reset(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db, switch = str(tmp_path / "s.db"), str(tmp_path / "KILL_SWITCH")
     assert main(["status", "--file", switch]) == 0
-    assert "inactive" in capsys.readouterr().out
+    assert "kill switch: inactive; not halted" in capsys.readouterr().out
     Path(switch).write_text("x", encoding="utf-8")
     assert main(["status", "--file", switch]) == 0
-    assert "ACTIVE" in capsys.readouterr().out
+    assert "kill switch: ACTIVE" in capsys.readouterr().out
     assert main(["reset", "--db", db, "--file", switch]) == 2  # missing --by/--reason
     args = ["reset", "--by", "Owner", "--reason", "ok", "--db", db, "--file", switch]
     assert main(args) == 1  # file still there
     Path(switch).unlink()
     assert main(args) == 0
     assert "reset recorded" in capsys.readouterr().out
+    halt_file = str(tmp_path / "HALT")
+    Path(halt_file).write_text("x", encoding="utf-8")
+    resolve = [
+        "resolve-halt",
+        "--by",
+        "Owner",
+        "--reason",
+        "fixed",
+        "--db",
+        db,
+        "--halt-file",
+        halt_file,
+    ]
+    assert main(["status", "--file", switch, "--halt-file", halt_file]) == 0
+    assert "HALTED" in capsys.readouterr().out
+    assert main(resolve) == 1
+    Path(halt_file).unlink()
+    assert main(resolve) == 0
+    assert "resolve-halt recorded" in capsys.readouterr().out
 
 
 # Invariants (hypothesis).
@@ -200,11 +224,9 @@ def test_kill_switch_always_fires_at_or_beyond_40_percent(
 ) -> None:
     state = TwrState(min(index, peak), peak)
     decision = kill_switch_decision(state, RISK.kill_switch_dd, today, yesterday)
-    if state.drawdown >= RISK.kill_switch_dd:
-        assert decision.fire and DRAWDOWN in decision.reasons
-    elif not (today and yesterday):
-        assert not decision.fire
-    assert decision.fire == bool(decision.reasons)
+    assert decision.fire == (state.drawdown >= RISK.kill_switch_dd)  # only the drawdown kills
+    assert decision.halt == (bool(today) and bool(yesterday))  # reconciliation only halts
+    assert decision.reasons == (DRAWDOWN,) * decision.fire + (RECONCILIATION,) * decision.halt
 
 
 @settings(max_examples=500, deadline=None)
@@ -230,3 +252,32 @@ def test_index_ignores_flows_and_peak_is_monotone(steps: list[tuple[float, float
         equity = new_equity
     assert state.index == pytest.approx(product, rel=1e-9)  # flows never count
     assert 0 <= state.drawdown <= 1
+
+
+def test_halt_writes_the_file_once_and_keeps_the_peak(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    halt_file = tmp_path / "HALT"
+    save_twr(conn, 0.9, 1.0)
+    decision = KillDecision(False, True, (RECONCILIATION,), 0.1)
+    assert halt(conn, decision, halt_file)
+    assert is_halted(halt_file)
+    assert not halt(conn, decision, halt_file)  # already halted
+    assert not halt(conn, KillDecision(True, False, (DRAWDOWN,), 0.5), tmp_path / "H2")
+    assert [e[1] for e in read_events(conn)] == ["HALT", "HALT_STILL_ACTIVE"]
+    assert load_twr(conn) == (0.9, 1.0)
+
+
+def test_resolving_a_halt_needs_the_file_deleted_and_a_name(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    halt_file = tmp_path / "HALT"
+    halt(conn, KillDecision(False, True, (RECONCILIATION,), 0.0), halt_file)
+    with pytest.raises(KillSwitchError, match="delete the HALT file"):
+        resolve_halt(conn, "Owner", "fixed", halt_file)
+    halt_file.unlink()
+    with pytest.raises(ValueError, match="name"):
+        resolve_halt(conn, "", "fixed", halt_file)
+    resolve_halt(conn, "Owner", "broker positions re-synced", halt_file)
+    [(_, _, detail)] = read_events(conn, "HALT_RESOLVED")
+    assert "by Owner: broker positions re-synced" in detail
