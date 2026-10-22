@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 24" width="960" height="24" role="presentation" aria-hidden="true">
+  <style>
+    :root { --a:#0969da; --b:#8250df; }
+    @media (prefers-color-scheme: dark) { :root { --a:#4493f8; --b:#ab7df8; } }
+    .wave { fill:none; stroke:url(#g); stroke-width:2; stroke-linecap:round; stroke-dasharray:6 10; animation:flow 1.6s linear infinite; }
+    @keyframes flow { to { stroke-dashoffset:-32; } }
+    @media (prefers-reduced-motion: reduce) { .wave { animation:none; } }
+  </style>
+  <defs>
+    <linearGradient id="g" x1="0" x2="1">
+      <stop offset="0" style="stop-color:var(--a);stop-opacity:0"/>
+      <stop offset=".2" style="stop-color:var(--a)"/>
+      <stop offset=".8" style="stop-color:var(--b)"/>
+      <stop offset="1" style="stop-color:var(--b);stop-opacity:0"/>
+    </linearGradient>
+  </defs>
+  <path class="wave" d="M0,12 C40,2 80,22 120,12 S200,2 240,12 S320,22 360,12 S440,2 480,12 S560,22 600,12 S680,2 720,12 S800,22 840,12 S920,2 960,12"/>
+</svg>
