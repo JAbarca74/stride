@@ -51,10 +51,10 @@ Issues = "https://github.com/JAbarca74/stride/issues"
 alpaca = ["alpaca-py>=0.30"]
 ibkr = ["ib_async>=1.0"]
 dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "ruff>=0.6",
-    "mypy>=1.10",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.1",
+    "mypy>=2.4.0",
     "pandas-stubs",
     "hypothesis",
     "types-PyYAML",
