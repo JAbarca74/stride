@@ -74,12 +74,24 @@ CREATE TABLE IF NOT EXISTS cash_flows (
 
 CASH_FLOW_TYPES = ("deposit", "withdrawal")
 
+_EQUITY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS equity (
+    date           TEXT PRIMARY KEY,
+    equity         REAL NOT NULL,
+    cash           REAL NOT NULL,
+    gross_exposure REAL NOT NULL CHECK (gross_exposure >= 0),
+    leverage       REAL NOT NULL CHECK (leverage >= 0)
+)
+"""
+EQUITY_COLUMNS = ("equity", "cash", "gross_exposure", "leverage")
+
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create the `prices` and `cash_flows` tables if they do not exist."""
+    """Create the `prices`, `cash_flows` and `equity` tables if they do not exist."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
+        conn.execute(_EQUITY_SCHEMA)
 
 
 def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
@@ -175,3 +187,46 @@ def net_cash_flows(conn: sqlite3.Connection) -> pd.Series:
         conn,
     )
     return pd.Series(frame["net"].to_numpy(dtype=float), index=pd.to_datetime(frame["date"]))
+
+
+def upsert_equity(conn: sqlite3.Connection, equity: pd.DataFrame) -> int:
+    """Store one row per day (SPEC section 10): equity, cash, gross exposure, leverage.
+
+    `equity` is indexed by date; a day already stored is replaced.
+    """
+    missing = [c for c in EQUITY_COLUMNS if c not in equity.columns]
+    if missing:
+        raise ValueError(f"missing equity columns: {missing}")
+    rows = list(
+        zip(
+            pd.DatetimeIndex(equity.index).strftime("%Y-%m-%d").tolist(),
+            *(equity[c].astype(float).tolist() for c in EQUITY_COLUMNS),
+            strict=True,
+        )
+    )
+    with conn:
+        conn.executemany(
+            "INSERT INTO equity (date, equity, cash, gross_exposure, leverage)"
+            " VALUES (?, ?, ?, ?, ?) ON CONFLICT (date) DO UPDATE SET"
+            " equity = excluded.equity, cash = excluded.cash,"
+            " gross_exposure = excluded.gross_exposure, leverage = excluded.leverage",
+            rows,
+        )
+    return len(rows)
+
+
+def read_equity(
+    conn: sqlite3.Connection, start: date | None = None, end: date | None = None
+) -> pd.DataFrame:
+    """Daily equity rows indexed by date, oldest first."""
+    query = "SELECT * FROM equity WHERE 1 = 1"
+    params: list[str] = []
+    if start is not None:
+        query += " AND date >= ?"
+        params.append(pd.Timestamp(start).date().isoformat())
+    if end is not None:
+        query += " AND date <= ?"
+        params.append(pd.Timestamp(end).date().isoformat())
+    frame = pd.read_sql_query(query + " ORDER BY date", conn, params=params)
+    frame["date"] = pd.to_datetime(frame["date"])
+    return frame.set_index("date")

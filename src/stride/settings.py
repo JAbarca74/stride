@@ -25,6 +25,8 @@ class Secrets(BaseSettings):
     data_api_key: SecretStr | None = None
     alpaca_api_key: SecretStr | None = None
     alpaca_secret_key: SecretStr | None = None
+    alert_telegram_token: SecretStr | None = None
+    alert_telegram_chat_id: SecretStr | None = None
 
     @field_validator("*", mode="before")
     @classmethod
@@ -35,6 +37,15 @@ class Secrets(BaseSettings):
         if self.data_api_key is None:
             raise CredentialError("DATA_API_KEY is not set in .env")
         return self.data_api_key.get_secret_value()
+
+    def telegram(self) -> tuple[str, str] | None:
+        """Bot token and chat id, or None when alerts are not configured."""
+        if self.alert_telegram_token is None or self.alert_telegram_chat_id is None:
+            return None
+        return (
+            self.alert_telegram_token.get_secret_value(),
+            self.alert_telegram_chat_id.get_secret_value(),
+        )
 
     def alpaca_paper_keys(self) -> tuple[str, str]:
         """Alpaca keys, refusing anything that is not a paper-trading key."""
