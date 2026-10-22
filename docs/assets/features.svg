@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 200" width="960" height="200" role="img" aria-labelledby="t d">
+  <title id="t">STRIDE features</title>
+  <desc id="d">Trend following with a 200-day filter and 55/20-day breakouts; volatility sizing at 1% of equity per 1N; leverage capped as the minimum of five limits; a kill switch at a 40% drawdown.</desc>
+  <style>
+    :root { --bg:#ffffff; --card:#f6f8fa; --border:#d0d7de; --fg:#1f2328; --muted:#59636e; --blue:#0969da; --violet:#8250df; --green:#1a7f37; --red:#cf222e; --amber:#9a6700; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#9198a1; --blue:#4493f8; --violet:#ab7df8; --green:#3fb950; --red:#f85149; --amber:#d29922; }
+    }
+    .card { fill:var(--card); stroke:var(--border); stroke-width:1.5; }
+    .h { font:700 16px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--fg); text-anchor:middle; }
+    .p { font:500 12.5px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); text-anchor:middle; }
+    .axis { stroke:var(--border); stroke-width:1.5; fill:none; }
+
+    .trend { fill:none; stroke:var(--blue); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1; stroke-dashoffset:1; animation:draw 3.5s ease-in-out infinite; }
+    .sma { fill:none; stroke:var(--violet); stroke-width:2; stroke-dasharray:4 4; opacity:.8; }
+    @keyframes draw { 0% { stroke-dashoffset:1; } 60%, 85% { stroke-dashoffset:0; } 100% { stroke-dashoffset:0; opacity:0; } }
+
+    .bar { fill:var(--green); transform-box:fill-box; transform-origin:center bottom; animation:size 3s ease-in-out infinite; }
+    @keyframes size { 0%, 100% { transform:scaleY(1); } 50% { transform:scaleY(.35); } }
+
+    .gauge { fill:none; stroke:var(--border); stroke-width:8; stroke-linecap:round; }
+    .gauge-cap { fill:none; stroke:var(--red); stroke-width:8; stroke-linecap:round; }
+    .needle { stroke:var(--fg); stroke-width:3; stroke-linecap:round; transform-origin:0 0; animation:swing 4s cubic-bezier(.4,0,.2,1) infinite; }
+    @keyframes swing { 0%, 100% { transform:rotate(-80deg); } 45%, 60% { transform:rotate(52deg); } 50% { transform:rotate(58deg); } }
+
+    .power { fill:none; stroke:var(--red); stroke-width:4; stroke-linecap:round; }
+    .ring { fill:none; stroke:var(--red); stroke-width:2; transform-box:fill-box; transform-origin:center; animation:ring 2s ease-out infinite; }
+    @keyframes ring { 0% { opacity:.8; transform:scale(1); } 100% { opacity:0; transform:scale(1.8); } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .trend, .bar, .needle, .ring { animation:none; }
+      .trend { stroke-dashoffset:0; }
+      .ring { opacity:0; }
+    }
+  </style>
+
+  <!-- 1. Trend following -->
+  <rect class="card" x="12" y="10" width="225" height="180" rx="14"/>
+  <g transform="translate(124 62)">
+    <path class="axis" d="M-56,34 H56"/>
+    <path class="sma" d="M-52,28 C-20,22 10,10 52,-6"/>
+    <path class="trend" pathLength="1" d="M-52,24 L-38,18 L-28,24 L-14,8 L-4,14 L10,-4 L20,2 L34,-16 L44,-10 L52,-26"/>
+  </g>
+  <text class="h" x="124" y="128">Trend following</text>
+  <text class="p" x="124" y="152">SMA 200 filter,</text>
+  <text class="p" x="124" y="170">55/20-day breakouts</text>
+
+  <!-- 2. Volatility sizing -->
+  <rect class="card" x="249" y="10" width="225" height="180" rx="14"/>
+  <g transform="translate(361 62)">
+    <path class="axis" d="M-56,34 H56"/>
+    <rect class="bar" x="-46" y="-26" width="16" height="60" rx="3" style="animation-delay:0s"/>
+    <rect class="bar" x="-20" y="-26" width="16" height="60" rx="3" style="animation-delay:.4s"/>
+    <rect class="bar" x="6" y="-26" width="16" height="60" rx="3" style="animation-delay:.8s"/>
+    <rect class="bar" x="32" y="-26" width="16" height="60" rx="3" style="animation-delay:1.2s"/>
+  </g>
+  <text class="h" x="361" y="128">Volatility sizing</text>
+  <text class="p" x="361" y="152">1% of equity per 1N,</text>
+  <text class="p" x="361" y="170">pyramids up to 4 units</text>
+
+  <!-- 3. Capped leverage -->
+  <rect class="card" x="486" y="10" width="225" height="180" rx="14"/>
+  <g transform="translate(598 88)">
+    <path class="gauge" d="M-52,0 A52,52 0 0 1 52,0"/>
+    <path class="gauge-cap" d="M33,-40 A52,52 0 0 1 52,0"/>
+    <line class="needle" x1="0" y1="0" x2="0" y2="-44"/>
+    <circle r="5" style="fill:var(--fg)"/>
+  </g>
+  <text class="h" x="598" y="128">Capped leverage</text>
+  <text class="p" x="598" y="152">min of five limits,</text>
+  <text class="p" x="598" y="170">never above 4x</text>
+
+  <!-- 4. Kill switch -->
+  <rect class="card" x="723" y="10" width="225" height="180" rx="14"/>
+  <g transform="translate(835 62)">
+    <circle class="ring" r="26"/>
+    <path class="power" d="M-14,-14 A20,20 0 1 0 14,-14"/>
+    <line class="power" x1="0" y1="-26" x2="0" y2="-4"/>
+  </g>
+  <text class="h" x="835" y="128">Kill switch</text>
+  <text class="p" x="835" y="152">−40% closes everything,</text>
+  <text class="p" x="835" y="170">a human must reset it</text>
+</svg>
