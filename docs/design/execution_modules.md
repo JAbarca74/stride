@@ -20,24 +20,26 @@ References: SPEC 1.4 sections 7 (steps 3 and 4) and 8; `risk/guard.py`, `risk/ki
 ```python
 @dataclass(frozen=True)
 class Target:
-    symbol: str             # instrument chosen by risk/leverage.py (SPY, SSO, ...)
-    target_usd: float       # >= 0, long only
-    switch: bool = False    # part of an instrument switch (leverage.InstrumentChoice)
-    rule: str = "HOLD"      # SPEC 6 rule that produced it, for the orders table
+    symbol: str  # instrument chosen by risk/leverage.py (SPY, SSO, ...)
+    target_usd: float  # >= 0, long only
+    switch: bool = False  # part of an instrument switch (leverage.InstrumentChoice)
+    rule: str = "HOLD"  # SPEC 6 rule that produced it, for the orders table
+
 
 @dataclass(frozen=True)
 class PlannedOrder:
     symbol: str
     side: Side
     notional: float
-    type: OrderType          # "limit" or "market" (market-on-open)
+    type: OrderType  # "limit" or "market" (market-on-open)
     limit_price: float | None
     switch: bool
     rule: str
 
+
 def plan_orders(
     targets: Sequence[Target],
-    positions_usd: Mapping[str, float],   # broker positions x close of t
+    positions_usd: Mapping[str, float],  # broker positions x close of t
     equity: float,
     prev_close: Mapping[str, float],
     config: StrideConfig,
@@ -45,16 +47,20 @@ def plan_orders(
 ) -> list[PlannedOrder]:
     """Pure. SPEC 8 order flow steps 1-4."""
 
+
 def to_proposed(order: PlannedOrder) -> guard.ProposedOrder: ...
+
 
 def liquidation_orders(positions_usd: Mapping[str, float]) -> list[PlannedOrder]:
     """Pure. Kill switch: one market sell per held symbol, full value (SPEC 7, step 4)."""
 
+
 @dataclass(frozen=True)
 class Submission:
     order: PlannedOrder
-    order_id: str | None     # None when vetoed or not sent
-    reasons: tuple[str, ...] # guard vetoes or the broker error, by name
+    order_id: str | None  # None when vetoed or not sent
+    reasons: tuple[str, ...]  # guard vetoes or the broker error, by name
+
 
 def submit_approved(
     broker: Broker,
