@@ -1,0 +1,98 @@
+# Issuer facts per leveraged ETF (SPEC 1.2, section 7). Versioned on purpose.
+#
+# Units: expense_ratio and median_spread_30d are fractions (0.0084 = 0.84%);
+# aum_usd is net assets in USD. `as_of` is the date of the net-assets figure.
+# `source` lists where each value came from.
+#
+# Pre-filled by the coding agent from SEC EDGAR on 2026-10-19:
+#   - expense_ratio: net expense ratio (after waivers) from the latest 497K summary
+#     prospectus, or the management fee from the 10-K for commodity pools (UGL, AGQ);
+#   - aum_usd: net assets from the latest N-PORT-P, or shareholders' equity from
+#     the latest 10-Q for commodity pools.
+# median_spread_30d is left for the owner to collect from the issuer pages
+# (SEC rule 6c-11). Volatility Shares funds (BITX, ETHU) are left entirely to
+# the owner. A null value fails the filters until it is filled in.
+
+SSO:
+  underlying: SPY
+  multiple: 2
+  expense_ratio: 0.0084        # 0.88% before a 0.04% fee waiver
+  aum_usd: 8377250150
+  median_spread_30d: null
+  as_of: 2026-05-31
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001012/f46053d1.htm
+    - https://www.sec.gov/Archives/edgar/data/1174610/000207169126017379/primary_doc.xml
+
+UPRO:
+  underlying: SPY
+  multiple: 3
+  expense_ratio: 0.0088        # no waiver
+  aum_usd: 5545344561
+  median_spread_30d: null
+  as_of: 2026-05-31
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001031/f46114d1.htm
+    - https://www.sec.gov/Archives/edgar/data/1174610/000207169126017443/primary_doc.xml
+
+UBT:
+  underlying: TLT
+  multiple: 2
+  expense_ratio: 0.0095        # 0.98% before a 0.03% fee waiver
+  aum_usd: 63952544
+  median_spread_30d: null
+  as_of: 2026-05-31
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026000994/f46025d1.htm
+    - https://www.sec.gov/Archives/edgar/data/1174610/000207169126017442/primary_doc.xml
+
+TMF:
+  underlying: TLT
+  multiple: 3
+  expense_ratio: 0.0090        # 1.01% before the expense cap
+  aum_usd: 2199432117
+  median_spread_30d: null
+  as_of: 2026-07-31
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1424958/000119312526078552/d64996d497k.htm
+    - https://www.sec.gov/Archives/edgar/data/1424958/000119312526404458/primary_doc.xml
+
+UGL:
+  underlying: GLD
+  multiple: 2
+  expense_ratio: 0.0095        # management fee of each geared fund (10-K)
+  aum_usd: 640891713           # shareholders' equity (10-Q)
+  median_spread_30d: null
+  as_of: 2026-06-30
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1415311/000119312526077441/d785470d10k.htm
+    - https://www.sec.gov/Archives/edgar/data/1415311/000119312526340159/d138511d10q.htm
+
+AGQ:
+  underlying: SLV
+  multiple: 2
+  expense_ratio: 0.0095        # management fee of each geared fund (10-K)
+  aum_usd: 1269873944          # shareholders' equity (10-Q)
+  median_spread_30d: null
+  as_of: 2026-06-30
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1415311/000119312526077441/d785470d10k.htm
+    - https://www.sec.gov/Archives/edgar/data/1415311/000119312526340159/d138511d10q.htm
+
+BITX:                          # owner to fill (Volatility Shares)
+  underlying: IBIT
+  multiple: 2
+  expense_ratio: null
+  aum_usd: null
+  median_spread_30d: null
+  as_of: null
+  source: []
+
+ETHU:                          # owner to fill (Volatility Shares)
+  underlying: ETHA
+  multiple: 2
+  expense_ratio: null
+  aum_usd: null
+  median_spread_30d: null
+  as_of: null
+  source: []

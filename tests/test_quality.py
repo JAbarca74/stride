@@ -20,6 +20,7 @@ from stride.data.quality import (
     STOP_RUN,
     CheckResult,
     DataQualityError,
+    alerts,
     blocked_symbols,
     check_daily_changes,
     check_latest_bar,
@@ -148,11 +149,50 @@ def test_latest_bar_of_day_t_passes() -> None:
     assert check_latest_bar(_prices(), EVAL).passed
 
 
-def test_bar_of_previous_day_fails() -> None:
+def test_bar_of_previous_day_blocks_the_symbol() -> None:
     result = check_latest_bar(_prices(DAYS[:-1]), EVAL)
     assert not result.passed
-    assert result.severity == STOP_RUN
+    assert result.severity == BLOCK_SYMBOL
     assert "expected 2026-10-16" in result.detail
+
+
+def test_missing_bar_t_does_not_count_as_a_missing_history_day() -> None:
+    results = validate("SPY", _prices(DAYS[:-1]), EVAL, QUALITY)
+    by_name = {r.name: r for r in results}
+    assert by_name[NO_MISSING_DAYS].passed
+    assert not by_name[LATEST_BAR].passed
+
+
+def test_primary_missing_bar_t_for_one_symbol_blocks_only_that_symbol() -> None:
+    results = validate("GLD", _prices(DAYS[:-1]), EVAL, QUALITY) + validate(
+        "SPY", _prices(), EVAL, QUALITY
+    )
+    raise_on_blocking_failure(results)  # the run goes on
+    assert blocked_symbols(results) == {"GLD"}
+    assert [(r.symbol, r.name) for r in alerts(results)] == [("GLD", LATEST_BAR)]
+
+
+def test_primary_missing_bar_t_for_every_symbol_skips_the_run() -> None:
+    results = validate("GLD", _prices(DAYS[:-1]), EVAL, QUALITY) + validate(
+        "SPY", _prices(DAYS[:-1]), EVAL, QUALITY
+    )
+    with pytest.raises(DataQualityError, match="every symbol"):
+        raise_on_blocking_failure(results)
+
+
+def test_secondary_missing_bar_t_is_an_alert_only() -> None:
+    results = validate(
+        "SPY",
+        _prices(),
+        EVAL,
+        QUALITY,
+        primary_raw_close=_close(),
+        secondary_raw_close=_close(DAYS[:-1]),
+    )
+    raise_on_blocking_failure(results)
+    assert blocked_symbols(results) == set()
+    [alert] = alerts(results)
+    assert (alert.name, alert.severity) == (LATEST_SOURCES_AGREE, ALERT)
 
 
 def test_empty_prices_fail_latest_bar() -> None:
@@ -227,8 +267,9 @@ def test_latest_mismatch_blocks_only_that_symbol_and_does_not_stop_the_run() -> 
 
 
 def test_run_stopping_failure_raises() -> None:
-    results = validate("SPY", _prices(DAYS[:-1]), EVAL, QUALITY)
-    with pytest.raises(DataQualityError, match=f"SPY {LATEST_BAR}"):
+    prices = _prices(DAYS.drop([DAYS[-10]]))  # validation 1 stops the run
+    results = validate("SPY", prices, EVAL, QUALITY)
+    with pytest.raises(DataQualityError, match=f"SPY {NO_MISSING_DAYS}"):
         raise_on_blocking_failure(results)
 
 
@@ -241,3 +282,17 @@ def test_alert_only_failure_does_not_stop_the_run() -> None:
     raise_on_blocking_failure(
         [CheckResult(NO_MISSING_DAYS, True), CheckResult(SOURCES_AGREE, False, severity=ALERT)]
     )
+
+
+def test_jump_before_the_window_is_ignored() -> None:
+    prices = _prices()
+    prices.loc[DAYS[5] :, "close"] *= 1.5  # a genuine old move, like early ETH history
+    assert not check_daily_changes(prices, 0.25).passed
+    assert check_daily_changes(prices, 0.25, window_start=DAYS[10].date()).passed
+
+
+def test_validate_uses_the_300_day_window_for_validation_2() -> None:
+    prices = _prices()
+    prices.loc[DAYS[5] :, "close"] *= 1.5  # more than 300 trading days before EVAL
+    results = {r.name: r for r in validate("ETH", prices, EVAL, QUALITY)}
+    assert results[MAX_DAILY_CHANGE].passed

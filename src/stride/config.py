@@ -39,6 +39,25 @@ class _Section(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
 
+class LeveragedEtfFilters(_Section):
+    max_median_spread: Fraction
+    min_aum_usd: NonNegative
+
+
+class LeverageSwitchConfig(_Section):
+    """Hysteresis for switching between normal and leveraged ETFs (SPEC 7, step 2b)."""
+
+    enter_k: Annotated[float, Field(gt=1)]
+    exit_k: Annotated[float, Field(gt=0)]
+    min_hold_days: Annotated[int, Field(ge=0)]
+
+    @model_validator(mode="after")
+    def _exit_below_enter(self) -> Self:
+        if self.exit_k >= self.enter_k:
+            raise ValueError("exit_k must be below enter_k")
+        return self
+
+
 class StrategyConfig(_Section):
     sma_filter: Lookback
     entry_breakout: Lookback
@@ -139,6 +158,8 @@ class StrideConfig(_Section):
     universe: Annotated[list[Ticker], Field(min_length=1)]
     groups: dict[str, list[Ticker]]
     leveraged_etfs: dict[Ticker, Annotated[dict[Literal[2, 3], Ticker], Field(min_length=1)]]
+    leveraged_etf_filters: LeveragedEtfFilters
+    leverage_switch: LeverageSwitchConfig
     strategy: StrategyConfig
     risk: RiskConfig
     execution: ExecutionConfig
