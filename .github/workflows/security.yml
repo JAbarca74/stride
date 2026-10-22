@@ -19,6 +19,10 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # gitleaks lists the pull request's commits to scan only those.
+      pull-requests: read
     steps:
       # Full history, so a key added and later deleted is still found.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
