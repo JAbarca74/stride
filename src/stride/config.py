@@ -39,6 +39,25 @@ class _Section(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
 
+class LeveragedEtfFilters(_Section):
+    max_median_spread: Fraction
+    min_aum_usd: NonNegative
+
+
+class LeverageSwitchConfig(_Section):
+    """Hysteresis for switching between normal and leveraged ETFs (SPEC 7, step 2b)."""
+
+    enter_k: Annotated[float, Field(gt=1)]
+    exit_k: Annotated[float, Field(gt=0)]
+    min_hold_days: Annotated[int, Field(ge=0)]
+
+    @model_validator(mode="after")
+    def _exit_below_enter(self) -> Self:
+        if self.exit_k >= self.enter_k:
+            raise ValueError("exit_k must be below enter_k")
+        return self
+
+
 class StrategyConfig(_Section):
     sma_filter: Lookback
     entry_breakout: Lookback
@@ -106,10 +125,26 @@ class CostsConfig(_Section):
     margin_spread: NonNegative
 
 
+class DataQualityConfig(_Section):
+    """Thresholds for the section 5 validations (data parameters, not strategy)."""
+
+    missing_days_lookback: Annotated[int, Field(ge=1)]
+    max_daily_change: Annotated[float, Field(gt=0, le=1)]
+    source_close_tolerance: Fraction
+    latest_bar_max_diff: Fraction
+
+    @model_validator(mode="after")
+    def _latest_not_stricter_than_sample(self) -> Self:
+        if self.latest_bar_max_diff < self.source_close_tolerance:
+            raise ValueError("latest_bar_max_diff must not be below source_close_tolerance")
+        return self
+
+
 class DataConfig(_Section):
     db_path: Annotated[str, Field(min_length=1)]
     history_start: IsoDate
     crypto_history_start: IsoDate
+    quality: DataQualityConfig
 
     @model_validator(mode="after")
     def _crypto_not_before_history(self) -> Self:
@@ -123,6 +158,8 @@ class StrideConfig(_Section):
     universe: Annotated[list[Ticker], Field(min_length=1)]
     groups: dict[str, list[Ticker]]
     leveraged_etfs: dict[Ticker, Annotated[dict[Literal[2, 3], Ticker], Field(min_length=1)]]
+    leveraged_etf_filters: LeveragedEtfFilters
+    leverage_switch: LeverageSwitchConfig
     strategy: StrategyConfig
     risk: RiskConfig
     execution: ExecutionConfig
