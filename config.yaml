@@ -48,6 +48,7 @@ risk:
   max_portfolio_vol: 0.60
   dd_delever_at: 0.20
   kill_switch_dd: 0.40
+  allow_margin: false              # SPEC 1.4: the real account never borrows
   margin_min_equity: 2000
   margin_buffer: 0.25
   min_history_days_for_kelly: 250

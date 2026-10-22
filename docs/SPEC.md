@@ -3,12 +3,14 @@
 **STRIDE** — *Systematic Trend & Risk-Integrated Daily Execution*
 A systematic trend-following trading system with volatility-based risk management.
 
-- Version: 1.3
+- Version: 1.4
 - Date: 2026-10-19
 - Author: Jefferson Abarca
 - Status: Approved for Phase 1 (Foundations)
 
 This document is the single source of truth for the system. If code and spec disagree, the spec wins until it is explicitly changed. Any ambiguity must be raised as a question, never resolved by guessing.
+
+**Changes in 1.4** (owner decisions on the risk-module review): leverage capacity = L_borrow × `max_etf_portfolio_leverage` with a new `allow_margin` parameter (section 7, step 2); a same-day instrument switch is allowed under three conditions (section 7, step 3); a reconciliation break now **halts** the system instead of liquidating it, and only the −40% drawdown liquidates (section 7, step 4).
 
 **Changes in 1.3** (owner decisions on the risk modules): forward-looking `sigma_60` from target weights and an EWMA covariance matrix; the Kelly fallback replaces only the Kelly term, so L may go below 1; the drawdown is measured on a time-weighted index whose peak is stored in the database; reconciliation per symbol with a $1 floor; −40% is a trigger, not a guaranteed maximum loss (section 7).
 
@@ -270,8 +272,7 @@ where `mu` is the expected annual return, `r_f` the risk-free rate and `sigma` t
 L = min( kelly_fraction * L*,
          max_portfolio_vol / sigma_60,
          max_leverage,
-         L_broker,
-         L_capital )
+         L_capacity )      # 1.4: L_capacity = L_borrow × max_etf_portfolio_leverage
 ```
 
 | Limit | Default | Rule |
@@ -279,8 +280,8 @@ L = min( kelly_fraction * L*,
 | `kelly_fraction` | 1.0 | Full Kelly, project decision |
 | `max_portfolio_vol` | 0.60 | Max annual portfolio vol; with Sharpe 0.6, full Kelly implies about 60% |
 | `max_leverage` | 4.0 | Absolute cap |
-| `L_broker` | Read from broker | About 2.0 under Reg T for overnight positions |
-| `L_capital` | Margin only with equity >= $2,000; below that, up to 2.5x via leveraged ETFs | See step 2b |
+| `L_capacity` | L_borrow × `max_etf_portfolio_leverage` (2.5) | 1.4: L_borrow is the margin leverage read from the broker (about 2.0 under Reg T) only when `allow_margin` is true and equity ≥ $2,000; otherwise 1.0 (no loan) |
+| `allow_margin` | false | The real account never borrows: capacity is 2.5x whatever the balance, never a margin call, maximum loss = what was deposited. The paper Kelly account sets it to true: capacity = min(4.0, Reg T × 2.5), and the guard's 25% excess-liquidity check sets the practical limit |
 | `dd_delever_at` | −20% | If drawdown exceeds this, L is multiplied by 0.5 until a new equity high |
 
 **Decided in 1.3:**
@@ -289,7 +290,7 @@ L = min( kelly_fraction * L*,
 - **Kelly fallback:** if L* is negative or history has fewer than 250 days, only the **Kelly term** is replaced by 1.0. The other limits still apply, so L may be **below 1** (that is the purpose of the vol target).
 - **Order of operations:** L = min(limits); then, while the drawdown deleveraging is active, L × 0.5.
 - **Drawdown basis:** a **time-weighted return index** that excludes deposits and withdrawals; drawdown = 1 − index / historical maximum. The historical maximum is **stored in the database** and survives restarts. It is reset only by an explicit human action recorded in the `events` table, when the `KILL_SWITCH` file is deleted.
-- **Below $2,000 (no margin):** the broker's margin limit does not apply to leverage obtained through leveraged ETFs; `L_capital` = `max_etf_portfolio_leverage`. From $2,000 up, `L_broker` applies and `L_capital` does not.
+- **Capacity (1.4, replaces the 1.3 "below $2,000" rule):** two kinds of leverage are kept apart. *Borrowing* (margin) is the cash usable per dollar of equity: 1.0 in a cash account. *Built-in* leverage (leveraged ETFs) is the exposure per dollar invested, up to 2.5x on average. Total capacity is their product, `L_borrow × max_etf_portfolio_leverage`, so crossing $2,000 never lowers the available leverage. Step 2b fits the cash in `L_borrow × equity`.
 
 **Step 2b — Leveraged ETFs (no margin).** When the gross target exposure E exceeds equity P and no margin is available, the system reaches it with 2x/3x ETF versions:
 
