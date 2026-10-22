@@ -1,0 +1,25 @@
+name: Idea or improvement
+description: Propose a change to the code, the docs or the spec.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing or could be better, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How you would solve it. Mention the SPEC section if it changes behavior.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This touches risk, leverage, the kill switch or broker code
+        - label: I would like to open the pull request myself

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 60" width="960" height="60" role="img" aria-labelledby="t">
+  <title id="t">Trade only when the signal changes. Size by volatility, cap by Kelly. Every order passes the risk manager.</title>
+  <style>
+    :root { --fg:#1f2328; --accent:#0969da; }
+    @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --accent:#4493f8; } }
+    .line { font:600 22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--fg); }
+    .prompt { font:700 22px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--accent); animation:blink 1s step-end infinite; }
+    .clip { transform-box:fill-box; transform-origin:left center; transform:scaleX(0); animation:type 12s infinite; }
+    .c2 { animation-delay:4s; }
+    .c3 { animation-delay:8s; }
+    @keyframes type {
+      0% { transform:scaleX(0); animation-timing-function:steps(36, end); }
+      12% { transform:scaleX(1); }
+      28% { transform:scaleX(1); animation-timing-function:steps(18, end); }
+      33% { transform:scaleX(0); }
+      100% { transform:scaleX(0); }
+    }
+    @keyframes blink { 50% { opacity:0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .prompt, .clip { animation:none; }
+      .c1 { transform:none; }
+    }
+  </style>
+  <defs>
+    <clipPath id="k1"><rect class="clip c1" x="250" y="10" width="476" height="40"/></clipPath>
+    <clipPath id="k2"><rect class="clip c2" x="250" y="10" width="476" height="40"/></clipPath>
+    <clipPath id="k3"><rect class="clip c3" x="250" y="10" width="476" height="40"/></clipPath>
+  </defs>
+  <text class="prompt" x="222" y="38">›</text>
+  <text class="line" x="250" y="38" textLength="462" lengthAdjust="spacingAndGlyphs" clip-path="url(#k1)">Trade only when the signal changes.</text>
+  <text class="line" x="250" y="38" textLength="462" lengthAdjust="spacingAndGlyphs" clip-path="url(#k2)">Size by volatility, cap by Kelly.</text>
+  <text class="line" x="250" y="38" textLength="476" lengthAdjust="spacingAndGlyphs" clip-path="url(#k3)">Every order passes the risk manager.</text>
+</svg>
