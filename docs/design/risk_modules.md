@@ -78,6 +78,8 @@ check_order(order, context) -> GuardDecision(approved: bool, reasons: list[str])
 | `SYMBOL_BLOCKED` | the symbol is blocked by validation 3 or 4 (`quality.blocked_symbols`) |
 | `KILL_SWITCH` | the kill switch is active |
 
+A non-finite figure from the broker vetoes the order under the rule it makes uncheckable: a NaN or infinite holding gives `SHORT`, equity gives `ORDER_TOO_LARGE`, and excess liquidity or margin requirement (or a negative requirement) gives `MARGIN_BUFFER` on buys.
+
 `check_orders(orders, context)` runs them in execution order (sells first). Each approved order updates the context, so the 12-order limit and the same-day rule count correctly. Every veto raises an alert.
 
 ## 3. Kill switch (SPEC 7, step 4)

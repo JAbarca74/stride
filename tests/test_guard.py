@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -232,6 +233,70 @@ def test_liquidation_never_shorts(order: ProposedOrder, held: float) -> None:
     if check_liquidation(order, ctx).approved:
         assert order.side == "sell"
         assert order.notional <= held + 0.01
+
+
+# Fail safe: non-finite inputs from the broker veto the order (design, section 1).
+
+NAN = float("nan")
+INF = float("inf")
+non_finite = st.sampled_from([NAN, INF, -INF])
+
+
+@pytest.mark.parametrize("held", [NAN, INF, -INF])
+def test_non_finite_holding_cannot_be_sold(held: float) -> None:
+    ctx = replace(CTX, positions_usd={"SPY": held})
+    assert _reasons(_sell("SPY", 100.0), ctx) == (SHORT,)
+    assert check_liquidation(_sell("SPY", 100.0), ctx).reasons == (SHORT,)
+
+
+@pytest.mark.parametrize("equity", [NAN, INF])
+def test_non_finite_equity_vetoes_by_size(equity: float) -> None:
+    ctx = replace(CTX, equity=equity)
+    assert _reasons(_buy(notional=100.0), ctx) == (ORDER_TOO_LARGE,)
+    assert _reasons(_sell("SPY", 100.0), ctx) == (ORDER_TOO_LARGE,)
+
+
+@pytest.mark.parametrize(
+    ("excess", "requirement"), [(NAN, 100.0), (1_000.0, NAN), (INF, 100.0), (1_000.0, -1.0)]
+)
+def test_unusable_margin_figures_veto_buys(excess: float, requirement: float) -> None:
+    ctx = replace(CTX, excess_liquidity=excess, margin_requirement=requirement)
+    assert _reasons(_buy(notional=10.0), ctx) == (MARGIN_BUFFER,)
+    assert _reasons(_sell("SPY", 10.0), ctx) == ()  # sells reduce margin use
+
+
+def test_cash_account_without_margin_requirement_still_buys() -> None:
+    assert _reasons(_buy(), replace(CTX, excess_liquidity=0.0, margin_requirement=0.0)) == ()
+
+
+@settings(max_examples=500, deadline=None)
+@given(order=orders, bad=non_finite, field_name=st.sampled_from(["equity", "held"]))
+def test_non_finite_size_inputs_never_approve(
+    order: ProposedOrder, bad: float, field_name: str
+) -> None:
+    held = {order.symbol: bad} if field_name == "held" else {order.symbol: 1_000.0}
+    equity = bad if field_name == "equity" else 1_000.0
+    ctx = GuardContext(equity, held, True, False)
+    if field_name == "equity" or order.side == "sell":
+        assert not check_order(order, ctx, CONFIG).approved
+    if field_name == "held":
+        assert not check_liquidation(order, ctx).approved
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    order=orders,
+    excess=st.one_of(non_finite, st.floats(min_value=0, max_value=5_000)),
+    requirement=st.one_of(non_finite, st.floats(min_value=-5_000, max_value=5_000)),
+)
+def test_approved_buys_always_keep_the_margin_buffer(
+    order: ProposedOrder, excess: float, requirement: float
+) -> None:
+    ctx = replace(CTX, equity=10_000.0, excess_liquidity=excess, margin_requirement=requirement)
+    buy = replace(order, side="buy")
+    if check_order(buy, ctx, CONFIG).approved:
+        assert math.isfinite(excess) and math.isfinite(requirement) and requirement >= 0
+        assert requirement == 0 or excess - buy.notional >= CONFIG.risk.margin_buffer * requirement
 
 
 def test_order_reason_constants_are_unique() -> None:

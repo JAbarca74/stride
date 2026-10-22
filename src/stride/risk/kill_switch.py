@@ -38,7 +38,10 @@ class TwrState:
 
     @property
     def drawdown(self) -> float:
-        """Fall from the peak as a positive fraction (0.4 means -40%)."""
+        """Fall from the peak as a positive fraction (0.4 means -40%). NaN when the
+        peak is not a positive finite number, which fires the kill switch (fail safe)."""
+        if not (math.isfinite(self.peak) and self.peak > 0):
+            return math.nan
         return 1 - self.index / self.peak
 
 
@@ -63,13 +66,17 @@ def reconciliation_breaks(
     floor_usd: float,
 ) -> list[str]:
     """Symbols whose broker and system values differ by more than
-    max(tolerance x value, floor_usd), plus any symbol held on only one side."""
+    max(tolerance x value, floor_usd), plus any symbol held on only one side or
+    with a non-finite value on either side (it cannot be compared: fail safe)."""
     breaks = []
     for symbol in sorted(set(system_usd) | set(broker_usd)):
         if symbol not in system_usd or symbol not in broker_usd:
             breaks.append(symbol)
             continue
         expected, actual = system_usd[symbol], broker_usd[symbol]
+        if not (math.isfinite(expected) and math.isfinite(actual)):
+            breaks.append(symbol)
+            continue
         allowed = max(tolerance * max(abs(expected), abs(actual)), floor_usd)
         if abs(actual - expected) > allowed:
             breaks.append(symbol)
