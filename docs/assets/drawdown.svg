@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 250" width="960" height="250" role="img" aria-labelledby="t d">
+  <title id="t">Drawdown brakes</title>
+  <desc id="d">Equity falls from its peak. Past a 20% drawdown leverage is halved; at 40% the kill switch closes every position and the line goes flat until a human resets it. Illustrative path.</desc>
+  <style>
+    :root { --bg:#ffffff; --border:#d0d7de; --fg:#1f2328; --muted:#59636e; --eq:#0969da; --amber:#9a6700; --red:#cf222e; --band:#fff8c5; --kill:#ffebe9; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0d1117; --border:#30363d; --fg:#e6edf3; --muted:#9198a1; --eq:#4493f8; --amber:#d29922; --red:#f85149; --band:#2e2a12; --kill:#3a1d1d; }
+    }
+    .card { fill:var(--bg); stroke:var(--border); }
+    .h { font:700 16px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--fg); }
+    .lbl { font:600 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    .foot { font:500 12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); }
+    .eq { fill:none; stroke:var(--eq); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1; stroke-dashoffset:1; animation:draw 8s linear infinite; }
+    .flat { fill:none; stroke:var(--muted); stroke-width:3; stroke-dasharray:6 6; opacity:0; animation:flat 8s linear infinite; }
+    .badge { opacity:0; }
+    .b1 { animation:show1 8s linear infinite; }
+    .b2 { animation:show2 8s linear infinite; }
+    @keyframes draw { 0% { stroke-dashoffset:1; } 62% { stroke-dashoffset:0; } 100% { stroke-dashoffset:0; } }
+    @keyframes flat { 0%, 62% { opacity:0; } 66%, 94% { opacity:1; } 100% { opacity:0; } }
+    @keyframes show1 { 0%, 34% { opacity:0; } 37%, 94% { opacity:1; } 100% { opacity:0; } }
+    @keyframes show2 { 0%, 60% { opacity:0; } 62%, 64% { opacity:1; } 63% { opacity:.3; } 66%, 94% { opacity:1; } 100% { opacity:0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .eq, .flat, .b1, .b2 { animation:none; stroke-dashoffset:0; opacity:1; }
+    }
+  </style>
+
+  <rect class="card" x="0.5" y="0.5" width="959" height="249" rx="16"/>
+  <text class="h" x="32" y="36">Drawdown brakes on a time-weighted equity index</text>
+
+  <!-- y = 60 is the peak (0%), 120 is −20%, 180 is −40% -->
+  <rect x="120" y="120" width="800" height="60" style="fill:var(--band)"/>
+  <rect x="120" y="180" width="800" height="26" style="fill:var(--kill)"/>
+  <line x1="120" y1="60" x2="920" y2="60" style="stroke:var(--border);stroke-dasharray:3 4"/>
+  <line x1="120" y1="120" x2="920" y2="120" style="stroke:var(--amber);stroke-width:1.5;stroke-dasharray:6 4"/>
+  <line x1="120" y1="180" x2="920" y2="180" style="stroke:var(--red);stroke-width:1.5;stroke-dasharray:6 4"/>
+  <text class="lbl" x="32" y="64" style="fill:var(--muted)">peak  0%</text>
+  <text class="lbl" x="32" y="124" style="fill:var(--amber)">−20%</text>
+  <text class="lbl" x="32" y="184" style="fill:var(--red)">−40%</text>
+
+  <path class="eq" pathLength="1" d="M120,96 L170,80 L210,86 L250,62 L290,60 L330,78 L370,92 L410,88 L450,112 L490,104 L530,128 L570,140 L610,134 L650,158 L690,170 L720,181"/>
+  <path class="flat" d="M720,181 H920"/>
+
+  <g class="badge b1">
+    <rect x="536" y="96" width="132" height="24" rx="12" style="fill:var(--amber)"/>
+    <text class="lbl" x="602" y="112" text-anchor="middle" style="fill:#ffffff">L × 0.5</text>
+  </g>
+  <g class="badge b2">
+    <rect x="740" y="146" width="168" height="26" rx="13" style="fill:var(--red)"/>
+    <text class="lbl" x="824" y="163" text-anchor="middle" style="fill:#ffffff">KILL SWITCH: all flat</text>
+  </g>
+
+  <text class="foot" x="32" y="234">Illustrative path. The peak is stored in the database, so a restart cannot reset it; only a human can, and that is logged.</text>
+</svg>

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 280" width="960" height="280" role="img" aria-labelledby="t d">
+  <title id="t">STRIDE</title>
+  <desc id="d">A price line draws itself above its 200-day average while breakout entries appear and a trailing stop steps up beneath it.</desc>
+  <style>
+    :root { --bg:#ffffff; --border:#d0d7de; --fg:#1f2328; --muted:#59636e; --price:#0969da; --sma:#8250df; --stop:#cf222e; --entry:#1a7f37; --grid:#eaeef2; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0d1117; --border:#30363d; --fg:#e6edf3; --muted:#9198a1; --price:#4493f8; --sma:#ab7df8; --stop:#f85149; --entry:#3fb950; --grid:#21262d; }
+    }
+    .card { fill:var(--bg); stroke:var(--border); }
+    .title { font:700 64px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--fg); letter-spacing:6px; }
+    .sub { font:500 17px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); }
+    .tag { font:600 13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--muted); }
+    .grid { stroke:var(--grid); stroke-width:1; }
+    .line { fill:none; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1; stroke-dashoffset:1; animation:draw 4s ease-out forwards; }
+    .price { stroke:var(--price); stroke-width:3; }
+    .sma { stroke:var(--sma); stroke-width:2; opacity:.8; animation-duration:4.4s; }
+    .stop { stroke:var(--stop); stroke-width:2; animation-timing-function:steps(40, end); }
+    .entry { fill:var(--entry); opacity:0; transform-box:fill-box; transform-origin:center; animation:pop .5s ease-out forwards; }
+    .pulse { fill:none; stroke:var(--entry); stroke-width:2; opacity:0; transform-box:fill-box; transform-origin:center; animation:pulse 2s ease-out 4.4s infinite; }
+    .legend { font:500 12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); }
+    .fade { opacity:0; animation:fade .8s ease-out .2s forwards; }
+    @keyframes draw { to { stroke-dashoffset:0; } }
+    @keyframes pop { 0% { opacity:0; transform:scale(0); } 70% { opacity:1; transform:scale(1.4); } 100% { opacity:1; transform:scale(1); } }
+    @keyframes pulse { 0% { opacity:.9; transform:scale(1); } 100% { opacity:0; transform:scale(3.2); } }
+    @keyframes fade { to { opacity:1; } }
+    @media (prefers-reduced-motion: reduce) {
+      .line, .entry, .pulse, .fade { animation:none; stroke-dashoffset:0; opacity:1; }
+      .pulse { opacity:0; }
+    }
+  </style>
+
+  <rect class="card" x="0.5" y="0.5" width="959" height="279" rx="16"/>
+
+  <g class="fade">
+    <text class="title" x="44" y="118">STRIDE</text>
+    <text class="sub" x="46" y="152">Systematic Trend &amp; Risk-Integrated Daily Execution</text>
+    <text class="tag" x="46" y="196">trend following · volatility sizing · Kelly-capped leverage</text>
+    <text class="tag" x="46" y="220">pure Python core · no look-ahead · risk manager veto</text>
+  </g>
+
+  <g class="grid">
+    <line x1="480" y1="60" x2="920" y2="60"/>
+    <line x1="480" y1="110" x2="920" y2="110"/>
+    <line x1="480" y1="160" x2="920" y2="160"/>
+    <line x1="480" y1="210" x2="920" y2="210"/>
+  </g>
+
+  <path class="line sma" pathLength="1" d="M480,215 C560,200 600,192 640,182 S720,160 760,148 S840,122 880,110 L920,98"/>
+  <path class="line stop" pathLength="1" d="M480,228 H600 V205 H700 V180 H800 V150 H900 V122 H920"/>
+  <path class="line price" pathLength="1" d="M480,200 L505,192 L530,205 L555,188 L580,195 L605,170 L630,176 L655,150 L680,158 L705,132 L730,140 L755,118 L780,128 L805,100 L830,112 L855,86 L880,95 L905,70 L920,74"/>
+
+  <circle class="entry" cx="605" cy="170" r="6" style="animation-delay:1.2s"/>
+  <circle class="entry" cx="705" cy="132" r="6" style="animation-delay:2.1s"/>
+  <circle class="entry" cx="805" cy="100" r="6" style="animation-delay:3s"/>
+  <circle class="entry" cx="905" cy="70" r="6" style="animation-delay:3.9s"/>
+  <circle class="pulse" cx="905" cy="70" r="6"/>
+
+  <g class="legend fade">
+    <line x1="484" y1="252" x2="504" y2="252" style="stroke:var(--price);stroke-width:3"/>
+    <text x="510" y="256">price</text>
+    <line x1="560" y1="252" x2="580" y2="252" style="stroke:var(--sma);stroke-width:2"/>
+    <text x="586" y="256">SMA 200</text>
+    <line x1="660" y1="252" x2="680" y2="252" style="stroke:var(--stop);stroke-width:2"/>
+    <text x="686" y="256">2N stop</text>
+    <circle cx="756" cy="252" r="5" style="fill:var(--entry)"/>
+    <text x="766" y="256">55-day breakout / pyramid</text>
+  </g>
+</svg>
