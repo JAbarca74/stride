@@ -17,6 +17,16 @@ leveraged_etfs:             # candidates, to be verified at the broker (T21)
   GLD: {2: UGL}
   SLV: {2: AGQ}
   IBIT: {2: BITX}
+  ETHA: {2: ETHU}
+
+leveraged_etf_filters:      # SPEC section 7; issuer data under SEC rule 6c-11 (T21)
+  max_median_spread: 0.002  # 30-day median bid-ask spread, at most 0.20%
+  min_aum_usd: 50000000
+
+leverage_switch:            # SPEC section 7, step 2b: hysteresis on instrument switching
+  enter_k: 1.25             # switch to a leveraged version only if k >= 1.25
+  exit_k: 0.95              # switch back to the normal ETF only if k <= 0.95
+  min_hold_days: 20         # keep the instrument at least 20 trading days unless the position is closed
 
 strategy:
   sma_filter: 200

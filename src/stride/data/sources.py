@@ -7,14 +7,17 @@ fetched_at. Prices are adjusted for dividends and splits.
 
 from __future__ import annotations
 
+import io
 import os
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 import pandas as pd
 import requests
+
+from stride.data.calendar import sessions
 
 CONTRACT_COLUMNS = ("symbol", "open", "high", "low", "close", "volume", "source", "fetched_at")
 DATA_API_KEY_ENV = "DATA_API_KEY"
@@ -272,3 +275,193 @@ def fetch_daily(source: PriceSource, symbol: str, start: date, end: date) -> pd.
     if end < start:
         raise ValueError("end must not be before start")
     return source.fetch(symbol, start, end)
+
+
+# Spot pairs used before each crypto ETF existed (SPEC section 5, task T19).
+CRYPTO_SPOT_PRODUCTS = {"IBIT": "BTC-USD", "ETHA": "ETH-USD"}
+
+
+class CoinbaseSource:
+    """USD spot session bars built from Coinbase Exchange 15-minute candles (no key).
+
+    `symbol` is a Coinbase product id such as `BTC-USD`. Per SPEC 1.1 section 5, a bar
+    exists only for NYSE trading days and covers the NYSE session: open = first trade
+    from 9:30 ET, high/low = extremes during the session, close = last trade before
+    the session close (16:00 ET, or the early close). Weekend moves therefore appear as
+    gaps, exactly as in the ETF.
+    """
+
+    name = "coinbase"
+    url = "https://api.exchange.coinbase.com/products/{product}/candles"
+    granularity = timedelta(minutes=15)
+    max_candles = 300  # API limit per request
+
+    def __init__(
+        self,
+        session: HttpSession | None = None,
+        clock: Clock = _utc_now,
+        min_interval_seconds: float = 0.15,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._session: HttpSession = session or requests.Session()
+        self._clock = clock
+        self._min_interval = min_interval_seconds
+        self._sleep = sleep
+
+    def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        nyse = sessions(start, end)
+        if nyse.empty:
+            return to_contract(pd.DataFrame(), symbol, self.name, self._clock())
+        candles = self._candles(symbol, nyse)
+        bars = _session_bars(candles, nyse)
+        return to_contract(bars, symbol, self.name, self._clock())
+
+    def _windows(self, nyse: pd.DataFrame) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+        """Group consecutive sessions so each request stays within the candle limit."""
+        span = self.granularity * self.max_candles
+        windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+        opens = list(nyse["market_open"])
+        closes = list(nyse["market_close"])
+        first = 0
+        for i in range(1, len(opens) + 1):
+            if i == len(opens) or closes[i] - opens[first] > span:
+                windows.append((opens[first], closes[i - 1] - self.granularity))
+                first = i
+        return windows
+
+    def _candles(self, product: str, nyse: pd.DataFrame) -> pd.DataFrame:
+        rows: list[list[float]] = []
+        for number, (window_start, window_end) in enumerate(self._windows(nyse)):
+            if number and self._min_interval:
+                self._sleep(self._min_interval)
+            rows.extend(
+                _get_json(
+                    self._session,
+                    provider=self.name,
+                    symbol=product,
+                    url=self.url.format(product=product),
+                    params={
+                        "granularity": str(int(self.granularity.total_seconds())),
+                        "start": window_start.isoformat(),
+                        "end": window_end.isoformat(),
+                    },
+                    headers={"User-Agent": "stride"},
+                )
+            )
+        # Candle layout: [time, low, high, open, close, volume]; time = candle start.
+        candles = pd.DataFrame(rows, columns=["time", "low", "high", "open", "close", "volume"])
+        candles["time"] = pd.to_datetime(candles["time"], unit="s", utc=True)
+        return candles.drop_duplicates("time").sort_values("time").reset_index(drop=True)
+
+
+def _session_bars(candles: pd.DataFrame, nyse: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate 15-minute candles into one bar per NYSE session."""
+    rows: list[dict[str, Any]] = []
+    for day, market_open, market_close in zip(
+        nyse.index, nyse["market_open"], nyse["market_close"], strict=True
+    ):
+        inside = candles[(candles["time"] >= market_open) & (candles["time"] < market_close)]
+        if inside.empty:
+            continue  # no trades in the session: the day stays missing
+        rows.append(
+            {
+                "date": day,
+                "open": inside["open"].iloc[0],
+                "high": inside["high"].max(),
+                "low": inside["low"].min(),
+                "close": inside["close"].iloc[-1],
+                "volume": inside["volume"].sum(),
+            }
+        )
+    return pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume"])
+
+
+def splice_spot_with_etf(
+    spot: pd.DataFrame,
+    etf: pd.DataFrame,
+    symbol: str,
+    trading_days: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """One continuous series for a crypto ETF: scaled spot history, then the ETF itself.
+
+    Spot bars are kept only on NYSE trading days before the ETF's first bar. Their
+    prices are multiplied by `etf_close / spot_close` on that first day, so the series
+    has no jump at the switch and daily returns before it are the spot returns.
+    Spot volume is converted to ETF-share equivalents with the same ratio. The `source`
+    column keeps the provider of each row, which marks the spot-to-ETF switch.
+
+    Raises `SourceError` if the spot series lacks the switch day or if any trading day
+    between the first and last bar is missing.
+    """
+    if etf.empty:
+        raise SourceError(f"{symbol}: ETF series is empty")
+    etf = etf.sort_index()
+    switch = pd.Timestamp(etf.index[0])
+    spot_on_switch = spot["close"][spot.index == switch]
+    if spot_on_switch.empty:
+        raise SourceError(f"{symbol}: spot series has no bar on the switch day {switch.date()}")
+    ratio = float(etf["close"].iloc[0]) / float(spot_on_switch.iloc[0])
+
+    days = pd.DatetimeIndex(trading_days).normalize()
+    before = spot[(spot.index < switch) & spot.index.isin(days)].copy()
+    for column in ("open", "high", "low", "close"):
+        before[column] = before[column] * ratio
+    before["volume"] = (before["volume"] / ratio).round().astype("int64")
+
+    combined = pd.concat([before, etf]).sort_index()
+    combined["symbol"] = symbol
+    combined.index.name = "date"
+
+    first, last = combined.index.min(), combined.index.max()
+    expected = days[(days >= first) & (days <= last)]
+    missing = expected.difference(combined.index)
+    if len(missing) > 0:
+        shown = ", ".join(day.date().isoformat() for day in missing[:5])
+        raise SourceError(f"{symbol}: {len(missing)} missing trading days after splice: {shown}")
+    return combined.loc[:, list(CONTRACT_COLUMNS)]
+
+
+class TextResponse(Protocol):
+    status_code: int
+
+    @property
+    def text(self) -> str: ...
+
+
+class TextSession(Protocol):
+    def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> TextResponse: ...
+
+
+class FredRateSource:
+    """Daily 3-month T-bill rate (FRED series DTB3) as an annual fraction. No key needed.
+
+    FRED leaves holidays empty; those days are dropped. Use
+    `leveraged.rate_known_at_t_minus_1` to align it without look-ahead.
+    """
+
+    name = "fred"
+    url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+    def __init__(self, series_id: str = "DTB3", session: TextSession | None = None) -> None:
+        self._series_id = series_id
+        self._session: TextSession = session or requests.Session()
+
+    def fetch_rate(self) -> pd.Series:
+        try:
+            response = self._session.get(
+                self.url, params={"id": self._series_id}, timeout=REQUEST_TIMEOUT_SECONDS
+            )
+        except requests.RequestException as exc:
+            raise SourceError(
+                f"fred request for {self._series_id} failed: {type(exc).__name__}"
+            ) from None
+        if response.status_code != HTTP_OK:
+            raise SourceError(f"fred returned HTTP {response.status_code} for {self._series_id}")
+        frame = pd.read_csv(io.StringIO(response.text))
+        frame.columns = ["date", "value"]
+        values = pd.to_numeric(frame["value"], errors="coerce")
+        rate = pd.Series(
+            values.to_numpy() / 100, index=pd.DatetimeIndex(frame["date"]), name="rate"
+        )
+        rate.index.name = "date"
+        return rate.dropna().sort_index()
