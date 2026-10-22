@@ -1,10 +1,19 @@
 # Secrets and runtime state
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 data/
 !src/stride/data/
 KILL_SWITCH
 *.db
 *.db-journal
+*.sqlite
+*.log
+logs/
 
 # Reports output
 reports/
@@ -20,7 +29,9 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 .coverage
+.coverage.*
 htmlcov/
 
 # Notebooks
@@ -31,3 +42,4 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+desktop.ini
