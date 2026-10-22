@@ -83,13 +83,16 @@ def test_reference_facts_file_loads_and_covers_every_mapped_etf() -> None:
         assert config.leveraged_etfs[fact.underlying][fact.multiple] == ticker
 
 
-def test_reference_facts_leave_owner_fields_empty() -> None:
+def test_reference_facts_are_complete_and_only_ubt_fails_the_filters() -> None:
     facts = load_etf_facts()
+    config = load_config(ROOT / "config.yaml", env={})
     assert facts["ETHU"].underlying == "ETHA"
-    for ticker in ("BITX", "ETHU"):
-        assert facts[ticker].expense_ratio is None
-        assert facts[ticker].aum_usd is None
-    assert all(f.median_spread_30d is None for f in facts.values())
+    for fact in facts.values():
+        assert fact.expense_ratio is not None
+        assert fact.aum_usd is not None
+        assert fact.median_spread_30d is not None
+    failing = {t for t, f in facts.items() if not passes_filters(f, config.leveraged_etf_filters)}
+    assert failing == {"UBT"}  # 0.35% median spread, above the 0.20% cap
 
 
 def test_facts_file_rejects_unknown_fields(tmp_path: Path) -> None:
