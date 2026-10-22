@@ -13,7 +13,10 @@ All code, comments, commit messages, docs and pull requests are in **English**.
 3. **No look-ahead.** No function may read data dated after the evaluation date. Rolling highs/lows exclude day t (see SPEC section 6).
 4. **Tests first-class.** Every new function ships with pytest tests. `pytest` and `ruff check` must pass before a task is done.
 5. **Parameters live in `config.yaml`.** Never hardcode strategy or risk numbers. Never change their values unless explicitly asked.
-6. **Never touch real money.** Never run with `mode: live`, never set `LIVE_CONFIRM`, never read or write real credentials. Use `mode: backtest` or `mode: paper` only.
+6. **Never touch real money.** Never run with `mode: live` and never set `LIVE_CONFIRM`. Use `mode: backtest` or `mode: paper` only.
+   - **Allowed** in `.env` for development and verification: data-only API keys (e.g. Tiingo `DATA_API_KEY`) and **paper-trading** keys (e.g. Alpaca paper).
+   - **Never allowed:** live-trading credentials of any kind.
+   - Never print, log or commit any key. Check that `.env` is git-ignored before using it, and read keys only through the code (never echo `.env`).
 7. **Human-reviewed modules.** Do not create or change `risk/leverage.py`, `risk/guard.py`, the kill switch, `execution/orders.py` or `execution/ibkr_broker.py` without the owner's explicit go-ahead in the current session. Propose a design first.
 8. **Small steps.** One backlog task (SPEC section 13) per branch and pull request, with the task ID in the title.
 
