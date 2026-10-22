@@ -1,6 +1,7 @@
 # Secrets and runtime state
 .env
 data/
+!src/stride/data/
 KILL_SWITCH
 *.db
 *.db-journal

@@ -238,3 +238,61 @@ def test_wrong_scalar_types_are_rejected_not_coerced(
 def test_integer_is_accepted_for_float_field(tmp_path: Path) -> None:
     path = _write(tmp_path, _with("risk", "max_leverage", 3))
     assert load_config(path, env={}).risk.max_leverage == 3.0
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("missing_days_lookback", 0),
+        ("max_daily_change", 0),
+        ("max_daily_change", 1.5),
+        ("source_close_tolerance", 0),
+        ("latest_bar_max_diff", 1),
+    ],
+)
+def test_out_of_range_quality_thresholds_are_rejected(tmp_path: Path, key: str, value: Any) -> None:
+    data = _reference()
+    data["data"]["quality"][key] = value
+    with pytest.raises(ConfigError, match=key):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_latest_bar_limit_below_sample_tolerance_is_rejected(tmp_path: Path) -> None:
+    data = _reference()
+    data["data"]["quality"]["latest_bar_max_diff"] = 0.001
+    with pytest.raises(ConfigError, match="latest_bar_max_diff must not be below"):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_quality_section_is_required(tmp_path: Path) -> None:
+    data = _reference()
+    del data["data"]["quality"]
+    with pytest.raises(ConfigError, match="quality"):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_reference_leverage_switch_and_ethu() -> None:
+    config = load_config(REFERENCE, env={})
+    assert config.leverage_switch.enter_k == 1.25
+    assert config.leverage_switch.exit_k == 0.95
+    assert config.leverage_switch.min_hold_days == 20
+    assert config.leveraged_etfs["ETHA"] == {2: "ETHU"}
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("enter_k", 1.0, "enter_k"),
+        ("exit_k", 0, "exit_k"),
+        ("exit_k", 1.3, "exit_k must be below enter_k"),
+        ("min_hold_days", -1, "min_hold_days"),
+        ("min_hold_days", 20.5, "min_hold_days"),
+    ],
+)
+def test_invalid_leverage_switch_is_rejected(
+    tmp_path: Path, key: str, value: Any, message: str
+) -> None:
+    data = _reference()
+    data["leverage_switch"][key] = value
+    with pytest.raises(ConfigError, match=message):
+        load_config(_write(tmp_path, data), env={})
