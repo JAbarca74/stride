@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from stride.config import load_config
 from stride.risk.guard import (
     DATA_FAILED,
+    HALTED,
     INVALID_ORDER,
     KILL_SWITCH,
     MARGIN_BUFFER,
@@ -25,6 +26,7 @@ from stride.risk.guard import (
     check_liquidation,
     check_order,
     check_orders,
+    multiple_map,
     underlying_map,
 )
 
@@ -252,3 +254,106 @@ def test_order_reason_constants_are_unique() -> None:
 def test_decision_keeps_the_order(side: str) -> None:
     order = ProposedOrder("SPY", side, 50.0)  # type: ignore[arg-type]
     assert check_order(order, CTX, CONFIG).order is order
+
+
+# SPEC 1.4: same-day instrument switch and halt.
+
+
+def _switch_sell(symbol: str, notional: float) -> ProposedOrder:
+    return ProposedOrder(symbol, "sell", notional, switch=True)
+
+
+def _switch_buy(symbol: str, notional: float) -> ProposedOrder:
+    return ProposedOrder(symbol, "buy", notional, switch=True)
+
+
+def test_marked_switch_is_allowed_the_same_day() -> None:
+    # SPY $300 -> SSO $150 (2x): exposure stays $300.
+    decisions = check_orders([_switch_buy("SSO", 150.0), _switch_sell("SPY", 300.0)], CTX, CONFIG)
+    assert [(d.order.symbol, d.approved) for d in decisions] == [("SPY", True), ("SSO", True)]
+
+
+def test_switch_to_3x_keeps_exposure() -> None:
+    decisions = check_orders([_switch_sell("SPY", 300.0), _switch_buy("UPRO", 100.0)], CTX, CONFIG)
+    assert all(d.approved for d in decisions)
+
+
+def test_unmarked_orders_are_still_reversals() -> None:
+    exit_by_signal = check_orders([_sell("SPY", 300.0), _switch_buy("SSO", 150.0)], CTX, CONFIG)
+    assert exit_by_signal[1].reasons == (SAME_DAY_REVERSAL,)
+    unmarked_buy = check_orders([_switch_sell("SPY", 300.0), _buy("SSO", 150.0)], CTX, CONFIG)
+    assert unmarked_buy[1].reasons == (SAME_DAY_REVERSAL,)
+
+
+def test_switch_that_changes_exposure_beyond_the_band_is_vetoed() -> None:
+    only_spy = replace(CTX, positions_usd={"SPY": 300.0})  # exposure before: $300
+    # Sold $300 of SPY exposure, buying $400 (SSO $200 x 2): +33% > 20% band.
+    decisions = check_orders(
+        [_switch_sell("SPY", 300.0), _switch_buy("SSO", 200.0)], only_spy, CONFIG
+    )
+    assert decisions[1].reasons == (SAME_DAY_REVERSAL,)
+    # +$50 of exposure (16.7%) is inside the band.
+    ok = check_orders([_switch_sell("SPY", 300.0), _switch_buy("SSO", 175.0)], only_spy, CONFIG)
+    assert all(d.approved for d in ok)
+
+
+def test_switch_needs_the_sell_first() -> None:
+    bought_first = replace(CTX, approved_today=(_switch_buy("SSO", 150.0),))
+    assert _reasons(_switch_sell("SPY", 300.0), bought_first) == (SAME_DAY_REVERSAL,)
+
+
+def test_switch_band_counts_the_whole_underlying() -> None:
+    # CTX holds SPY $300 and SSO $200 (= $400 exposure): $700 before the switch.
+    decisions = check_orders([_switch_sell("SPY", 300.0), _switch_buy("SSO", 200.0)], CTX, CONFIG)
+    assert all(d.approved for d in decisions)  # +$100 on $700 is 14% < 20%
+
+
+def test_tolerance_cannot_be_reused_to_go_short() -> None:
+    assert _reasons(_sell("GLD", 0.01)) == (SHORT,)  # nothing held, not even 1 cent
+    decisions = check_orders([_sell("SPY", 300.01), _sell("SPY", 0.01)], CTX, CONFIG)
+    assert [d.approved for d in decisions] == [True, False]
+
+
+def test_halt_blocks_every_order_but_not_liquidation() -> None:
+    halted = replace(CTX, halted=True)
+    assert _reasons(_buy(), halted) == (HALTED,)
+    assert _reasons(_sell(), halted) == (HALTED,)
+    assert check_liquidation(_sell("SPY", 300.0), halted).approved
+
+
+def test_multiple_map() -> None:
+    multiples = multiple_map(CONFIG)
+    assert (multiples["SPY"], multiples["SSO"], multiples["UPRO"], multiples["TMF"]) == (1, 2, 3, 3)
+
+
+@settings(max_examples=1_000, deadline=None)
+@given(
+    batch=st.lists(
+        st.builds(
+            ProposedOrder,
+            symbol=st.sampled_from(["SPY", "SSO", "UPRO", "TLT", "TMF"]),
+            side=st.sampled_from(["buy", "sell"]),
+            notional=st.floats(min_value=0.01, max_value=500),
+            switch=st.booleans(),
+        ),
+        max_size=12,
+    ),
+    held=st.dictionaries(
+        st.sampled_from(["SPY", "SSO", "TLT"]), st.floats(min_value=0, max_value=600), max_size=3
+    ),
+)
+def test_both_sides_of_an_underlying_only_as_a_marked_small_switch(
+    batch: list[ProposedOrder], held: dict[str, float]
+) -> None:
+    ok = approved(check_orders(batch, GuardContext(10_000.0, held, True, False), CONFIG))
+    mapping, multiples = underlying_map(CONFIG), multiple_map(CONFIG)
+    for asset in {mapping[o.symbol] for o in ok}:
+        orders = [o for o in ok if mapping[o.symbol] == asset]
+        if {o.side for o in orders} == {"buy", "sell"}:
+            assert all(o.switch for o in orders)
+            first_buy = next(i for i, o in enumerate(orders) if o.side == "buy")
+            assert orders[0].side == "sell" and first_buy > 0
+            sold = sum(o.notional * multiples[o.symbol] for o in orders if o.side == "sell")
+            bought = sum(o.notional * multiples[o.symbol] for o in orders if o.side == "buy")
+            before = sum(v * multiples[s] for s, v in held.items() if mapping[s] == asset)
+            assert abs(bought - sold) < CONFIG.execution.rebalance_band * before + 1e-9

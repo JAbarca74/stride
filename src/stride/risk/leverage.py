@@ -4,7 +4,7 @@ SPEC section 7 (steps 1, 2 and 2b) as decided in SPEC 1.3. HUMAN-REVIEWED MODULE
 read the whole file before merging. Pure functions, no I/O, no clock.
 
 Step 1   kelly_estimate      L* = (mu - r_f) / sigma^2 from the unlevered strategy.
-Step 2   effective_leverage  L = min(Kelly, vol target, max, broker, capital),
+Step 2   effective_leverage  L = min(Kelly, vol target, max, capacity),
                              then x 0.5 while the drawdown deleveraging is active.
 Step 2b  choose_instruments  reach the exposure with 2x/3x ETFs when there is no
                              margin, with hysteresis on switching.
@@ -30,8 +30,7 @@ VOL_SPAN = 60  # SPEC 1.3: the same EWMA as vol60
 KELLY = "KELLY"
 VOL_TARGET = "VOL_TARGET"
 MAX_LEVERAGE = "MAX_LEVERAGE"
-BROKER = "BROKER"
-CAPITAL = "CAPITAL"
+CAPACITY = "CAPACITY"
 
 _CASH_TOLERANCE = 1e-9  # relative slack when checking that cash fits in equity
 _ZERO_VOL = 1e-12  # below this an annual volatility is float noise, i.e. zero
@@ -120,6 +119,7 @@ class LeverageDecision:
     binding_limit: str
     limits: dict[str, float]  # every applicable limit, before deleveraging
     delever_active: bool
+    borrow: float  # L_borrow: cash usable per dollar of equity (1.0 = no margin)
 
 
 def effective_leverage(
@@ -132,14 +132,16 @@ def effective_leverage(
     delever_active: bool,
     risk: RiskConfig,
 ) -> LeverageDecision:
-    """L = min of the applicable limits, then x 0.5 while deleveraging (SPEC 1.3).
+    """L = min of the applicable limits, then x 0.5 while deleveraging (SPEC 1.3/1.4).
 
     - Kelly term: kelly_fraction * L*, or 1.0 when there is no estimate.
     - Vol target: max_portfolio_vol / sigma; not applicable when sigma is 0.
     - Absolute cap: max_leverage.
-    - From margin_min_equity up, margin is available: the broker limit applies.
-      Below it there is no margin and leverage can only come from leveraged ETFs,
-      so the capital limit is max_etf_portfolio_leverage instead.
+    - Capacity (SPEC 1.4): L_borrow x max_etf_portfolio_leverage. L_borrow is the
+      broker's margin leverage only when `allow_margin` is on and equity is at
+      least margin_min_equity; otherwise 1.0 (no loan). The real account runs
+      with allow_margin off, so its capacity is 2.5x whatever the balance and
+      the maximum loss is what was deposited.
     - `drawdown` is a positive magnitude of the time-weighted index. Deleveraging
       starts when it exceeds dd_delever_at and lasts until a new high (drawdown 0).
     """
@@ -150,18 +152,18 @@ def effective_leverage(
     if drawdown > 1:
         raise ValueError("drawdown is a fraction between 0 and 1")
 
+    margin = risk.allow_margin and equity >= risk.margin_min_equity
+    if margin and broker_leverage <= 0:
+        raise ValueError("broker_leverage must be positive with a margin account")
+    borrow = broker_leverage if margin else 1.0
+
     limits: dict[str, float] = {
         KELLY: risk.kelly_fraction * kelly.l_star if kelly.l_star is not None else 1.0,
         MAX_LEVERAGE: risk.max_leverage,
+        CAPACITY: borrow * risk.max_etf_portfolio_leverage,
     }
     if sigma > 0:
         limits[VOL_TARGET] = risk.max_portfolio_vol / sigma
-    if equity >= risk.margin_min_equity:
-        if broker_leverage <= 0:
-            raise ValueError("broker_leverage must be positive with a margin account")
-        limits[BROKER] = broker_leverage
-    else:
-        limits[CAPITAL] = risk.max_etf_portfolio_leverage
 
     binding = min(limits, key=lambda name: limits[name])
     leverage = limits[binding]
@@ -171,7 +173,7 @@ def effective_leverage(
     active = False if drawdown == 0 else delever_active or drawdown > risk.dd_delever_at
     if active:
         leverage *= 0.5
-    return LeverageDecision(leverage, binding, limits, active)
+    return LeverageDecision(leverage, binding, limits, active, borrow)
 
 
 # Step 2b: leveraged-ETF route (no margin).
@@ -219,7 +221,7 @@ def _usable(held: HeldInstrument | None, eligible: Mapping[int, str]) -> bool:
 def _route_multiples(
     route: str,
     active: Mapping[str, float],
-    equity: float,
+    cash_available: float,
     eligible: Mapping[str, Mapping[int, str]],
     current: Mapping[str, HeldInstrument],
 ) -> tuple[dict[str, int], dict[str, str]]:
@@ -237,7 +239,7 @@ def _route_multiples(
     for m in (2, 3):
         multiples = {a: _largest_multiple(eligible.get(a, {}), m) for a in active}
         reasons = dict.fromkeys(active, f"LEVERAGED_{m}X_ROUTE")
-        if sum(active[a] / multiples[a] for a in active) <= equity * (1 + _CASH_TOLERANCE):
+        if sum(active[a] / multiples[a] for a in active) <= cash_available * (1 + _CASH_TOLERANCE):
             break
     return multiples, reasons
 
@@ -250,6 +252,7 @@ def choose_instruments(
     current: Mapping[str, HeldInstrument],
     switch: LeverageSwitchConfig,
     max_etf_portfolio_leverage: float,
+    borrow: float = 1.0,
 ) -> dict[str, InstrumentChoice]:
     """Pick one instrument per asset so the exposure fits in the equity (SPEC 7, 2b).
 
@@ -267,20 +270,27 @@ def choose_instruments(
     3. An asset keeps its current instrument for min_hold_days unless the
        position is closed.
     4. If the cash still does not fit, every position is scaled down.
+
+    `borrow` is L_borrow from `effective_leverage` (1.0 without margin): the cash
+    available is borrow x equity, and the exposure cap is max_etf_portfolio_leverage
+    x that cash (SPEC 1.4).
     """
     if not math.isfinite(equity) or equity <= 0:
         raise ValueError("equity must be positive")
+    if not math.isfinite(borrow) or borrow < 1:
+        raise ValueError("borrow must be at least 1.0")
+    cash_available = borrow * equity
     if any(not math.isfinite(e) or e < 0 for e in exposures.values()):
         raise ValueError("exposures must be finite and non-negative (long only)")
     active = {asset: float(e) for asset, e in exposures.items() if e > _MIN_EXPOSURE_USD}
-    route = _route(sum(active.values()) / equity, switch)
+    route = _route(sum(active.values()) / cash_available, switch)
 
     total = sum(active.values())
-    if route == "leveraged" and total > max_etf_portfolio_leverage * equity:
-        scale = max_etf_portfolio_leverage * equity / total
+    if route == "leveraged" and total > max_etf_portfolio_leverage * cash_available:
+        scale = max_etf_portfolio_leverage * cash_available / total
         active = {asset: e * scale for asset, e in active.items()}
 
-    multiples, reasons = _route_multiples(route, active, equity, eligible, current)
+    multiples, reasons = _route_multiples(route, active, cash_available, eligible, current)
 
     for asset in active:
         held = current.get(asset)
@@ -293,8 +303,8 @@ def choose_instruments(
             multiples[asset], reasons[asset] = held.multiple, "MIN_HOLD"
 
     cash = sum(active[a] / multiples[a] for a in active)
-    if cash > equity * (1 + _CASH_TOLERANCE):
-        scale = equity / cash
+    if cash > cash_available * (1 + _CASH_TOLERANCE):
+        scale = cash_available / cash
         active = {asset: e * scale for asset, e in active.items()}
         reasons = {asset: reason + "+SCALED" for asset, reason in reasons.items()}
     active = {asset: e for asset, e in active.items() if e > 0}  # nothing underflows to a 0 lot
