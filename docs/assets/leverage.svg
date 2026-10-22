@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 270" width="960" height="270" role="img" aria-labelledby="t d">
+  <title id="t">Effective leverage is the minimum of five limits</title>
+  <desc id="d">Five bars grow for the Kelly estimate, the volatility target, the absolute cap, the broker limit and the capital limit. A marker settles on the smallest one, which sets the leverage for the day. Values are illustrative.</desc>
+  <style>
+    :root { --bg:#ffffff; --border:#d0d7de; --fg:#1f2328; --muted:#59636e; --bar:#d8dee4; --min:#0969da; --line:#cf222e; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#0d1117; --border:#30363d; --fg:#e6edf3; --muted:#9198a1; --bar:#30363d; --min:#4493f8; --line:#f85149; }
+    }
+    .card { fill:var(--bg); stroke:var(--border); }
+    .h { font:700 16px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--fg); }
+    .lbl { font:600 13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--fg); }
+    .val { font:600 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--muted); opacity:0; animation:fade .4s ease-out forwards; }
+    .foot { font:500 12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); }
+    .bar { fill:var(--bar); transform-box:fill-box; transform-origin:left center; transform:scaleX(0); animation:grow .9s cubic-bezier(.2,.8,.2,1) forwards; }
+    .bar.min { animation:grow .9s cubic-bezier(.2,.8,.2,1) forwards, pick .5s ease-out 2.2s forwards; }
+    .cut { stroke:var(--line); stroke-width:2; stroke-dasharray:5 4; opacity:0; animation:fade .5s ease-out 2s forwards; }
+    .cutlbl { font:700 13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--line); opacity:0; animation:fade .5s ease-out 2.2s forwards; }
+    @keyframes grow { to { transform:scaleX(1); } }
+    @keyframes fade { to { opacity:1; } }
+    @keyframes pick { to { fill:var(--min); } }
+    @media (prefers-reduced-motion: reduce) {
+      .bar, .bar.min, .val, .cut, .cutlbl { animation:none; transform:none; opacity:1; }
+      .bar.min { fill:var(--min); }
+    }
+  </style>
+
+  <rect class="card" x="0.5" y="0.5" width="959" height="269" rx="16"/>
+  <text class="h" x="32" y="38">L = min of five limits, recomputed every day (capped at 4x)</text>
+
+  <text class="lbl" x="32" y="78">kelly × L*</text>
+  <rect class="bar" x="270" y="64" width="510" height="20" rx="4" style="animation-delay:.1s"/>
+  <text class="val" x="788" y="79" style="animation-delay:1s">3.4x</text>
+
+  <text class="lbl" x="32" y="114">0.60 / σ60</text>
+  <rect class="bar" x="270" y="100" width="420" height="20" rx="4" style="animation-delay:.3s"/>
+  <text class="val" x="698" y="115" style="animation-delay:1.2s">2.8x</text>
+
+  <text class="lbl" x="32" y="150">max_leverage</text>
+  <rect class="bar" x="270" y="136" width="600" height="20" rx="4" style="animation-delay:.5s"/>
+  <text class="val" x="878" y="151" style="animation-delay:1.4s">4.0x</text>
+
+  <text class="lbl" x="32" y="186">L_broker</text>
+  <rect class="bar min" x="270" y="172" width="300" height="20" rx="4" style="animation-delay:.7s, 2.2s"/>
+  <text class="val" x="578" y="187" style="animation-delay:1.6s">2.0x</text>
+
+  <text class="lbl" x="32" y="222">L_capital</text>
+  <rect class="bar" x="270" y="208" width="375" height="20" rx="4" style="animation-delay:.9s"/>
+  <text class="val" x="653" y="223" style="animation-delay:1.8s">2.5x</text>
+
+  <line class="cut" x1="570" y1="52" x2="570" y2="236"/>
+  <text class="cutlbl" x="578" y="58">L = 2.0x today</text>
+
+  <text class="foot" x="32" y="256">Illustrative values. Drawdown past −20% halves L; −40% trips the kill switch and closes everything.</text>
+</svg>
