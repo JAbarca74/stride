@@ -6,6 +6,14 @@ Every order passes `check_orders` before it reaches the broker. All applicable
 vetoes are reported, not only the first. Orders are checked sells first, and each
 approved order updates the context, so the daily count and the same-day rule hold
 across the batch.
+
+Same-day rule (SPEC 1.4): buying and selling the same underlying on one day is
+vetoed, except an instrument switch (e.g. SPY -> SSO) that meets all of:
+the orders are marked `switch` by the leverage module, the sell went first, and
+the underlying's net exposure changes by less than the rebalance band.
+
+While the system is halted (reconciliation, SPEC 1.4) no order is approved; the
+kill-switch liquidation still goes through `check_liquidation`.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ MARGIN_BUFFER = "MARGIN_BUFFER"
 DATA_FAILED = "DATA_FAILED"
 SYMBOL_BLOCKED = "SYMBOL_BLOCKED"
 KILL_SWITCH = "KILL_SWITCH"
+HALTED = "HALTED"
 UNKNOWN_SYMBOL = "UNKNOWN_SYMBOL"
 INVALID_ORDER = "INVALID_ORDER"
 
@@ -38,6 +47,7 @@ class ProposedOrder:
     symbol: str
     side: Side
     notional: float
+    switch: bool = False  # part of an instrument switch chosen by risk/leverage.py
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,7 @@ class GuardContext:
     approved_today: tuple[ProposedOrder, ...] = ()
     excess_liquidity: float = 0.0
     margin_requirement: float = 0.0
+    halted: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,6 +82,37 @@ def underlying_map(config: StrideConfig) -> dict[str, str]:
     return mapping
 
 
+def multiple_map(config: StrideConfig) -> dict[str, int]:
+    """Exposure per dollar of each symbol: 1 for the universe, m for 2x/3x versions."""
+    multiples = dict.fromkeys(config.universe, 1)
+    for versions in config.leveraged_etfs.values():
+        multiples.update({etf: m for m, etf in versions.items()})
+    return multiples
+
+
+def _allowed_switch(
+    order: ProposedOrder, asset: str, ctx: GuardContext, config: StrideConfig
+) -> bool:
+    """A same-day buy after sells of the same underlying is allowed only as a
+    marked instrument switch whose net exposure moves less than the band."""
+    if order.side != "buy" or not order.switch:
+        return False
+    underlying, multiple = underlying_map(config), multiple_map(config)
+    today = [o for o in ctx.approved_today if underlying.get(o.symbol) == asset]
+    if any(not o.switch for o in today):
+        return False
+    sold = sum(o.notional * multiple[o.symbol] for o in today if o.side == "sell")
+    bought = sum(o.notional * multiple[o.symbol] for o in today if o.side == "buy")
+    held_now = sum(
+        value * multiple[symbol]
+        for symbol, value in ctx.positions_usd.items()
+        if underlying.get(symbol) == asset
+    )
+    before = held_now + sold - bought  # exposure before today's switch orders
+    net_change = bought + order.notional * multiple[order.symbol] - sold
+    return before > 0 and abs(net_change) < config.execution.rebalance_band * before
+
+
 def check_order(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -> GuardDecision:
     """Every veto that applies to `order` in `ctx` (SPEC 7, step 3)."""
     underlying = underlying_map(config)
@@ -82,20 +124,26 @@ def check_order(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -
         reasons.append(INVALID_ORDER)
     if ctx.kill_switch_active:
         reasons.append(KILL_SWITCH)
+    if ctx.halted:
+        reasons.append(HALTED)
     if not ctx.data_ok:
         reasons.append(DATA_FAILED)
     if asset is not None and asset in ctx.blocked:
         reasons.append(SYMBOL_BLOCKED)
     held = ctx.positions_usd.get(order.symbol, 0.0)
-    if order.side == "sell" and order.notional > held + SHORT_TOLERANCE_USD:
+    if order.side == "sell" and (held <= 0 or order.notional > held + SHORT_TOLERANCE_USD):
         reasons.append(SHORT)
     if not ctx.equity > 0 or order.notional > config.execution.max_order_pct_equity * ctx.equity:
         reasons.append(ORDER_TOO_LARGE)
     if len(ctx.approved_today) >= config.execution.max_orders_per_day:
         reasons.append(TOO_MANY_ORDERS)
-    if asset is not None and any(
-        underlying.get(done.symbol) == asset and done.side != order.side
-        for done in ctx.approved_today
+    if (
+        asset is not None
+        and any(
+            underlying.get(done.symbol) == asset and done.side != order.side
+            for done in ctx.approved_today
+        )
+        and not _allowed_switch(order, asset, ctx, config)
     ):
         reasons.append(SAME_DAY_REVERSAL)
     if (
@@ -112,7 +160,9 @@ def _after(order: ProposedOrder, ctx: GuardContext) -> GuardContext:
     """The context once `order` is approved."""
     sign = 1.0 if order.side == "buy" else -1.0
     positions = dict(ctx.positions_usd)
-    positions[order.symbol] = max(positions.get(order.symbol, 0.0) + sign * order.notional, 0.0)
+    # Not clamped at 0: a sell that used the rounding tolerance leaves a tiny
+    # negative balance, so the tolerance cannot be used again in the same batch.
+    positions[order.symbol] = positions.get(order.symbol, 0.0) + sign * order.notional
     return replace(
         ctx,
         positions_usd=positions,
@@ -142,7 +192,8 @@ def check_liquidation(order: ProposedOrder, ctx: GuardContext) -> GuardDecision:
         reasons.append(KILL_SWITCH)
     if not math.isfinite(order.notional) or order.notional <= 0:
         reasons.append(INVALID_ORDER)
-    if order.notional > ctx.positions_usd.get(order.symbol, 0.0) + SHORT_TOLERANCE_USD:
+    held = ctx.positions_usd.get(order.symbol, 0.0)
+    if held <= 0 or order.notional > held + SHORT_TOLERANCE_USD:
         reasons.append(SHORT)
     return GuardDecision(order, not reasons, tuple(reasons))
 

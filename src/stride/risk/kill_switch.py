@@ -4,9 +4,16 @@ HUMAN-REVIEWED MODULE: read the whole file before merging. Pure, no I/O: the
 time-weighted index and its peak are stored by `data/store.py`, and the
 `KILL_SWITCH` file is handled by `execution/kill_switch_file.py`.
 
-Evaluated once a day on the close (the 18:00 run). It fires when:
-- the time-weighted index is `kill_switch_dd` (40%) or more below its peak; or
-- reconciliation breaks on two consecutive days.
+Evaluated once a day on the close (the 18:00 run). Two levels (SPEC 1.4):
+
+- KILL: the time-weighted index is `kill_switch_dd` (40%) or more below its peak.
+  Liquidate everything at the next open, using the positions the broker reports.
+- HALT: reconciliation breaks on two consecutive days (any symbols). No new
+  orders, keep positions, alert, and wait for a person.
+
+A halt never liquidates: when the system is not sure what it holds, selling
+blind can make things worse and costs about 1% per order. During a halt the
+drawdown kill switch stays armed.
 
 -40% is a trigger, not a guaranteed maximum loss: a fall during the day or a gap
 at the next open, when positions are closed, can push the real loss further.
@@ -71,7 +78,8 @@ def reconciliation_breaks(
 
 @dataclass(frozen=True)
 class KillDecision:
-    fire: bool
+    fire: bool  # kill switch: liquidate everything (drawdown only)
+    halt: bool  # freeze: no new orders, keep positions (reconciliation only)
     reasons: tuple[str, ...]
     drawdown: float
 
@@ -82,15 +90,14 @@ def kill_switch_decision(
     breaks_today: list[str],
     breaks_yesterday: list[str],
 ) -> KillDecision:
-    """Fire on a drawdown at or beyond `kill_switch_dd`, or on reconciliation
-    breaks two days in a row. A non-finite drawdown fires (fail safe)."""
+    """Kill on a drawdown at or beyond `kill_switch_dd` (a non-finite drawdown
+    kills, fail safe); halt on reconciliation breaks two days in a row, on any
+    symbols (different symbols on each day suggest a system problem)."""
     drawdown = state.drawdown
-    reasons = []
-    if not math.isfinite(drawdown) or drawdown >= kill_switch_dd:
-        reasons.append(DRAWDOWN)
-    if breaks_today and breaks_yesterday:
-        reasons.append(RECONCILIATION)
-    return KillDecision(bool(reasons), tuple(reasons), drawdown)
+    kill = not math.isfinite(drawdown) or drawdown >= kill_switch_dd
+    halt = bool(breaks_today) and bool(breaks_yesterday)
+    reasons = (DRAWDOWN,) * kill + (RECONCILIATION,) * halt
+    return KillDecision(kill, halt, reasons, drawdown)
 
 
 def equity_from_positions(

@@ -9,6 +9,7 @@
 data/
 !src/stride/data/
 KILL_SWITCH
+HALT
 *.db
 *.db-journal
 *.sqlite

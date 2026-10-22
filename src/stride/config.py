@@ -85,6 +85,7 @@ class RiskConfig(_Section):
     max_portfolio_vol: Fraction
     dd_delever_at: Fraction  # drawdown magnitude, e.g. 0.20 means -20%
     kill_switch_dd: Fraction  # drawdown magnitude, e.g. 0.40 means -40%
+    allow_margin: bool
     margin_min_equity: NonNegative
     margin_buffer: Fraction
     min_history_days_for_kelly: Annotated[int, Field(ge=1)]
