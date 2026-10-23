@@ -9,11 +9,13 @@ import pytest
 import yaml
 
 from stride.config import (
+    SEARCH_GROUP,
     ConfigError,
     StrideConfig,
     effective_config,
     load_config,
     with_extra_universe,
+    with_search_universe,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -362,3 +364,22 @@ def test_rotation_is_validated(tmp_path: Path, values: dict[str, Any], match: st
     data["experiments"]["rotation"].update(values)
     with pytest.raises(ConfigError, match=match):
         load_config(_write(tmp_path, data), env={})
+
+
+def test_search_universe_is_added_only_by_with_search_universe() -> None:
+    config = load_config(ROOT / "config.yaml", env={})
+    search = config.experiments.search_universe
+    assert search and not set(search) & set(config.universe)
+    extended = with_search_universe(config)
+    assert set(search) <= set(extended.universe)
+    assert set(config.experiments.extra_universe) <= set(extended.universe)
+    assert extended.groups[SEARCH_GROUP] == search
+    assert extended.leveraged_etfs["QQQ"] == {2: "QLD", 3: "TQQQ"}
+    assert extended.experiments.search_universe == []
+
+
+def test_search_universe_must_be_new_symbols() -> None:
+    data = load_config(ROOT / "config.yaml", env={}).model_dump()
+    data["experiments"]["search_universe"] = ["SPY"]
+    with pytest.raises(ValueError, match="search_universe must be new"):
+        StrideConfig.model_validate(data)

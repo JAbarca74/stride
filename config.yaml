@@ -101,6 +101,9 @@ experiments:                       # owner request 2026-10-23; measured in valid
     equities: [EEM, VNQ]
     bonds: [BWX]
     commodities: [DBC, USO, CPER, DBA]
+  search_universe: [QQQ, IWM, XLK, XLV, XLF, XLE, XLI]   # strategy search only (round 2)
+  search_leveraged_etfs:
+    QQQ: {2: QLD, 3: TQQQ}
   breakout_systems: [[20, 10], [55, 20], [100, 40]]   # Turtle S1, S2 and a slower one
   dd_scale_start: 0.05             # drawdown_scaling: full leverage up to -5%,
   dd_scale_full: 0.20              # shrinking linearly to dd_scale_floor at -20%
@@ -120,4 +123,5 @@ experiments:                       # owner request 2026-10-23; measured in valid
     top: 3                         # relative_strength: number of assets held
     target_vol: 0.20               # vol_managed: annual volatility aimed at
     max_weight: 3.0                # vol_managed: weight cap
+    vol_window: 21                 # days behind the realized volatility (Moreira and Muir: 21)
     leverage: 1.0                  # multiplies the weights (leveraged ETFs above 1x)

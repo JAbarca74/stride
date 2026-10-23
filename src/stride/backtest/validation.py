@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -39,12 +40,19 @@ from pydantic import ValidationError
 
 from stride.backtest import metrics, run
 from stride.backtest.engine import BacktestResult, BacktestSettings, MarketData, run_backtest
-from stride.config import StrideConfig, effective_config, load_config, with_extra_universe
+from stride.config import (
+    StrideConfig,
+    effective_config,
+    load_config,
+    with_search_universe,
+)
 from stride.data.leveraged import load_etf_facts, rate_known_at_t_minus_1
 from stride.data.sources import FredRateSource
 from stride.data.store import connect, last_price_date
 from stride.data.update import series_for
 from stride.reporting.report import write_report
+
+logger = logging.getLogger(__name__)
 
 IN_SAMPLE_YEARS = 5
 OUT_OF_SAMPLE_YEARS = 1
@@ -668,24 +676,57 @@ def _selected_markdown(r: SelectedWalkForward | None) -> list[str]:
     ]
 
 
-# 10. Pre-registered strategy search (docs/design/strategy_search.md).
+# 10. Pre-registered strategy search (docs/design/strategy_search.md, round 1, and
+# docs/design/strategy_search_round2.md, round 2).
 
 SEARCH_LEVERAGES = (1.0, 1.5, 2.0)
+ROUND_2 = ("sector_momentum", "momentum_vol", "risk_parity")
+ROUND_2_MAX_LEVERAGE = 1.5  # round 2 never tries more than 1.5x
 DSR_PASS = 0.95
 SEARCH_MAX_DRAWDOWN = 0.40
 EULER_GAMMA = 0.5772156649015329
 
 
 def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
-    """The three strategies fixed in the pre-registration, as allocation settings."""
+    """The strategies fixed in the pre-registrations, as allocation settings: round 1
+    on the configured universe, round 2 on the search universe."""
     return {
         "dual_momentum": {"mode": "dual_momentum", "assets": ["SPY", "EFA"],
                           "refuge": "IEF", "lookback": 252, "skip": 0},
         "relative_strength": {"mode": "relative_strength", "assets": list(config.universe),
                               "refuge": "IEF", "lookback": 252, "skip": 21, "top": 3},
         "vol_managed": {"mode": "vol_managed", "assets": ["SPY"], "target_vol": 0.20,
-                        "max_weight": 3.0},
+                        "max_weight": 3.0, "vol_window": 21},
+        "sector_momentum": {"mode": "relative_strength",
+                            "assets": ["SPY", "QQQ", "IWM", "EFA", "EEM",
+                                       "XLK", "XLV", "XLF", "XLE", "XLI"],
+                            "refuge": "IEF", "lookback": 252, "skip": 21, "top": 3},
+        "momentum_vol": {"mode": "momentum_vol", "assets": ["SPY", "QQQ", "IWM", "EFA"],
+                         "refuge": "IEF", "lookback": 252, "skip": 0, "target_vol": 0.20,
+                         "max_weight": 2.0, "vol_window": 63},
+        "risk_parity": {"mode": "risk_parity", "assets": ["SPY", "QQQ", "TLT", "GLD"],
+                        "target_vol": 0.15, "max_weight": 2.0, "vol_window": 63},
     }  # fmt: skip
+
+
+def candidate_config(config: StrideConfig, name: str) -> StrideConfig:
+    """The configuration one candidate runs with (round 2 on the search universe)."""
+    base = with_search_universe(config) if name in ROUND_2 else config
+    return with_allocation(base, **strategy_candidates(config)[name])
+
+
+def candidate_levels(name: str, levels: Sequence[float]) -> tuple[float, ...]:
+    """The leverage levels a candidate may try (round 2 at most 1.5x)."""
+    if name in ROUND_2:
+        return tuple(x for x in levels if x <= ROUND_2_MAX_LEVERAGE)
+    return tuple(levels)
+
+
+def _has_data(data: MarketData, settings: Mapping[str, object]) -> bool:
+    assets = settings.get("assets", [])
+    refuge = settings.get("refuge", "cash")
+    symbols = [*(assets if isinstance(assets, list) else []), refuge]
+    return all(s in data.bars for s in symbols if s != "cash")
 
 
 def with_allocation(config: StrideConfig, **values: object) -> StrideConfig:
@@ -748,18 +789,27 @@ def strategy_search(
 ) -> list[SearchResult]:
     """Run each pre-registered strategy: walk-forward with the leverage chosen in
     sample, full-period runs for the 30% goal, and the deflated Sharpe ratio of
-    the out-of-sample returns against every configuration tried in sections 7-10."""
+    the out-of-sample returns against every configuration tried in sections 7-10.
+    A candidate whose symbols have no bars is left out (and logged)."""
     candidates = strategy_candidates(config)
-    chosen = [n for n in (names or list(candidates)) if n in candidates]
+    chosen = []
+    for name in names or list(candidates):
+        if name not in candidates:
+            continue
+        if not _has_data(data, candidates[name]):
+            logger.warning("strategy search: no bars for %s; left out", name)
+            continue
+        chosen.append(name)
     fulls: dict[str, pd.DataFrame] = {}
     selections: dict[str, SelectedWalkForward] = {}
     for name in chosen:
-        cfg = with_allocation(config, **candidates[name])
+        cfg = candidate_config(config, name)
+        tried = candidate_levels(name, levels)
         selections[name] = walk_forward_selected(
-            data, cfg, settings.initial_cash, settings.start, settings.end, levels=levels
+            data, cfg, settings.initial_cash, settings.start, settings.end, levels=tried
         )
         rows = []
-        for level in levels:
+        for level in tried:
             for scaling in (False, True):
                 run = run_backtest(data, _choice(cfg, level, scaling),
                                    replace(settings, fixed_leverage=level))  # fmt: skip
@@ -795,7 +845,8 @@ def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
         return []
     lines = [
         "",
-        "## 10. Pre-registered strategy search (docs/design/strategy_search.md)",
+        "## 10. Pre-registered strategy search (docs/design/strategy_search.md and"
+        " strategy_search_round2.md)",
         "",
         "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
         " max drawdown <= 40%.",
@@ -1255,7 +1306,7 @@ def main(
         last = last_price_date(source, "SPY")
         # Bars for the extra universe too, so its experiment can run on the same data.
         data, calibrated = run.load_market(
-            source, with_extra_universe(config), rate, load_etf_facts()
+            source, with_search_universe(config), rate, load_etf_facts()
         )
         prices = {s: series_for(source, s) for s in config.universe}
     finally:

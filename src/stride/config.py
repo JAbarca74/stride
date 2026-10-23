@@ -192,7 +192,9 @@ class AllocationConfig(_Section):
     docs/design/strategy_search.md (strategy/allocation.py). `leverage` multiplies
     the weights; above 1x it is reached with the eligible leveraged ETFs."""
 
-    mode: Literal["dual_momentum", "relative_strength", "vol_managed"]
+    mode: Literal[
+        "dual_momentum", "relative_strength", "vol_managed", "momentum_vol", "risk_parity"
+    ]
     assets: Annotated[list[Ticker], Field(min_length=1)]
     refuge: Annotated[str, Field(pattern=r"^([A-Z]{1,6}|cash)$")]
     lookback: Lookback
@@ -200,6 +202,7 @@ class AllocationConfig(_Section):
     top: Annotated[int, Field(ge=1)]
     target_vol: Fraction
     max_weight: Annotated[float, Field(gt=0, le=4)]
+    vol_window: Lookback  # days of returns behind the realized volatility
     leverage: Annotated[float, Field(gt=0, le=4)]
 
     @model_validator(mode="after")
@@ -217,6 +220,10 @@ class ExperimentsConfig(_Section):
     enabled: list[Experiment]
     extra_universe: list[Ticker]
     extra_groups: dict[str, list[Ticker]]
+    # Symbols and leveraged versions loaded only for the strategy search
+    # (docs/design/strategy_search_round2.md); never traded by the configured run.
+    search_universe: list[Ticker]
+    search_leveraged_etfs: dict[Ticker, Annotated[dict[Literal[2, 3], Ticker], Field(min_length=1)]]
     breakout_systems: list[BreakoutSystem]  # [entry, exit] windows in trading days
     dd_scale_start: Fraction  # drawdown where leverage starts to shrink
     dd_scale_full: Fraction  # drawdown where it reaches the floor
@@ -279,6 +286,11 @@ class StrideConfig(_Section):
         for name, members in self.experiments.extra_groups.items():
             if any(m not in known for m in members):
                 raise ValueError(f"experiments.extra_groups.{name}: unknown symbol")
+        search = self.experiments.search_universe
+        if len(set(search)) != len(search) or known & set(search):
+            raise ValueError("experiments.search_universe must be new, unique symbols")
+        if any(a not in known | set(search) for a in self.experiments.search_leveraged_etfs):
+            raise ValueError("experiments.search_leveraged_etfs: unknown underlying")
         rotation = self.experiments.rotation
         if rotation.underlying not in universe:
             raise ValueError("experiments.rotation.underlying must be in the universe")
@@ -349,6 +361,25 @@ def with_extra_universe(config: StrideConfig) -> StrideConfig:
     data["groups"] = {name: members for name, members in groups.items() if members}
     data["experiments"]["extra_universe"] = []
     data["experiments"]["extra_groups"] = {}
+    return StrideConfig.model_validate(data)
+
+
+SEARCH_GROUP = "search"
+
+
+def with_search_universe(config: StrideConfig) -> StrideConfig:
+    """`with_extra_universe(config)` plus `experiments.search_universe` (in its own
+    group) and `experiments.search_leveraged_etfs`: the universe the strategy
+    search and its data load use. Built in memory and re-validated."""
+    extended = with_extra_universe(config)
+    search = config.experiments
+    data = extended.model_dump()
+    data["universe"] = [*extended.universe, *search.search_universe]
+    if search.search_universe:
+        data["groups"][SEARCH_GROUP] = list(search.search_universe)
+    data["leveraged_etfs"] = extended.leveraged_etfs | search.search_leveraged_etfs
+    data["experiments"]["search_universe"] = []
+    data["experiments"]["search_leveraged_etfs"] = {}
     return StrideConfig.model_validate(data)
 
 

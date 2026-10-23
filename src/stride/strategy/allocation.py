@@ -12,7 +12,11 @@ missing or too short history never adds a position.
                      last `skip` days), each only if it beats T-bills; empty
                      slots go to the refuge.
 - vol_managed        Moreira and Muir: the first asset, weighted by target
-                     volatility / realized volatility over 21 days, capped.
+                     volatility / realized volatility over `vol_window` days, capped.
+- momentum_vol       Round 2: dual momentum, the chosen asset weighted as in
+                     vol_managed (the refuge stays at 1).
+- risk_parity        Round 2: inverse-volatility weights, the whole portfolio
+                     scaled to the target volatility, total weight capped.
 """
 
 from __future__ import annotations
@@ -25,7 +29,6 @@ import pandas as pd
 from stride.config import AllocationConfig
 
 TRADING_DAYS_PER_YEAR = 252
-VOL_WINDOW = 21  # Moreira and Muir: one month of daily returns
 
 
 def lookback_return(close: pd.Series, lookback: int, skip: int = 0) -> float:
@@ -94,6 +97,19 @@ def relative_strength(
     return weights | _refuge(refuge, 1.0 - len(chosen) / top)
 
 
+def _daily_returns(close: pd.Series, window: int) -> pd.Series:
+    """The last `window` daily returns (fewer if the history is short)."""
+    return close.dropna().pct_change().dropna().iloc[-window:]
+
+
+def realized_vol(close: pd.Series, window: int) -> float:
+    """Annualized volatility of the last `window` daily returns (NaN if short)."""
+    returns = _daily_returns(close, window)
+    if len(returns) < window:
+        return math.nan
+    return float(returns.std(ddof=1)) * math.sqrt(TRADING_DAYS_PER_YEAR)
+
+
 def vol_managed(
     closes: pd.DataFrame,
     risk_free: float,
@@ -101,17 +117,74 @@ def vol_managed(
     assets: Sequence[str],
     target_vol: float,
     max_weight: float,
+    vol_window: int,
 ) -> dict[str, float]:
-    """The first asset with weight target_vol / realized volatility (21 days)."""
+    """The first asset with weight target_vol / realized volatility."""
     if not assets or assets[0] not in closes.columns:
         return {}
-    returns = closes[assets[0]].dropna().pct_change().dropna().iloc[-VOL_WINDOW:]
-    if len(returns) < VOL_WINDOW:
-        return {}
-    realized = float(returns.std(ddof=1)) * math.sqrt(TRADING_DAYS_PER_YEAR)
+    realized = realized_vol(closes[assets[0]], vol_window)
     if not realized > 0:
         return {}
     return {assets[0]: min(max_weight, target_vol / realized)}
+
+
+def momentum_vol(
+    closes: pd.DataFrame,
+    risk_free: float,
+    *,
+    assets: Sequence[str],
+    refuge: str,
+    lookback: int,
+    skip: int,
+    target_vol: float,
+    max_weight: float,
+    vol_window: int,
+) -> dict[str, float]:
+    """Dual momentum; the chosen asset (not the refuge) sized by volatility."""
+    weights = dual_momentum(
+        closes, risk_free, assets=assets, refuge=refuge, lookback=lookback, skip=skip
+    )
+    chosen = [a for a in weights if a in assets]
+    if not chosen:
+        return weights
+    return vol_managed(
+        closes,
+        risk_free,
+        assets=chosen,
+        target_vol=target_vol,
+        max_weight=max_weight,
+        vol_window=vol_window,
+    )
+
+
+def risk_parity(
+    closes: pd.DataFrame,
+    risk_free: float,
+    *,
+    assets: Sequence[str],
+    target_vol: float,
+    max_weight: float,
+    vol_window: int,
+) -> dict[str, float]:
+    """Weights proportional to 1 / volatility over the assets with enough history,
+    scaled so the portfolio's realized volatility over the same days matches the
+    target; the total weight is capped at `max_weight`."""
+    vols = {a: realized_vol(closes[a], vol_window) for a in assets if a in closes.columns}
+    vols = {a: v for a, v in vols.items() if math.isfinite(v) and v > 0}
+    if not vols:
+        return {}
+    inverse = {a: 1.0 / v for a, v in vols.items()}
+    total = sum(inverse.values())
+    base = {a: x / total for a, x in inverse.items()}
+    returns = pd.DataFrame({a: _daily_returns(closes[a], vol_window) for a in base}).dropna()
+    if len(returns) < vol_window:
+        return {}
+    portfolio = returns.to_numpy() @ [base[a] for a in returns.columns]
+    realized = float(pd.Series(portfolio).std(ddof=1)) * math.sqrt(TRADING_DAYS_PER_YEAR)
+    if not realized > 0:
+        return {}
+    scale = min(max_weight, target_vol / realized)
+    return {a: w * scale for a, w in base.items()}
 
 
 def target_weights(
@@ -137,10 +210,32 @@ def target_weights(
             skip=settings.skip,
             top=settings.top,
         )
+    if settings.mode == "momentum_vol":
+        return momentum_vol(
+            closes,
+            risk_free,
+            assets=settings.assets,
+            refuge=settings.refuge,
+            lookback=settings.lookback,
+            skip=settings.skip,
+            target_vol=settings.target_vol,
+            max_weight=settings.max_weight,
+            vol_window=settings.vol_window,
+        )
+    if settings.mode == "risk_parity":
+        return risk_parity(
+            closes,
+            risk_free,
+            assets=settings.assets,
+            target_vol=settings.target_vol,
+            max_weight=settings.max_weight,
+            vol_window=settings.vol_window,
+        )
     return vol_managed(
         closes,
         risk_free,
         assets=settings.assets,
         target_vol=settings.target_vol,
         max_weight=settings.max_weight,
+        vol_window=settings.vol_window,
     )

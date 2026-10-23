@@ -378,3 +378,21 @@ def test_strategy_search_reports_each_candidate_against_spy() -> None:
     assert isinstance(r.passes, bool)
     text = v._search_markdown(results)
     assert any("Pre-registered strategy search" in line for line in text)
+
+
+def test_strategy_search_leaves_out_candidates_without_data() -> None:
+    # The fake market has no QQQ or sector ETFs: round 2 is left out, not an error.
+    results = v.strategy_search(
+        _market(), CONFIG, SETTINGS, [0.5], levels=(1.0,), names=["sector_momentum"]
+    )
+    assert results == []
+
+
+def test_round_two_is_capped_at_one_and_a_half_and_uses_the_search_universe() -> None:
+    assert v.candidate_levels("momentum_vol", (1.0, 1.5, 2.0)) == (1.0, 1.5)
+    assert v.candidate_levels("vol_managed", (1.0, 1.5, 2.0)) == (1.0, 1.5, 2.0)
+    cfg = v.candidate_config(CONFIG, "sector_momentum")
+    assert {"QQQ", "XLK", "EEM"} <= set(cfg.universe)
+    assert cfg.experiments.allocation.mode == "relative_strength"
+    assert "QQQ" in cfg.leveraged_etfs
+    assert set(v.candidate_config(CONFIG, "vol_managed").universe) == set(CONFIG.universe)
