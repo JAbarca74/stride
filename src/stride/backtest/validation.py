@@ -725,7 +725,7 @@ def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
                 "sleeve": 0.20, "signal": signal, "trend_sma": 200,
                 "entry": 20 if signal == "range" else 55, "exit": 20,
                 "kelly_fraction": 0.0 if signal in ("hold", "dip") else 0.5,
-                "kelly_window": 504, "dip_drop": 0.25, "dip_window": 90, "take_profit": 0.05,
+                "kelly_window": 504, "dip_drop": 0.25, "dip_window": 90, "take_profit": 0.30,
                 "rebalance": "monthly" if signal == "hold" else "daily",
             }
             for signal in ("hold", "trend", "breakout", "range", "dip")

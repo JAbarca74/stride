@@ -282,7 +282,7 @@ def sleeve(
     kelly_window: int,
     dip_drop: float = 0.25,
     dip_window: int = 90,
-    take_profit: float = 0.05,
+    take_profit: float = 0.30,
 ) -> dict[str, float]:
     """Core plus a sleeve: `core` assets split 1 - `share`; each sleeve asset may
     use `share` / len(assets) while its signal is on, times its Kelly share. Only

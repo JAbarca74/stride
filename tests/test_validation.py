@@ -423,7 +423,7 @@ def test_round_five_is_a_twenty_percent_crypto_sleeve_without_leverage() -> None
     rng = v.candidate_config(CONFIG, "crypto_range").experiments.allocation
     assert (rng.entry, rng.exit) == (20, 20)
     dip = v.candidate_config(CONFIG, "crypto_dip").experiments.allocation
-    assert (dip.dip_drop, dip.dip_window, dip.take_profit) == (0.25, 90, 0.05)
+    assert (dip.dip_drop, dip.dip_window, dip.take_profit) == (0.25, 90, 0.30)
     assert dip.kelly_fraction == 0.0
 
 

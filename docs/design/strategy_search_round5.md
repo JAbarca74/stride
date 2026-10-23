@@ -4,7 +4,7 @@
 
 ## Why
 
-The owner asked to put 20% of the account in crypto, not only Bitcoin, sized with Kelly. They also proposed buying only after a deep fall and selling as soon as the price recovers the cost plus commissions. Round 4 (SPY and QQQ at 1.5x or 2x) is being measured at the same time. This round does not depend on its result.
+The owner asked to put 20% of the account in crypto, not only Bitcoin, sized with Kelly. They also proposed buying only after a deep fall, holding through further falls, and selling once the position is about 30% above what was invested. Round 4 (SPY and QQQ at 1.5x or 2x) is being measured at the same time. This round does not depend on its result.
 
 ## Universe
 
@@ -22,7 +22,7 @@ Every candidate holds **80% in SPY** (the core) and a **20% crypto sleeve**, spl
 | `crypto_trend` | In while the close is above its 200-day average | Half Kelly | Daily |
 | `crypto_breakout` | Turtle 55/20 on closes: in after a close above the prior 55-day high, out after a close below the prior 20-day low | Half Kelly | Daily |
 | `crypto_range` | In after a close at or below the prior 20-day low, out after a close at or above the prior 20-day high | Half Kelly | Daily |
-| `crypto_dip` (owner idea) | In once the close is **25% below the highest close of the prior 90 days**. Out once the close is **5% above the close it was bought at**, which covers costs. No stop-loss. | Full share | Daily |
+| `crypto_dip` (owner idea) | In once the close is **25% below the highest close of the prior 90 days**. Out once the close is **30% above the close it was bought at**: the owner's example is 10,000 invested, falling to 7,000, and sold only at 13,000. No stop-loss. | Full share | Daily |
 
 **Half Kelly:** each coin's weight is its part of the sleeve times `0.5 × (annual excess return / annual variance)`, both estimated from its last 504 daily returns (2 years) and clipped to [0, 1].
 
@@ -54,7 +54,7 @@ The results should also be compared with `crypto_hold`, though that comparison i
 - `crypto_trend` and `crypto_breakout`: sleeve drawdowns cut from about −80% to about −30%, so the total drawdown stays close to SPY's. They have the best chance of passing on Sharpe. The deflated Sharpe ratio is the open question.
 - `crypto_range`: likely to fail. It buys every new low in 2018 and 2022.
 - `crypto_dip`:
-  - many small wins;
-  - in 2018 and 2022 it buys at −25% and then holds through falls of −70% to −80% for months, because it has no stop;
+  - fewer, larger wins;
+  - in 2018 and 2022 it buys at −25% and then holds through falls of −70% to −80% for a year or more before a +30% exit, because it has no stop;
   - expected to fail on Sharpe.
 - Before about 2017 the sleeve stays mostly in cash, waiting for the 504 days of history Kelly needs (crypto data starts in 2015 and 2016). This costs some return in the early out-of-sample years.
