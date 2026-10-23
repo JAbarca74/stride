@@ -573,4 +573,5 @@ def test_drawdown_scaling_lowers_the_leverage_in_a_drawdown() -> None:
     deep = live[live["drawdown"] >= CONFIG.experiments.dd_scale_full]
     shallow = live[live["drawdown"] <= CONFIG.experiments.dd_scale_start]
     assert (shallow["leverage"] == 2.0).all()
-    assert (deep["leverage"] == pytest.approx(2.0 * CONFIG.experiments.dd_scale_floor)).all()
+    assert not deep.empty
+    assert np.allclose(deep["leverage"], 2.0 * CONFIG.experiments.dd_scale_floor)
