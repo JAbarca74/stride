@@ -167,7 +167,7 @@ class DataConfig(_Section):
         return self
 
 
-Experiment = Literal["extra_universe", "ensemble"]
+Experiment = Literal["extra_universe", "ensemble", "drawdown_scaling"]
 BreakoutSystem = Annotated[list[Lookback], Field(min_length=2, max_length=2)]
 
 
@@ -180,12 +180,17 @@ class ExperimentsConfig(_Section):
     extra_universe: list[Ticker]
     extra_groups: dict[str, list[Ticker]]
     breakout_systems: list[BreakoutSystem]  # [entry, exit] windows in trading days
+    dd_scale_start: Fraction  # drawdown where leverage starts to shrink
+    dd_scale_full: Fraction  # drawdown where it reaches the floor
+    dd_scale_floor: Fraction  # share of the leverage kept at and beyond dd_scale_full
 
     @model_validator(mode="after")
     def _systems_exit_shorter(self) -> Self:
         for entry, exit_ in self.breakout_systems:
             if exit_ >= entry:
                 raise ValueError("each breakout system needs exit shorter than entry")
+        if self.dd_scale_full <= self.dd_scale_start:
+            raise ValueError("dd_scale_full must be above dd_scale_start")
         if "ensemble" in self.enabled and len(self.breakout_systems) < 2:  # noqa: PLR2004
             raise ValueError("the ensemble needs at least two breakout systems")
         return self

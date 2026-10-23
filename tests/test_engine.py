@@ -25,6 +25,7 @@ from stride.backtest.engine import (
     PlannedOrder,
     _switch_summary,
     combine_systems,
+    drawdown_scale,
     eligible_instruments,
     fit_buys,
     plan_orders,
@@ -481,18 +482,20 @@ def test_the_kelly_series_pays_for_changes_in_weights() -> None:
     assert engine_days.sum() < flat.sum()  # costs lower the series Kelly is estimated on
 
 
-def test_costly_hold_top_ups_are_skipped_but_never_sells_or_signals() -> None:
-    prices = {"SPY": 500.0, "GLD": 200.0, "SSO": 50.0}
+def test_costly_resizes_are_skipped_both_ways_but_never_signals_or_closes() -> None:
+    prices = {"SPY": 500.0, "GLD": 200.0, "SSO": 50.0, "TLT": 90.0}
     orders = [
-        PlannedOrder("SPY", "buy", 40.0, False, "SPY", "HOLD"),  # 1% commission: skipped
-        PlannedOrder("SPY", "sell", 40.0, False, "SPY", "HOLD"),  # sells always go
-        PlannedOrder("GLD", "buy", 40.0, False, "GLD", "PYRAMID"),  # a signal always goes
-        PlannedOrder("SSO", "buy", 40.0, True, "SPY", "HOLD"),  # switch legs always go
-        PlannedOrder("GLD", "buy", 5_000.0, False, "GLD", "HOLD"),  # $1 on $5,000: cheap
+        PlannedOrder("SPY", "buy", 40.0, False, "SPY", "HOLD"),  # costly top-up: skipped
+        PlannedOrder("GLD", "sell", 40.0, False, "GLD", "HOLD"),  # costly trim: skipped
+        PlannedOrder("TLT", "sell", 40.0, False, "TLT", "HOLD"),  # closes TLT: kept
+        PlannedOrder("GLD", "buy", 40.0, False, "GLD", "PYRAMID"),  # a signal: kept
+        PlannedOrder("SSO", "buy", 40.0, True, "SPY", "HOLD"),  # switch leg: kept
+        PlannedOrder("GLD", "buy", 5_000.0, False, "GLD", "HOLD"),  # cheap per dollar: kept
     ]
-    kept, skipped = skip_costly_resizes(orders, prices, CONFIG)
-    assert skipped == [orders[0]]
-    assert kept == orders[1:]
+    targets = {"SPY": 500.0, "GLD": 400.0, "SSO": 40.0}  # no target left for TLT
+    kept, skipped = skip_costly_resizes(orders, prices, CONFIG, targets)
+    assert skipped == orders[:2]
+    assert kept == orders[2:]
 
 
 def test_small_account_skips_resizes_and_the_rule_can_be_turned_off() -> None:
@@ -501,7 +504,7 @@ def test_small_account_skips_resizes_and_the_rule_can_be_turned_off() -> None:
     on = run_backtest(data, CONFIG, small)
     skipped = on.events[on.events["type"] == "RESIZE_SKIPPED"]
     assert not skipped.empty
-    assert skipped["detail"].str.contains(" buy ").all()
+    assert skipped["detail"].str.contains(" buy | sell ").all()
     execution = CONFIG.execution.model_copy(update={"max_resize_cost_pct": 0.999})
     off = run_backtest(data, CONFIG.model_copy(update={"execution": execution}), small)
     assert (off.events["type"] == "RESIZE_SKIPPED").sum() == 0
@@ -550,3 +553,24 @@ def test_ensemble_reads_no_future_price(factor: float) -> None:
     for name in ("equity", "signals", "orders"):
         before, after = _upto(getattr(real, name), cut), _upto(getattr(fake, name), cut)
         pd.testing.assert_frame_equal(before, after, check_exact=True, obj=name)
+
+
+def test_drawdown_scale_shrinks_leverage_with_the_drawdown() -> None:
+    e = CONFIG.experiments  # 5% start, 20% full, floor 25%
+    assert drawdown_scale(0.0, CONFIG) == 1.0
+    assert drawdown_scale(e.dd_scale_start, CONFIG) == 1.0
+    assert drawdown_scale(0.125, CONFIG) == pytest.approx(1 - 0.5 * (1 - e.dd_scale_floor))
+    assert drawdown_scale(e.dd_scale_full, CONFIG) == e.dd_scale_floor
+    assert drawdown_scale(0.39, CONFIG) == e.dd_scale_floor
+
+
+def test_drawdown_scaling_lowers_the_leverage_in_a_drawdown() -> None:
+    experiments = CONFIG.experiments.model_copy(update={"enabled": ["drawdown_scaling"]})
+    scaled_config = CONFIG.model_copy(update={"experiments": experiments})
+    settings = BacktestSettings(date(2019, 1, 2), date(2020, 12, 31), 10_000.0, fixed_leverage=2.0)
+    risk = run_backtest(_market(seed=5), scaled_config, settings).risk_decisions
+    live = risk[risk["binding_limit"] != KILLED]
+    deep = live[live["drawdown"] >= CONFIG.experiments.dd_scale_full]
+    shallow = live[live["drawdown"] <= CONFIG.experiments.dd_scale_start]
+    assert (shallow["leverage"] == 2.0).all()
+    assert (deep["leverage"] == pytest.approx(2.0 * CONFIG.experiments.dd_scale_floor)).all()

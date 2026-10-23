@@ -387,7 +387,7 @@ Implementations: `SimBroker` (backtest, tests), `AlpacaBroker` (paper), `IBKRBro
 
 1. `orders.py` compares broker positions with targets and computes the dollar difference per symbol.
 2. A difference below 20% of the target weight, or below $1, creates no order (rebalance band).
-   - **Cost-aware resizing (owner request, 2026-10-23):** a top-up buy on a position whose rule is `HOLD` (the target moved only because equity, L or N moved) is skipped when its commission plus spread exceeds `execution.max_resize_cost_pct` (0.5%) of the order. Sells (the drawdown deleveraging included), entries, pyramid adds, exits and switch legs are never skipped.
+   - **Cost-aware resizing (owner request, 2026-10-23):** a resize, buy or sell, of a position whose rule is `HOLD` (the target moved only because equity, L or N moved) is skipped when its commission plus spread exceeds `execution.max_resize_cost_pct` (0.5%) of the order. Entries, pyramid adds, exits, stops, sells that close a position and switch legs are never skipped. (Skipping only buys ratcheted the exposure down; fixed 2026-10-23.)
 3. Sells go before buys, to free cash.
 4. Orders are sent for the next day's open: limit orders at previous close ±0.5%, or market-on-open if the broker does not accept limits on fractional orders.
 5. Every order passes `risk/guard.py` before submission.

@@ -362,7 +362,73 @@ def experiment_variants(config: StrideConfig, data: MarketData) -> dict[str, Str
         state = "with" if "ensemble" not in config.experiments.enabled else "without"
         systems = ", ".join(f"{e}/{x}" for e, x in config.experiments.breakout_systems)
         out[f"{state} the multi-horizon ensemble ({systems})"] = _toggle(config, "ensemble")
+    state = "with" if "drawdown_scaling" not in config.experiments.enabled else "without"
+    out[f"{state} drawdown scaling of the leverage"] = _toggle(config, "drawdown_scaling")
     return out
+
+
+# 7. The owner's goal (2026-10-23): 30% a year without large drawdowns.
+
+GOAL_CAGR = 0.30
+GOAL_MAX_DRAWDOWN = 0.25
+GOAL_LEVERAGES: tuple[float | None, ...] = (None, 1.0, 1.5, 2.0, 2.5, 3.0)
+
+
+def goal_search(
+    data: MarketData,
+    config: StrideConfig,
+    settings: BacktestSettings,
+    leverages: Sequence[float | None] = GOAL_LEVERAGES,
+) -> pd.DataFrame:
+    """Every leverage level (None = dynamic), with and without drawdown scaling,
+    on the full period; sorted by CAGR. `meets_goal` marks the runs with a CAGR of
+    at least 30% and a maximum drawdown of at most 25%. The parameters are not
+    fitted: this only shows which allowed setting comes closest to the goal."""
+    on = set(config.experiments.enabled) | {"drawdown_scaling"}
+    off = set(config.experiments.enabled) - {"drawdown_scaling"}
+    rows = []
+    for scaling, enabled in (("off", off), ("on", on)):
+        cfg = with_values(config, "experiments", enabled=sorted(enabled))
+        for level in leverages:
+            result = run_backtest(data, cfg, replace(settings, fixed_leverage=level))
+            m = _summary(result.returns, data.risk_free)
+            rows.append(
+                {
+                    "leverage": "dynamic" if level is None else f"{level:g}x",
+                    "drawdown_scaling": scaling,
+                    "cagr": m.cagr,
+                    "sharpe": m.sharpe,
+                    "max_drawdown": m.max_drawdown,
+                    "average_exposure": metrics.average_exposure(
+                        result.equity["gross_exposure"], result.equity["equity"]
+                    ),
+                    "final_equity": float(result.equity["equity"].iloc[-1]),
+                    "meets_goal": bool(m.cagr >= GOAL_CAGR and m.max_drawdown <= GOAL_MAX_DRAWDOWN),
+                }
+            )
+    table = pd.DataFrame(rows)
+    return table.sort_values("cagr", ascending=False, ignore_index=True)
+
+
+def goal_summary(table: pd.DataFrame) -> str:
+    """One line: the best run that meets the goal, or the best within the
+    drawdown limit and how far it is from 30%."""
+    hits = table[table["meets_goal"]]
+    if not hits.empty:
+        best = hits.iloc[0]
+        return (
+            f"MET: {best['leverage']} leverage, drawdown scaling {best['drawdown_scaling']}:"
+            f" CAGR {best['cagr']:.1%}, max drawdown {best['max_drawdown']:.1%}"
+        )
+    safe = table[table["max_drawdown"] <= GOAL_MAX_DRAWDOWN]
+    if safe.empty:
+        return "NOT MET: no run keeps the maximum drawdown within 25%"
+    best = safe.iloc[0]
+    return (
+        f"NOT MET: best within a 25% drawdown is {best['leverage']} leverage, drawdown"
+        f" scaling {best['drawdown_scaling']}: CAGR {best['cagr']:.1%}"
+        f" ({GOAL_CAGR - best['cagr']:.1%} short of 30%)"
+    )
 
 
 def improvement_variants(config: StrideConfig) -> dict[str, StrideConfig]:
@@ -456,6 +522,7 @@ class Validation:
     bootstrap_full: Bootstrap  # full-period returns (second layer)
     leverage: pd.DataFrame
     experiments: pd.DataFrame  # each improvement turned off in turn
+    goal: pd.DataFrame  # section 7: leverage x drawdown scaling against the 30% goal
     full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
@@ -469,6 +536,7 @@ def validate_strategy(
     bootstrap_samples: int = BOOTSTRAP_SAMPLES,
     parameters: Sequence[tuple[str, str]] = SENSITIVITY_PARAMETERS,
     levels: Sequence[float] = FIXED_LEVERAGES,
+    goal_leverages: Sequence[float | None] = GOAL_LEVERAGES,
 ) -> Validation:
     """The whole SPEC 9 protocol on one data set (`parameters` and `levels` are
     only narrowed by tests)."""
@@ -484,8 +552,10 @@ def validate_strategy(
     rule = compare_variants(
         data, settings, improvement_variants(config) | experiment_variants(config, data)
     )
+    goal = goal_search(data, config, settings, goal_leverages)
     return Validation(
-        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, full, verdict(walk, sens),
+        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, goal, full,
+        verdict(walk, sens),
         (settings.start, settings.end),
     )  # fmt: skip
 
@@ -555,6 +625,12 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         "## 6. Improvements, each one turned off in turn (full period)",
         "",
         *_table(v.experiments),
+        "",
+        "## 7. Owner goal: 30% a year with a maximum drawdown of 25% (full period)",
+        "",
+        f"**{goal_summary(v.goal)}**",
+        "",
+        *_table(v.goal),
     ]
     if notes:
         lines += ["", "## Notes", ""] + [f"- **{k}:** {text}" for k, text in notes.items()]
@@ -599,6 +675,7 @@ def to_json(v: Validation) -> dict[str, object]:
         },
         "leverage": records(v.leverage),
         "experiments": records(v.experiments),
+        "goal": {"summary": goal_summary(v.goal), "runs": records(v.goal)},
     }
 
 

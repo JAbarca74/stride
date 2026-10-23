@@ -13,7 +13,14 @@ import pandas as pd
 import pytest
 
 from stride.backtest.engine import BacktestSettings, run_backtest
-from stride.backtest.run import format_summary, load_market, main, summarize, write_results
+from stride.backtest.run import (
+    format_summary,
+    load_market,
+    main,
+    summarize,
+    turnover_by_kind,
+    write_results,
+)
 from stride.config import load_config
 from stride.data.calendar import trading_days
 from stride.data.leveraged import EtfFacts
@@ -164,3 +171,15 @@ def test_main_refuses_to_write_into_the_price_database(
     (tmp_path / "other").mkdir()
     missing = _config(tmp_path / "other")  # no price database next to it
     assert main(["--config", str(missing)], rate_source=lambda: RATE) == 2
+
+
+def test_turnover_is_split_by_why_each_order_was_sent(tmp_path: Path) -> None:
+    _price_db(tmp_path / "p.db")
+    source = connect(tmp_path / "p.db")
+    data, _ = load_market(source, CONFIG, RATE, _facts(0.001))
+    result = run_backtest(data, CONFIG, BacktestSettings(date(2019, 1, 2), date(2020, 6, 30), 1e4))
+    split = turnover_by_kind(result)
+    assert set(split) == {"signal", "resize", "switch", "kill switch"}
+    total = summarize(result, data.bars, RATE).turnover
+    assert sum(split.values()) == pytest.approx(total)
+    source.close()

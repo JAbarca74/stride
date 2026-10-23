@@ -102,3 +102,6 @@ experiments:                       # owner request 2026-10-23; measured in valid
     bonds: [BWX]
     commodities: [DBC, USO, CPER, DBA]
   breakout_systems: [[20, 10], [55, 20], [100, 40]]   # Turtle S1, S2 and a slower one
+  dd_scale_start: 0.05             # drawdown_scaling: full leverage up to -5%,
+  dd_scale_full: 0.20              # shrinking linearly to dd_scale_floor at -20%
+  dd_scale_floor: 0.25             # (keeps large drawdowns out; owner goal 2026-10-23)

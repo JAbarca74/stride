@@ -198,20 +198,29 @@ def plan_orders(
 
 
 def skip_costly_resizes(
-    orders: Sequence[PlannedOrder], prices: Mapping[str, float], config: StrideConfig
+    orders: Sequence[PlannedOrder],
+    prices: Mapping[str, float],
+    config: StrideConfig,
+    targets: Mapping[str, float] | None = None,
 ) -> tuple[list[PlannedOrder], list[PlannedOrder]]:
     """Cost-aware resizing (owner request, 2026-10-23). Returns (kept, skipped).
 
-    A top-up buy on a position whose rule is HOLD (no new signal: the target moved
-    because equity, L or N moved) is skipped when its commission plus spread is
-    more than `execution.max_resize_cost_pct` of the order: the correction is not
-    worth its cost. Never skipped: sells (they only reduce risk, the drawdown
-    deleveraging included), entries, pyramid adds, exits and switch legs."""
+    A resize of a position whose rule is HOLD (no new signal: the target moved
+    because equity, L or N moved), buy or sell, is skipped when its commission
+    plus spread is more than `execution.max_resize_cost_pct` of the order: the
+    correction is not worth its cost. Buys and sells are treated alike; skipping
+    only buys ratcheted the exposure down (seen with Fixed pricing on real data).
+    Never skipped: entries, pyramid adds, exits and stops (signal rules), a sell
+    that closes the position (`targets` has no dollars for its symbol), and switch
+    legs. Large resizes such as the drawdown deleveraging are cheap per dollar and
+    go through."""
     limit = config.execution.max_resize_cost_pct
+    targets = targets or {}
     kept, skipped = [], []
     for order in orders:
         price = prices.get(order.symbol, math.nan)
-        resize = order.side == "buy" and order.rule == HOLD and not order.switch
+        closes = order.side == "sell" and targets.get(order.symbol, 0.0) <= 0
+        resize = order.rule == HOLD and not order.switch and not closes
         if resize and price > 0 and order.notional > 0:
             fee = commission(order.notional / price, price, config)
             rate = fee / order.notional + spread_bps(order.symbol, config) / BPS
@@ -220,6 +229,20 @@ def skip_costly_resizes(
                 continue
         kept.append(order)
     return kept, skipped
+
+
+def drawdown_scale(drawdown: float, config: StrideConfig) -> float:
+    """Experiment (owner request, 2026-10-23: keep large drawdowns out). The
+    leverage is multiplied by 1 until the drawdown of the time-weighted index
+    reaches `dd_scale_start`, then falls linearly to `dd_scale_floor` at
+    `dd_scale_full`, and stays there until the index recovers."""
+    e = config.experiments
+    if drawdown <= e.dd_scale_start:
+        return 1.0
+    if drawdown >= e.dd_scale_full:
+        return e.dd_scale_floor
+    share = (drawdown - e.dd_scale_start) / (e.dd_scale_full - e.dd_scale_start)
+    return 1.0 - share * (1.0 - e.dd_scale_floor)
 
 
 def split_orders(
@@ -661,6 +684,8 @@ class Engine:
         leverage, binding = lev.leverage, lev.binding_limit
         if self.settings.fixed_leverage is not None:
             leverage, binding = self.settings.fixed_leverage, FIXED
+        if "drawdown_scaling" in self.config.experiments.enabled:
+            leverage *= drawdown_scale(drawdown, self.config)
         exposures = {a: v * leverage for a, v in unlevered.items()}
         k = sum(exposures.values()) / (lev.borrow * equity)
         choices = choose_instruments(
@@ -684,10 +709,13 @@ class Engine:
             ),
             {symbol: self._close(symbol, day) for symbol in self.closes},
             self.config,
+            targets,
         )
         for order in skipped:
             self.rec.event(
-                day, "RESIZE_SKIPPED", f"{order.symbol} buy {order.notional:.2f}: cost above limit"
+                day,
+                "RESIZE_SKIPPED",
+                f"{order.symbol} {order.side} {order.notional:.2f}: cost above limit",
             )
         planned = split_orders(planned, equity, self.config)
         vetoes = self._check_and_submit(day, equity, cash, positions, planned, blocked)
@@ -922,6 +950,7 @@ __all__ = [
     "MarketData",
     "PlannedOrder",
     "combine_systems",
+    "drawdown_scale",
     "eligible_instruments",
     "fit_buys",
     "plan_orders",

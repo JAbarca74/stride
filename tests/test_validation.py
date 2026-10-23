@@ -6,6 +6,7 @@ import json
 import math
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -158,11 +159,17 @@ def test_verdict_applies_the_phase_3_exit_criterion() -> None:
 
 def test_validate_strategy_and_outputs(tmp_path: Path) -> None:
     result = v.validate_strategy(
-        _market(), CONFIG, SETTINGS, bootstrap_samples=200, parameters=ONE, levels=(1.0,)
+        _market(),
+        CONFIG,
+        SETTINGS,
+        bootstrap_samples=200,
+        parameters=ONE,
+        levels=(1.0,),
+        goal_leverages=(None,),
     )
     text = v.to_markdown(result, {"Data": "synthetic"})
     for heading in ("Phase 3 exit criterion", "Walk-forward", "Sensitivity", "bootstrap",
-                    "Leverage comparison", "Improvements", "Notes"):  # fmt: skip
+                    "Leverage comparison", "Improvements", "Owner goal", "Notes"):  # fmt: skip
         assert heading in text
     v.write_outputs(tmp_path / "results", result, {"Data": "synthetic"})
     payload = json.loads((tmp_path / "results" / "validation.json").read_text(encoding="utf-8"))
@@ -176,8 +183,8 @@ def test_main_writes_results_and_returns_the_verdict(
 ) -> None:
     full = v.validate_strategy
 
-    def light(*args: object, **kwargs: object) -> v.Validation:
-        return full(*args, **kwargs, parameters=ONE, levels=(2.0,))  # type: ignore[arg-type]
+    def light(*args: Any, **kwargs: Any) -> v.Validation:
+        return full(*args, **kwargs, parameters=ONE, levels=(2.0,), goal_leverages=(None,))
 
     monkeypatch.setattr(v, "validate_strategy", light)
     conn = connect(tmp_path / "p.db")
@@ -235,11 +242,36 @@ def test_improvement_variants_turn_off_one_improvement_each() -> None:
 
 def test_experiment_variants_need_data_for_the_wider_universe() -> None:
     variants = v.experiment_variants(CONFIG, _market())  # no bars for the extra ETFs
-    assert list(variants) == ["with the multi-horizon ensemble (20/10, 55/20, 100/40)"]
+    assert list(variants) == [
+        "with the multi-horizon ensemble (20/10, 55/20, 100/40)",
+        "with drawdown scaling of the leverage",
+    ]
     assert variants[next(iter(variants))].experiments.enabled == ["ensemble"]
+    scaled = variants["with drawdown scaling of the leverage"]
+    assert scaled.experiments.enabled == ["drawdown_scaling"]
     bars = dict(_market().bars)
     for symbol in CONFIG.experiments.extra_universe:
         bars[symbol] = bars["DBC"]
     wide = v.experiment_variants(CONFIG, MarketData(bars, RATE))
     name = "with the wider universe (7 more ETFs)"
     assert name in wide and len(wide[name].universe) == 17
+
+
+def test_goal_search_marks_runs_that_meet_30_percent_within_25_drawdown() -> None:
+    table = v.goal_search(_market(), CONFIG, SETTINGS, leverages=(None, 2.0))
+    assert len(table) == 4
+    assert list(table["cagr"]) == sorted(table["cagr"], reverse=True)
+    expected = (table["cagr"] >= v.GOAL_CAGR) & (table["max_drawdown"] <= v.GOAL_MAX_DRAWDOWN)
+    assert list(table["meets_goal"]) == list(expected)
+    assert v.goal_summary(table).startswith(("MET:", "NOT MET:"))
+
+
+def test_goal_summary_wording() -> None:
+    row = {"leverage": "2x", "drawdown_scaling": "on", "sharpe": 1.0, "average_exposure": 1.0,
+           "final_equity": 1.0}  # fmt: skip
+    met = pd.DataFrame([row | {"cagr": 0.31, "max_drawdown": 0.2, "meets_goal": True}])
+    assert v.goal_summary(met).startswith("MET: 2x leverage")
+    short = pd.DataFrame([row | {"cagr": 0.12, "max_drawdown": 0.2, "meets_goal": False}])
+    assert "18.0% short of 30%" in v.goal_summary(short)
+    deep = pd.DataFrame([row | {"cagr": 0.4, "max_drawdown": 0.5, "meets_goal": False}])
+    assert v.goal_summary(deep) == "NOT MET: no run keeps the maximum drawdown within 25%"

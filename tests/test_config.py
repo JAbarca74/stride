@@ -310,6 +310,7 @@ def test_invalid_leverage_switch_is_rejected(
     ("key", "value", "match"),
     [
         ("breakout_systems", [[20, 30]], "exit shorter"),
+        ("dd_scale_full", 0.04, "dd_scale_full must be above"),
         ("extra_universe", ["SPY"], "new, unique"),
         ("extra_groups", {"x": ["ZZZ"]}, "unknown symbol"),
         ("enabled", ["ensemble"], None),  # fine with the three systems

@@ -129,6 +129,27 @@ def write_results(
         upsert_prices(conn, frame)
 
 
+def turnover_by_kind(result: BacktestResult) -> dict[str, float]:
+    """Annual traded amount / average equity, split by why the order was sent:
+    a signal (entry, add, exit, stop), a resize (HOLD: equity, L or N moved), an
+    instrument switch, or the kill switch."""
+    kinds = ("signal", "resize", "switch", "kill switch")
+    orders, fills, equity = result.orders, result.fills, result.equity["equity"]
+    if orders.empty or fills.empty:
+        return dict.fromkeys(kinds, 0.0)
+    kind = pd.Series("signal", index=orders.index)
+    kind[orders["rule"] == "HOLD"] = "resize"
+    kind[orders["switch"].astype(bool)] = "switch"
+    kind[orders["rule"] == "KILL_SWITCH"] = "kill switch"
+    by_id = dict(zip(orders["order_id"], kind, strict=True))
+    traded = fills.assign(kind=fills["order_id"].map(by_id))
+    out = {}
+    for name in kinds:
+        part = traded[traded["kind"] == name]
+        out[name] = metrics.turnover(part.set_index("date")["notional"], equity)
+    return out
+
+
 @dataclass(frozen=True)
 class Summary:
     strategy: metrics.Metrics
@@ -145,6 +166,7 @@ class Summary:
     kill_switch: str | None
     switches: int
     switch_cost: float
+    turnover_by_kind: dict[str, float]  # signal, resize, switch, kill switch
 
 
 def summarize(result: BacktestResult, bars: Mapping[str, pd.DataFrame], rate: pd.Series) -> Summary:
@@ -189,6 +211,7 @@ def summarize(result: BacktestResult, bars: Mapping[str, pd.DataFrame], rate: pd
         kill_switch=str(kill["at"].iloc[0]) if not kill.empty else None,
         switches=int(result.switches["switches"].sum()) if not result.switches.empty else 0,
         switch_cost=float(result.switches["cost_usd"].sum()) if not result.switches.empty else 0.0,
+        turnover_by_kind=turnover_by_kind(result),
     )
 
 
@@ -217,6 +240,8 @@ def format_summary(summary: Summary) -> list[str]:
         f"orders {summary.orders}, vetoed {summary.vetoes}, rejected by the broker "
         f"{summary.rejected}",
         f"instrument switches {summary.switches}, cost ${summary.switch_cost:,.2f}",
+        "turnover by kind: "
+        + ", ".join(f"{k} {_num(v)}x/yr" for k, v in summary.turnover_by_kind.items()),
         f"kill switch: {summary.kill_switch or 'never fired'}",
     ]
     return lines
