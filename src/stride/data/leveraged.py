@@ -163,12 +163,13 @@ def calibrate_spread(
     overlap = overlap[overlap.index >= real.index[0] - pd.Timedelta(days=7)]
     overlap = overlap[overlap.index <= real.index[-1]]
     rf = rate.reindex(overlap.index)
-    target = annualized_return(real)
 
     def gap(spread: float) -> float:
+        # Compare on common days only: a leveraged ETF may predate its underlying
+        # (BITX predates IBIT), and those early returns have no synthetic match.
         syn = synthetic_returns(overlap, multiple, rf, spread, annual_fee)
         common = syn.index.intersection(real.index)
-        return annualized_return(syn[common]) - target
+        return annualized_return(syn[common]) - annualized_return(real[common])
 
     low, high = SPREAD_SEARCH
     if gap(low) < 0 or gap(high) > 0:

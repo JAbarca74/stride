@@ -197,6 +197,19 @@ def test_calibration_recovers_the_true_spread() -> None:
     assert calibration.passes
 
 
+def test_calibration_ignores_etf_days_before_the_underlying_exists() -> None:
+    # Like BITX (2023) vs IBIT (2024): a crash before the underlying starts must not
+    # move the spread, because the synthetic series has no returns for those days.
+    real = _real_etf(0.0125)
+    early_days = pd.bdate_range(end=real.index[0] - pd.Timedelta(days=1), periods=60)
+    early = pd.Series(np.linspace(200.0, real.iloc[0], 60), index=early_days)
+    underlying = _underlying()
+    underlying = underlying[underlying.index >= DAYS[200]]
+    calibration = calibrate_spread(underlying, pd.concat([early, real]), 2, _rate(), 0.0095)
+    assert calibration.spread == pytest.approx(0.0125, abs=1e-6)
+    assert calibration.passes
+
+
 def test_calibration_fails_when_no_spread_explains_the_gap() -> None:
     calibration = calibrate_spread(
         _underlying(), _real_etf(0.0, extra_drag=0.5), 2, _rate(), 0.0095
