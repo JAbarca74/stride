@@ -91,15 +91,17 @@ def test_summary_lists_what_was_done_and_not_done(tmp_path: Path) -> None:
     assert s.day_return == pytest.approx((121 - 20) / 100 - 1)  # the deposit is not a gain
     assert (s.drawdown, s.leverage, s.binding_limit) == (0.03, 1.25, "KELLY")
     assert s.done == [
-        "SPY: 0 -> 1 units (ENTRY_HH55)",
-        "Filled: sell 0.5000 IEF at $95.00 (commission $0.48)",
-        "Order sent for the next open: buy $81.00 SPY (ENTRY_HH55)",
-        "Deposit received: $20.00",
+        "SPY: 0 → 1 unidades (entrada por máximo de 55 días, ENTRY_HH55)",
+        "Ejecutada: venta de 0.5000 IEF a $95.00 (comisión $0.48)",
+        "Orden enviada para la apertura siguiente: compra de $81.00 en SPY"
+        " (entrada por máximo de 55 días, ENTRY_HH55)",
+        "Depósito recibido: $20.00",
     ]
     assert s.not_done == [
-        "Vetoed: sell $70.00 GLD (EXIT_LL20) - ORDER_TOO_LARGE",
-        "GLD: unit add cut by the exposure caps (PYRAMID)",
-        "Order rejected: sim-0b DBC buy: not enough cash",
+        "Vetada: venta de $70.00 en GLD (salida por mínimo de 20 días, EXIT_LL20)."
+        " Motivo: orden mayor al límite por orden (ORDER_TOO_LARGE)",
+        "GLD: la unidad nueva quedó recortada por los topes de exposición (piramidación, PYRAMID)",
+        "Orden rechazada por el broker: sim-0b DBC buy: not enough cash",
     ]  # the VETO event and the older rejection are not repeated
     assert s.positions == [("GLD", 2, "PYRAMID"), ("SPY", 1, "ENTRY_HH55")]  # by symbol
     conn.close()
@@ -111,7 +113,8 @@ def test_html_is_short_escaped_and_mobile_friendly(tmp_path: Path) -> None:
     html = daily.render_daily(daily.build_daily(conn, T2, "paper"))
     assert html.startswith("<!doctype html>")
     assert 'name="viewport"' in html and "prefers-color-scheme: dark" in html
-    for heading in ("Account", "Done", "Not done", "Positions"):
+    assert '<html lang="es">' in html
+    for heading in ("Cuenta", "Hecho", "No hecho", "Posiciones"):
         assert f"<h2>{heading}" in html
     assert "<script>" not in html and "&lt;script&gt;" in html
     assert len(html) < 10_000
@@ -122,7 +125,7 @@ def test_status_for_no_run_quiet_day_halt_and_kill_switch(tmp_path: Path) -> Non
     conn = _db(tmp_path / "x.db")
     missing = daily.build_daily(conn, date(2026, 10, 23), "paper")
     assert missing.status == daily.NO_RUN and missing.equity is None
-    assert "No run recorded" in daily.render_daily(missing)
+    assert "No hay corrida registrada" in daily.render_daily(missing)
     quiet = daily.build_daily(conn, T1, "paper")
     assert quiet.status == daily.ATTENTION  # the older rejection belongs to T1
     record_event(conn, "HALT", "reconciliation breaks on two consecutive days", at=T2.isoformat())
@@ -144,10 +147,10 @@ def test_quiet_day_is_ok(tmp_path: Path) -> None:
     s = daily.build_daily(conn, T2, "backtest")
     assert s.status == daily.OK and s.done == [] and s.not_done == [] and s.day_return is None
     html = daily.render_daily(s)
-    assert "Nothing to do today" in html and "Everything planned went through" in html
+    assert "Nada que hacer hoy" in html and "Todo lo planificado se ejecutó" in html
     assert (
         daily.caption(s)
-        == "STRIDE [backtest] 2026-10-22: OK; equity $100.00 (n/a); 0 done, 0 not done"
+        == "STRIDE [backtest] 2026-10-22: OK; equity $100.00 (n/d); 0 hechas, 0 no hechas"
     )
     conn.close()
 
@@ -157,7 +160,9 @@ def test_risk_vetoes_are_used_when_no_orders_were_recorded(tmp_path: Path) -> No
     with conn:
         conn.execute("DELETE FROM orders")
     s = daily.build_daily(conn, T2, "paper")
-    assert s.not_done[0] == "Vetoed: GLD sell ORDER_TOO_LARGE"
+    assert s.not_done[0] == (
+        "Vetada: venta en GLD. Motivo: orden mayor al límite por orden (ORDER_TOO_LARGE)"
+    )
     conn.close()
 
 
@@ -178,7 +183,7 @@ def test_main_writes_the_file_and_needs_telegram_to_send(
     assert daily.main(["--date", T2.isoformat(), "--config", str(config)]) == 0
     written = tmp_path / "reports" / "daily" / f"{T2}.html"
     assert written.read_text(encoding="utf-8").startswith("<!doctype html>")
-    assert "ATTENTION" in capsys.readouterr().out
+    assert "ATENCIÓN" in capsys.readouterr().out
     env = tmp_path / "empty.env"
     env.write_text("", encoding="utf-8")
     args = ["--date", T2.isoformat(), "--config", str(config), "--send", "--env-file", str(env)]
