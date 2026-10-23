@@ -71,9 +71,16 @@ cash_flows:
 costs:
   spread_bps: 5
   spread_bps_crypto: 10
+  pricing: tiered                  # fixed | tiered (owner decision 2026-10-23; choose Tiered at IBKR)
   commission_per_share: 0.005      # IBKR Pro Fixed
   commission_min_per_order: 1.00
   commission_max_pct_of_value: 0.01
+  tiered_per_share: 0.0035         # IBKR Pro Tiered, lowest-volume tier
+  tiered_min_per_order: 0.35
+  tiered_max_pct_of_value: 0.01    # to verify on IBKR's schedule
+  tiered_third_party_per_share: 0.003  # exchange, clearing and regulatory fees (conservative)
+  cash_interest_free_usd: 10000    # IBKR pays no interest on the first $10,000 of cash
+  cash_interest_full_rate_nav: 100000  # full rate only from this NAV; pro rata below
   leveraged_etf_fee: 0.0095        # approximate annual fee
   margin_spread: 0.015
 

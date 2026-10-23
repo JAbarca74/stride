@@ -328,25 +328,37 @@ def leverage_comparison(
     return pd.DataFrame(rows)
 
 
-# 6. Cost-aware resizing: the run with and without the rule (owner request).
+# 6. Improvements (owner request, 2026-10-23): each one turned off in turn.
 
 NO_RESIZE_LIMIT = 0.999  # a cost limit no order reaches: the rule is off
 
 
-def cost_rule_comparison(
-    data: MarketData, config: StrideConfig, settings: BacktestSettings
+def with_values(config: StrideConfig, section: str, **values: object) -> StrideConfig:
+    """`config` with some values of one section replaced (in memory)."""
+    block = getattr(config, section).model_copy(update=values)
+    return config.model_copy(update={section: block})
+
+
+def improvement_variants(config: StrideConfig) -> dict[str, StrideConfig]:
+    """The configured run, and the same run with one improvement removed each time."""
+    return {
+        "configured (all improvements)": config,
+        "without cost-aware resizing": with_values(
+            config, "execution", max_resize_cost_pct=NO_RESIZE_LIMIT
+        ),
+        "Fixed pricing instead of Tiered": with_values(config, "costs", pricing="fixed"),
+        "cash earning the full rate (old assumption)": with_values(
+            config, "costs", cash_interest_free_usd=0.0, cash_interest_full_rate_nav=1.0
+        ),
+    }
+
+
+def compare_variants(
+    data: MarketData, settings: BacktestSettings, variants: Mapping[str, StrideConfig]
 ) -> pd.DataFrame:
-    """Full-period metrics with the cost-aware resize rule on (the configured
-    `max_resize_cost_pct`) and off, and the costs each run paid per year."""
-    off = config.model_copy(
-        update={
-            "execution": config.execution.model_copy(
-                update={"max_resize_cost_pct": NO_RESIZE_LIMIT}
-            )
-        }
-    )
+    """Full-period metrics and costs of each configuration on the same data."""
     rows = []
-    for name, cfg in (("with rule", config), ("without rule", off)):
+    for name, cfg in variants.items():
         result = run_backtest(data, cfg, settings)
         m = _summary(result.returns, data.risk_free)
         fills = result.fills
@@ -355,7 +367,6 @@ def cost_rule_comparison(
             if not fills.empty
             else pd.Series(dtype=float)
         )
-        skipped = int((result.events["type"] == "RESIZE_SKIPPED").sum())
         rows.append(
             {
                 "run": name,
@@ -364,11 +375,19 @@ def cost_rule_comparison(
                 "max_drawdown": m.max_drawdown,
                 "costs_per_year": metrics.cost_ratio(costs, result.equity["equity"]),
                 "fills": len(fills),
-                "resizes_skipped": skipped,
+                "resizes_skipped": int((result.events["type"] == "RESIZE_SKIPPED").sum()),
                 "final_equity": float(result.equity["equity"].iloc[-1]),
             }
         )
     return pd.DataFrame(rows)
+
+
+def cost_rule_comparison(
+    data: MarketData, config: StrideConfig, settings: BacktestSettings
+) -> pd.DataFrame:
+    """The run with the cost-aware resize rule and without it."""
+    off = with_values(config, "execution", max_resize_cost_pct=NO_RESIZE_LIMIT)
+    return compare_variants(data, settings, {"with rule": config, "without rule": off})
 
 
 # Verdict.
@@ -410,7 +429,7 @@ class Validation:
     bootstrap: Bootstrap  # out-of-sample returns
     bootstrap_full: Bootstrap  # full-period returns (second layer)
     leverage: pd.DataFrame
-    cost_rule: pd.DataFrame  # with and without the cost-aware resize rule
+    experiments: pd.DataFrame  # each improvement turned off in turn
     full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
@@ -436,7 +455,7 @@ def validate_strategy(
         return block_bootstrap(returns, rf, samples=bootstrap_samples)
 
     lev = leverage_comparison(data, config, settings, levels)
-    rule = cost_rule_comparison(data, config, settings)
+    rule = compare_variants(data, settings, improvement_variants(config))
     return Validation(
         walk, sens, boot(walk.returns), boot(full.returns), lev, rule, full, verdict(walk, sens),
         (settings.start, settings.end),
@@ -505,9 +524,9 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         "",
         *_table(v.leverage),
         "",
-        "## 6. Cost-aware resize rule (full period)",
+        "## 6. Improvements, each one turned off in turn (full period)",
         "",
-        *_table(v.cost_rule),
+        *_table(v.experiments),
     ]
     if notes:
         lines += ["", "## Notes", ""] + [f"- **{k}:** {text}" for k, text in notes.items()]
@@ -551,7 +570,7 @@ def to_json(v: Validation) -> dict[str, object]:
             },
         },
         "leverage": records(v.leverage),
-        "cost_rule": records(v.cost_rule),
+        "experiments": records(v.experiments),
     }
 
 

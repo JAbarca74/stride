@@ -26,7 +26,7 @@ from datetime import date
 
 import pandas as pd
 
-from stride.backtest.costs import commission, fill_price
+from stride.backtest.costs import commission, fill_price, max_commission_rate
 from stride.config import StrideConfig
 from stride.data.calendar import is_trading_day
 from stride.execution.broker import (
@@ -218,10 +218,10 @@ class SimBroker(Broker):
 
     def _affordable(self) -> float:
         """The largest notional the cash pays, commission included (the commission
-        is at most `commission_max_pct_of_value` of the notional)."""
+        is at most `costs.max_commission_rate` of the notional)."""
         if self._cash <= 0:
             return 0.0
-        return self._cash / (1 + self._config.costs.commission_max_pct_of_value)
+        return self._cash / (1 + max_commission_rate(self._config))
 
     def _update_position(self, symbol: str, side: Side, quantity: float, price: float) -> None:
         held = self._positions.get(symbol)

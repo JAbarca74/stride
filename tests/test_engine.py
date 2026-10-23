@@ -17,6 +17,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from stride.backtest.costs import max_commission_rate
 from stride.backtest.engine import (
     KILLED,
     BacktestSettings,
@@ -130,14 +131,29 @@ def test_deposits_with_zero_return_give_zero_twr() -> None:
 def test_idle_cash_earns_the_rate_known_at_t_minus_1() -> None:
     flat = pd.DataFrame({"open": 50.0, "high": 50.0, "low": 50.0, "close": 50.0}, index=DAYS)
     rate = pd.Series(0.036, index=pd.date_range("2017-12-01", "2021-01-31"))
+    paying = CONFIG.model_copy(  # a broker that pays the full rate on all cash
+        update={"costs": CONFIG.costs.model_copy(
+            update={"cash_interest_free_usd": 0.0, "cash_interest_full_rate_nav": 1.0})}
+    )  # fmt: skip
     result = run_backtest(
         MarketData({"SPY": flat}, rate),
-        CONFIG,
+        paying,
         BacktestSettings(date(2019, 3, 4), date(2019, 3, 8), initial_cash=1_000.0),
     )
     # Four overnight periods of one calendar day each, actual/360.
     assert result.equity["equity"].iloc[-1] == pytest.approx(1_000 * (1 + 0.036 / 360) ** 4)
     assert result.returns.iloc[0] == pytest.approx(0.036 / 360)
+
+
+def test_ibkr_pays_nothing_on_a_small_cash_balance() -> None:
+    flat = pd.DataFrame({"open": 50.0, "high": 50.0, "low": 50.0, "close": 50.0}, index=DAYS)
+    rate = pd.Series(0.036, index=pd.date_range("2017-12-01", "2021-01-31"))
+    result = run_backtest(
+        MarketData({"SPY": flat}, rate),
+        CONFIG,
+        BacktestSettings(date(2019, 3, 4), date(2019, 3, 8), initial_cash=1_000.0),
+    )
+    assert result.equity["equity"].iloc[-1] == 1_000.0
 
 
 # Kill switch.
@@ -324,9 +340,10 @@ def test_fit_buys_uses_only_the_given_sells() -> None:
     ]
     sell = PlannedOrder("TLT", "sell", 500.0, False, "TLT", "EXIT_LL20")
     alone = fit_buys(buys, cash=505.0, config=CONFIG)
-    assert sum(o.notional for o in alone) * 1.01 == pytest.approx(505.0)
+    rate = 1 + max_commission_rate(CONFIG)
+    assert sum(o.notional for o in alone) * rate == pytest.approx(505.0)
     assert alone[0].notional / alone[1].notional == pytest.approx(1.5)
-    with_sale = fit_buys([sell, *buys], cash=520.0, config=CONFIG)  # 520 + 494.75 >= 1010
+    with_sale = fit_buys([sell, *buys], cash=540.0, config=CONFIG)  # 540 + ~488 >= ~1013
     assert sum(o.notional for o in with_sale if o.side == "buy") == pytest.approx(1_000.0)
     assert fit_buys(buys, cash=0.0, config=CONFIG) == []
 

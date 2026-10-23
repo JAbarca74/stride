@@ -44,7 +44,12 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from stride.backtest.costs import cash_interest, commission, spread_bps
+from stride.backtest.costs import (
+    account_cash_interest,
+    commission,
+    max_commission_rate,
+    spread_bps,
+)
 from stride.backtest.metrics import time_weighted_returns
 from stride.config import StrideConfig
 from stride.data.calendar import trading_days
@@ -244,7 +249,7 @@ def fit_buys(
     the orders the guard approved, so a vetoed sell never funds a buy. Buys that
     fall below `min_order_usd` are dropped. A gap at the open can still leave a
     buy short of cash; `SimBroker` then rejects it and the engine logs it."""
-    fee_cap = config.costs.commission_max_pct_of_value
+    fee_cap = max_commission_rate(config)
     sells = [o for o in orders if o.side == "sell"]
     buys = [o for o in orders if o.side == "buy"]
     proceeds = sum(o.notional * (1 - spread_bps(o.symbol, config) / BPS - fee_cap) for o in sells)
@@ -397,7 +402,13 @@ class Engine:
         """Interest, fills at the open, deposit. Returns the day's external flow."""
         if previous is not None:
             cash = self.broker.get_account().cash
-            interest = cash_interest(cash, float(self.rate[day]), (day - previous).days)
+            interest = account_cash_interest(
+                cash,
+                self.broker.get_account().equity,
+                float(self.rate[day]),
+                (day - previous).days,
+                self.config,
+            )
             if interest > 0:
                 self.broker.credit_interest(interest)
         for order in self.broker.step(day.date()):
@@ -434,7 +445,7 @@ class Engine:
         the configured spread plus the commission cap (conservative)."""
         if self.traded > 0:
             return self.costs_paid / self.traded
-        return self.config.costs.spread_bps / BPS + self.config.costs.commission_max_pct_of_value
+        return self.config.costs.spread_bps / BPS + max_commission_rate(self.config)
 
     def _close_of_day(self, day: pd.Timestamp, equity: float, positions: dict[str, float]) -> None:
         cash = self.broker.get_account().cash

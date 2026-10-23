@@ -125,9 +125,16 @@ class CashFlowsConfig(_Section):
 class CostsConfig(_Section):
     spread_bps: NonNegative
     spread_bps_crypto: NonNegative
+    pricing: Literal["fixed", "tiered"]
     commission_per_share: NonNegative
     commission_min_per_order: NonNegative
     commission_max_pct_of_value: NonNegative
+    tiered_per_share: NonNegative
+    tiered_min_per_order: NonNegative
+    tiered_max_pct_of_value: NonNegative
+    tiered_third_party_per_share: NonNegative
+    cash_interest_free_usd: NonNegative
+    cash_interest_full_rate_nav: Annotated[float, Field(gt=0)]
     leveraged_etf_fee: NonNegative
     margin_spread: NonNegative
 

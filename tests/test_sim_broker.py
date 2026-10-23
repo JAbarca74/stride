@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from stride.backtest.costs import commission
+from stride.backtest.costs import commission, max_commission_rate
 from stride.config import load_config
 from stride.execution.broker import Broker
 from stride.execution.sim_broker import SimBroker
@@ -92,7 +92,7 @@ def test_long_only_and_cash_only() -> None:
     buy = broker.get_order(buy_id)
     assert buy.status == "filled" and buy.reason == "partial fill: cash available"
     cost = buy.filled_quantity * (buy.average_price or 0) + buy.commission
-    assert cost == pytest.approx(100.0 / 1.01 + buy.commission)
+    assert cost == pytest.approx(100.0 / (1 + max_commission_rate(CONFIG)) + buy.commission)
     assert broker.get_account().cash >= 0
     broke = _broker(cash=0.0)
     empty = broke.submit_order("SPY", "buy", 50.0)

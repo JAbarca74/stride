@@ -420,10 +420,10 @@ The backtest uses the same `strategy/` and `risk/` logic as live, with `SimBroke
 | Signal | Close of day t |
 | Execution | Open of day t+1 |
 | Spread and slippage | 5 bps per side (10 bps for crypto), configurable per symbol |
-| Commission | IBKR Pro Fixed: `min(max(0.005 * shares, 1.00), 0.01 * notional)` per order |
+| Commission | IBKR Pro Tiered (owner decision 2026-10-23, `costs.pricing`): `min(max(0.0035 * shares, 0.35), 0.01 * notional) + 0.003 * shares` (exchange, clearing and regulatory fees); Fixed, `min(max(0.005 * shares, 1.00), 0.01 * notional)`, stays available for comparison |
 | Risk-free rate | 3-month T-bill, FRED series `DTB3` (free); the value known at t−1 is used on day t, never a later one |
 | Margin interest | Risk-free rate + 1.5% per year on borrowed amount |
-| Uninvested cash | Earns the risk-free rate |
+| Uninvested cash | Earns the risk-free rate only above $10,000, scaled by NAV / $100,000 (IBKR's rule; `costs.cash_interest_free_usd`, `costs.cash_interest_full_rate_nav`): a small account earns nothing on its cash |
 | Dividends | Included via adjusted prices |
 | Leveraged ETFs | Before launch, synthetic daily return = m × underlying return − (m − 1) × (DTB3 + spread) / 252 − annual fee / 252, where the annual fee is the ETF's own net expense ratio from `reference/etf_facts.yaml` (`costs.leveraged_etf_fee` is only a fallback when the value is missing, and using it logs a warning). The spread is not invented: it is calibrated per asset on the period where both the real ETF and the underlying exist, and the synthetic series must differ from the real one by less than 2% per year |
 | Deposits | $20 on the first trading day of each month, as in live |
