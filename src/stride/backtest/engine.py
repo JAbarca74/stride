@@ -72,6 +72,10 @@ Row = tuple[float, float, float, float, float]  # close, SMA200, HH55, LL20, N
 FIXED = "FIXED"  # binding limit when the run uses a fixed leverage (SPEC 9, item 5)
 KILLED = "KILL_SWITCH"  # binding limit on the days after the kill switch fired
 BPS = 10_000
+# Days of returns passed to the EWMA covariance. With span 60 the weight left
+# out beyond 1,200 days is (59/61)^1200, below 1e-17 of the total: the same
+# sigma_60 as the full history, at a fixed cost per day.
+COVARIANCE_WINDOW_DAYS = 1_200
 
 
 @dataclass(frozen=True)
@@ -294,6 +298,10 @@ class Engine:
         self.return_values = self.returns.to_numpy(dtype=float)
         self.return_rows = {day: i for i, day in enumerate(pd.DatetimeIndex(self.returns.index))}
         self.column = {asset: i for i, asset in enumerate(self.returns.columns)}
+        self.closes = {
+            s: (pd.DatetimeIndex(b.sort_index().index), b.sort_index()["close"].to_numpy(float))
+            for s, b in data.bars.items()
+        }
         self.underlying = guard.underlying_map(config)
         self.multiple = guard.multiple_map(config)
         tradable = {s: b for s, b in data.bars.items() if s in self.underlying}
@@ -313,9 +321,9 @@ class Engine:
     # Market helpers (only rows on or before the day).
 
     def _close(self, symbol: str, day: pd.Timestamp) -> float:
-        bars = self.data.bars[symbol]
-        upto = bars.loc[:day, "close"]
-        return float(upto.iloc[-1]) if len(upto) else math.nan
+        index, values = self.closes[symbol]
+        position = int(index.searchsorted(day, side="right"))
+        return float(values[position - 1]) if position else math.nan
 
     def _positions_usd(self, day: pd.Timestamp) -> dict[str, float]:
         return {
@@ -499,7 +507,8 @@ class Engine:
         held = [s for s, w in weights.items() if w != 0]
         if not held:
             return 0.0
-        history = self.returns.loc[:day, held].iloc[1:]
+        end = self.return_rows[day] + 1 if day in self.return_rows else 0
+        history = self.returns.iloc[max(end - COVARIANCE_WINDOW_DAYS, 1) : end][held]
         return forward_volatility(weights, history)
 
     # Leverage, instruments, orders.
@@ -511,7 +520,7 @@ class Engine:
         unlevered = self._targets(day, equity, blocked)
         self.weights = {a: v / equity for a, v in unlevered.items()}
         sigma = self._sigma(day, self.weights)
-        history = pd.Series(self.rec.unlevered).iloc[-KELLY_WINDOW_DAYS:]
+        history = pd.Series(list(self.rec.unlevered.values())[-KELLY_WINDOW_DAYS:], dtype=float)
         rf = float(self.rate[day])
         kelly = kelly_estimate(history, rf, self.config.risk.min_history_days_for_kelly)
         drawdown = min(max(self.twr.drawdown, 0.0), 1.0)

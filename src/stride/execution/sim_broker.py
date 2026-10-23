@@ -50,6 +50,9 @@ class SimBroker(Broker):
     ) -> None:
         """`prices` maps symbol -> daily bars (`open`, `high`, `low`, `close`)."""
         self._prices = {s: p.sort_index() for s, p in prices.items()}
+        # Closes as arrays for fast "last close on or before a day" lookups.
+        self._close_index = {s: pd.DatetimeIndex(p.index) for s, p in self._prices.items()}
+        self._close_values = {s: p["close"].to_numpy(dtype=float) for s, p in self._prices.items()}
         self._config = config
         self._cash = float(cash)
         self._today = start
@@ -152,9 +155,8 @@ class SimBroker(Broker):
         return row if isinstance(row, pd.Series) else None
 
     def _close(self, symbol: str, day: date) -> float:
-        bars = self._prices[symbol]
-        upto = bars.loc[: pd.Timestamp(day)]
-        return float(upto["close"].iloc[-1]) if not upto.empty else 0.0
+        position = int(self._close_index[symbol].searchsorted(pd.Timestamp(day), side="right"))
+        return float(self._close_values[symbol][position - 1]) if position else 0.0
 
     def _reference(self, order: OrderState, bar: pd.Series) -> float | None:
         open_, high, low = float(bar["open"]), float(bar["high"]), float(bar["low"])
