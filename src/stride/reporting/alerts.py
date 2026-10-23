@@ -50,7 +50,8 @@ class PostResponse(Protocol):
 
 
 class PostSession(Protocol):
-    def post(self, url: str, *, json: Mapping[str, str], timeout: float) -> PostResponse: ...
+    def post(self, url: str, *, json: Mapping[str, str], timeout: float) -> PostResponse:
+        """Send a POST request with a JSON body."""
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,8 @@ class Alert:
 
 
 class Alerter(Protocol):
-    def send(self, alert: Alert) -> None: ...
+    def send(self, alert: Alert) -> None:
+        """Deliver one alert."""
 
 
 class LogAlerter:

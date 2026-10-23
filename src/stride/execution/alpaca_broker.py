@@ -41,12 +41,23 @@ _STATUS: dict[str, OrderStatus] = {
 class TradingApi(Protocol):
     """The part of `alpaca.trading.client.TradingClient` this adapter uses."""
 
-    def get_account(self) -> Any: ...
-    def get_all_positions(self) -> Any: ...
-    def submit_order(self, order_data: Any) -> Any: ...
-    def get_order_by_id(self, order_id: Any) -> Any: ...
-    def cancel_orders(self) -> Any: ...
-    def get_calendar(self, filters: Any = None) -> Any: ...
+    def get_account(self) -> Any:
+        """The trading account."""
+
+    def get_all_positions(self) -> Any:
+        """Every open position."""
+
+    def submit_order(self, order_data: Any) -> Any:
+        """Submit one order request."""
+
+    def get_order_by_id(self, order_id: Any) -> Any:
+        """One order by its id."""
+
+    def cancel_orders(self) -> Any:
+        """Cancel every open order."""
+
+    def get_calendar(self, filters: Any = None) -> Any:
+        """Market calendar days."""
 
 
 def _text(value: Any) -> str:
