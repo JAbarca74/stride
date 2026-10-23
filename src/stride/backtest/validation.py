@@ -34,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pydantic import ValidationError
 
 from stride.backtest import metrics, run
 from stride.backtest.engine import BacktestResult, BacktestSettings, MarketData, run_backtest
@@ -56,9 +57,11 @@ DYNAMIC = "dynamic"
 TRADING_DAYS_PER_YEAR = 252
 _ZERO = 1e-12  # below this a standard deviation is float noise (as in metrics.py)
 
-# (section, key) moved by the sensitivity test: every continuous or window
-# parameter of the strategy and the unit risk. Unit caps are integers already
-# at their allowed maximum (4) and are not moved.
+# (section, key) moved by the sensitivity test (owner decision on PR #57: as many
+# layers as possible): every continuous or window parameter of the strategy, the
+# risk and leverage limits, the rebalance band and the switching hysteresis.
+# A shift that makes the configuration invalid (e.g. kelly_fraction above 1.0) is
+# reported as skipped. Unit caps are integers already at their maximum (4).
 SENSITIVITY_PARAMETERS: tuple[tuple[str, str], ...] = (
     ("strategy", "sma_filter"),
     ("strategy", "entry_breakout"),
@@ -67,8 +70,17 @@ SENSITIVITY_PARAMETERS: tuple[tuple[str, str], ...] = (
     ("strategy", "stop_n"),
     ("strategy", "pyramid_step_n"),
     ("risk", "risk_per_unit"),
+    ("risk", "kelly_fraction"),
     ("risk", "max_portfolio_vol"),
+    ("risk", "max_etf_portfolio_leverage"),
+    ("risk", "dd_delever_at"),
+    ("risk", "kill_switch_dd"),
+    ("execution", "rebalance_band"),
+    ("leverage_switch", "enter_k"),
+    ("leverage_switch", "exit_k"),
+    ("leverage_switch", "min_hold_days"),
 )
+SKIPPED = "skipped: invalid configuration"
 
 
 def daily_risk_free(rate: pd.Series, days: pd.DatetimeIndex) -> pd.Series:
@@ -190,23 +202,35 @@ def sensitivity(
     config: StrideConfig,
     settings: BacktestSettings,
     parameters: Sequence[tuple[str, str]] = SENSITIVITY_PARAMETERS,
+    base_returns: pd.Series | None = None,
 ) -> Sensitivity:
-    """Sharpe of the full-period run with each parameter at -20% and +20%."""
-    base = _summary(run_backtest(data, config, settings).returns, data.risk_free).sharpe
+    """Sharpe of the full-period run with each parameter at -20% and +20%.
+    `base_returns` reuses a run already made with `config` and `settings`."""
+    if base_returns is None:
+        base_returns = run_backtest(data, config, settings).returns
+    base = _summary(base_returns, data.risk_free).sharpe
     rows = []
     for section, key in parameters:
         for factor in (1 - SENSITIVITY_STEP, 1 + SENSITIVITY_STEP):
-            moved = shifted_config(config, section, key, factor)
+            name = f"{section}.{key}"
+            try:
+                moved = shifted_config(config, section, key, factor)
+            except ValidationError:
+                value = getattr(getattr(config, section), key) * factor
+                rows.append({"parameter": name, "value": value, "sharpe": math.nan,
+                             "drop": math.nan, "fragile": False, "note": SKIPPED})  # fmt: skip
+                continue
             sharpe = _summary(run_backtest(data, moved, settings).returns, data.risk_free).sharpe
             drop = sharpe_drop(base, sharpe)
             rows.append(
                 {
-                    "parameter": f"{section}.{key}",
+                    "parameter": name,
                     "value": getattr(getattr(moved, section), key),
                     "sharpe": sharpe,
                     "drop": drop,
                     # A Sharpe that cannot be computed is treated as fragile (fail safe).
                     "fragile": bool(not math.isfinite(drop) or drop > FRAGILE_SHARPE_DROP),
+                    "note": "",
                 }
             )
     return Sensitivity(base, pd.DataFrame(rows))
@@ -339,8 +363,10 @@ def verdict(walk: WalkForward, sens: Sensitivity) -> Verdict:
 class Validation:
     walk_forward: WalkForward
     sensitivity: Sensitivity
-    bootstrap: Bootstrap
+    bootstrap: Bootstrap  # out-of-sample returns
+    bootstrap_full: Bootstrap  # full-period returns (second layer)
     leverage: pd.DataFrame
+    full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
 
@@ -357,13 +383,18 @@ def validate_strategy(
     """The whole SPEC 9 protocol on one data set (`parameters` and `levels` are
     only narrowed by tests)."""
     walk = walk_forward(data, config, settings.initial_cash, settings.start, settings.end)
-    sens = sensitivity(data, config, settings, parameters)
-    days = pd.DatetimeIndex(walk.returns.index)
-    boot = block_bootstrap(
-        walk.returns, daily_risk_free(data.risk_free, days), samples=bootstrap_samples
-    )
+    full = run_backtest(data, config, settings)
+    sens = sensitivity(data, config, settings, parameters, base_returns=full.returns)
+
+    def boot(returns: pd.Series) -> Bootstrap:
+        rf = daily_risk_free(data.risk_free, pd.DatetimeIndex(returns.index))
+        return block_bootstrap(returns, rf, samples=bootstrap_samples)
+
     lev = leverage_comparison(data, config, settings, levels)
-    return Validation(walk, sens, boot, lev, verdict(walk, sens), (settings.start, settings.end))
+    return Validation(
+        walk, sens, boot(walk.returns), boot(full.returns), lev, full, verdict(walk, sens),
+        (settings.start, settings.end),
+    )  # fmt: skip
 
 
 def _fmt(value: object) -> str:
@@ -419,6 +450,10 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         "| --- | --- | --- | --- |",
         "| Sharpe | " + " | ".join(_fmt(x) for x in b.sharpe) + " |",
         "| Max drawdown | " + " | ".join(_fmt(x) for x in b.max_drawdown) + " |",
+        "| Sharpe (full period) | " + " | ".join(_fmt(x) for x in v.bootstrap_full.sharpe) + " |",
+        "| Max drawdown (full period) | "
+        + " | ".join(_fmt(x) for x in v.bootstrap_full.max_drawdown)
+        + " |",
         "",
         "## 5. Leverage comparison (full period)",
         "",
@@ -460,6 +495,10 @@ def to_json(v: Validation) -> dict[str, object]:
             "block_days": v.bootstrap.block,
             "sharpe": list(v.bootstrap.sharpe),
             "max_drawdown": list(v.bootstrap.max_drawdown),
+            "full_period": {
+                "sharpe": list(v.bootstrap_full.sharpe),
+                "max_drawdown": list(v.bootstrap_full.max_drawdown),
+            },
         },
         "leverage": records(v.leverage),
     }
@@ -499,7 +538,9 @@ def main(
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--start", type=date.fromisoformat, help="default: data.history_start")
     parser.add_argument("--end", type=date.fromisoformat, help="default: last stored SPY bar")
-    parser.add_argument("--initial-cash", type=float, default=run.DEFAULT_INITIAL_CASH)
+    parser.add_argument(
+        "--initial-cash", type=float, help="default: cash_flows.initial_deposit_usd"
+    )
     parser.add_argument("--results", default="docs/results", help="output folder")
     parser.add_argument("--samples", type=int, default=BOOTSTRAP_SAMPLES)
     args = parser.parse_args(argv)
@@ -523,10 +564,12 @@ def main(
         sys.stdout.write("error: no SPY prices stored\n")
         return 2
     settings = BacktestSettings(
-        args.start or config.data.history_start, args.end or last, args.initial_cash
+        args.start or config.data.history_start,
+        args.end or last,
+        args.initial_cash or config.cash_flows.initial_deposit_usd,
     )
     validation = validate_strategy(data, config, settings, bootstrap_samples=args.samples)
-    full = run_backtest(data, config, settings)
+    full = validation.full
     results = (root / args.results).resolve()
     write_outputs(results, validation, _notes(full, data, rate, calibrated))
     out = connect(root / "data" / "validation.db")  # never the price database

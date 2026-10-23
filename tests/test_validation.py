@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from stride.backtest import validation as v
 from stride.backtest.engine import BacktestSettings, MarketData
@@ -72,9 +73,15 @@ def test_shifted_config_moves_one_parameter_in_memory() -> None:
     assert stop.strategy.stop_n == pytest.approx(1.6)
     assert CONFIG.strategy.entry_breakout == 55
     assert stop.risk == CONFIG.risk
-    for section, key in v.SENSITIVITY_PARAMETERS:  # every shift is a valid config
+    valid = 0
+    for section, key in v.SENSITIVITY_PARAMETERS:
         for factor in (0.8, 1.2):
-            v.shifted_config(CONFIG, section, key, factor)
+            try:
+                v.shifted_config(CONFIG, section, key, factor)
+                valid += 1
+            except ValidationError:
+                pass
+    assert valid >= 2 * len(v.SENSITIVITY_PARAMETERS) - 4  # only a few hit a hard limit
 
 
 def test_sharpe_drop() -> None:
@@ -195,3 +202,11 @@ def test_main_writes_results_and_returns_the_verdict(
     assert (tmp_path / "data" / "validation.db").exists()
     (tmp_path / "p.db").unlink()
     assert v.main(["--config", str(config)], rate_source=lambda: RATE) == 2
+
+
+def test_sensitivity_skips_shifts_that_make_the_config_invalid() -> None:
+    sens = v.sensitivity(_market(), CONFIG, SETTINGS, [("risk", "kelly_fraction")])
+    up = sens.table[sens.table["value"] > 1.0]
+    assert list(up["note"]) == [v.SKIPPED] and not up["fragile"].any()
+    down = sens.table[sens.table["value"] < 1.0]
+    assert list(down["note"]) == [""]
