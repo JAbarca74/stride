@@ -74,6 +74,9 @@ from stride.strategy.rules import HOLD, Decision, Indicators, PositionState, dec
 
 Row = tuple[float, float, float, float, float]  # close, SMA200, HH55, LL20, N
 
+ROTATION = "ROTATION"  # binding limit in the leverage_rotation experiment
+ROTATE_ON = "ROTATE_ON"  # rotation: the underlying crossed above its average
+ROTATE_OFF = "ROTATE_OFF"  # rotation: it crossed below; move to the refuge
 FIXED = "FIXED"  # binding limit when the run uses a fixed leverage (SPEC 9, item 5)
 KILLED = "KILL_SWITCH"  # binding limit on the days after the kill switch fired
 BPS = 10_000
@@ -355,6 +358,17 @@ def combine_systems(
     return Decision(HOLD, target, current.last_entry if target else None)
 
 
+def _rotation_average(data: MarketData, config: StrideConfig) -> dict[pd.Timestamp, float]:
+    """The rotation underlying's moving average by date (day t included)."""
+    rot = config.experiments.rotation
+    bars = data.bars.get(rot.underlying)
+    if bars is None or bars.empty:
+        raise ValueError(f"no bars for the rotation underlying {rot.underlying}")
+    close = bars.sort_index()["close"].astype(float)
+    average = close.rolling(rot.sma, min_periods=rot.sma).mean()
+    return dict(zip(pd.DatetimeIndex(average.index), average, strict=True))
+
+
 def _returns_matrix(data: MarketData, assets: Sequence[str]) -> pd.DataFrame:
     closes = {s: data.bars[s]["close"].sort_index().astype(float) for s in assets}
     frame = pd.DataFrame(closes).sort_index()
@@ -416,6 +430,9 @@ class Engine:
         self.ensemble = "ensemble" in config.experiments.enabled
         systems = len(config.experiments.breakout_systems) if self.ensemble else 0
         self.system_state = {asset: [PositionState()] * systems for asset in self.assets}
+        self.rotating = "leverage_rotation" in config.experiments.enabled
+        self.rotation_on = False
+        self.rotation_sma = _rotation_average(data, config) if self.rotating else {}
         self.lots: list[UnitLot] = []
         self.held: dict[str, HeldInstrument] = {}
         self.chosen: dict[str, str] = {}
@@ -656,9 +673,99 @@ class Engine:
 
     # Leverage, instruments, orders.
 
+    def _rotation_symbol(self) -> str:
+        """The instrument held while risk is on: the configured multiple of the
+        underlying if it has bars and passed the filters, else the underlying."""
+        rot = self.config.experiments.rotation
+        if rot.multiple == 1:
+            return rot.underlying
+        symbol = self.config.leveraged_etfs[rot.underlying][rot.multiple]
+        eligible = self.data.eligible.get(rot.underlying, {})
+        return symbol if eligible.get(rot.multiple) == symbol else rot.underlying
+
+    def _rotate(
+        self, day: pd.Timestamp, equity: float, cash: float, positions: dict[str, float]
+    ) -> None:
+        """Experiment leverage_rotation: all the equity in the leveraged version of
+        the underlying while its close is above its moving average (with the
+        band's hysteresis), all in the refuge (or cash) below it. The drawdown
+        scaling experiment, the cost-aware resizing, the order split, the guard
+        and the kill switch all apply as in the main strategy."""
+        rot = self.config.experiments.rotation
+        row = self.assets[rot.underlying].rows.get(day) if rot.underlying in self.assets else None
+        drawdown = min(max(self.twr.drawdown, 0.0), 1.0)
+        if row is None:  # no bar on t: keep the positions, send nothing
+            self._record_risk(day, None, 0, 0.0, 0.0, ROTATION, drawdown, [])
+            return
+        close, average = row[0], self.rotation_sma.get(day, math.nan)
+        was_on = self.rotation_on
+        if not math.isfinite(average):
+            on = False
+        elif was_on:
+            on = close >= average * (1 - rot.band)
+        else:
+            on = close > average * (1 + rot.band)
+        self.rotation_on = on
+        scale = 1.0
+        if "drawdown_scaling" in self.config.experiments.enabled:
+            scale = drawdown_scale(drawdown, self.config)
+        symbol = self._rotation_symbol()
+        targets: dict[str, float] = {}
+        if on:
+            targets[symbol] = equity * scale
+        elif rot.refuge != "cash":
+            targets[rot.refuge] = equity * scale
+        rule = (ROTATE_ON if on else ROTATE_OFF) if on != was_on else HOLD
+        rules = {rot.underlying: rule}
+        if rot.refuge != "cash":
+            rules[rot.refuge] = rule
+        self.rec.signals.append(
+            {
+                "date": day,
+                "symbol": rot.underlying,
+                "close": close,
+                "sma200": average,
+                "hh55": math.nan,
+                "ll20": math.nan,
+                "n": math.nan,
+                "rule": rule,
+                "current_units": int(was_on),
+                "target_units": int(on),
+                "last_entry": close if on and not was_on else None,
+                "capped": 0,
+            }
+        )
+        planned, skipped = skip_costly_resizes(
+            plan_orders(
+                targets,
+                positions_usd=positions,
+                underlying=self.underlying,
+                rules=rules,
+                config=self.config,
+            ),
+            {s: self._close(s, day) for s in self.closes},
+            self.config,
+            targets,
+        )
+        for order in skipped:
+            self.rec.event(
+                day,
+                "RESIZE_SKIPPED",
+                f"{order.symbol} {order.side} {order.notional:.2f}: cost above limit",
+            )
+        planned = split_orders(planned, equity, self.config)
+        vetoes = self._check_and_submit(day, equity, cash, positions, planned, set())
+        multiple = self.multiple.get(symbol, 1) if on else (1 if rot.refuge != "cash" else 0)
+        self._record_risk(
+            day, None, 0, 0.0, multiple * scale, ROTATION, drawdown, vetoes, multiple * scale
+        )
+
     def _trade(
         self, day: pd.Timestamp, equity: float, cash: float, positions: dict[str, float]
     ) -> None:
+        if self.rotating:
+            self._rotate(day, equity, cash, positions)
+            return
         rules, blocked = self._signals(day)
         unlevered = self._targets(day, equity, blocked)
         weights = {a: v / equity for a, v in unlevered.items()}

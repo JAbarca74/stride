@@ -166,6 +166,7 @@ def test_validate_strategy_and_outputs(tmp_path: Path) -> None:
         parameters=ONE,
         levels=(1.0,),
         goal_leverages=(None,),
+        rotation=False,
     )
     text = v.to_markdown(result, {"Data": "synthetic"})
     for heading in ("Phase 3 exit criterion", "Walk-forward", "Sensitivity", "bootstrap",
@@ -184,7 +185,9 @@ def test_main_writes_results_and_returns_the_verdict(
     full = v.validate_strategy
 
     def light(*args: Any, **kwargs: Any) -> v.Validation:
-        return full(*args, **kwargs, parameters=ONE, levels=(2.0,), goal_leverages=(None,))
+        return full(
+            *args, **kwargs, parameters=ONE, levels=(2.0,), goal_leverages=(None,), rotation=False
+        )
 
     monkeypatch.setattr(v, "validate_strategy", light)
     conn = connect(tmp_path / "p.db")
@@ -245,6 +248,7 @@ def test_experiment_variants_need_data_for_the_wider_universe() -> None:
     assert list(variants) == [
         "with the multi-horizon ensemble (20/10, 55/20, 100/40)",
         "with drawdown scaling of the leverage",
+        "with leverage rotation (3x SPY, refuge IEF)",
     ]
     assert variants[next(iter(variants))].experiments.enabled == ["ensemble"]
     scaled = variants["with drawdown scaling of the leverage"]
@@ -258,7 +262,7 @@ def test_experiment_variants_need_data_for_the_wider_universe() -> None:
 
 
 def test_goal_search_marks_runs_that_meet_30_percent_within_25_drawdown() -> None:
-    table = v.goal_search(_market(), CONFIG, SETTINGS, leverages=(None, 2.0))
+    table = v.goal_search(_market(), CONFIG, SETTINGS, leverages=(None, 2.0), rotations=False)
     assert len(table) == 4
     assert list(table["cagr"]) == sorted(table["cagr"], reverse=True)
     expected = (table["cagr"] >= v.GOAL_CAGR) & (table["max_drawdown"] <= v.GOAL_MAX_DRAWDOWN)
@@ -275,3 +279,47 @@ def test_goal_summary_wording() -> None:
     assert "18.0% short of 30%" in v.goal_summary(short)
     deep = pd.DataFrame([row | {"cagr": 0.4, "max_drawdown": 0.5, "meets_goal": False}])
     assert v.goal_summary(deep) == "NOT MET: no run keeps the maximum drawdown within 25%"
+
+
+def _rotation_market() -> MarketData:
+    """SPY with a bull run, a crash and a recovery; UPRO and SSO as its 3x and 2x;
+    IEF as the refuge."""
+    rng = np.random.default_rng(4)
+    n = len(DAYS)
+    drift = np.where((np.arange(n) > 900) & (np.arange(n) < 1100), -0.004, 0.0007)
+    spy = 100 * np.cumprod(1 + drift + rng.normal(0, 0.009, n))
+    r = pd.Series(spy).pct_change().fillna(0.0).to_numpy()
+
+    def bars(close: np.ndarray) -> pd.DataFrame:
+        return pd.DataFrame(
+            {"open": close, "high": close * 1.004, "low": close * 0.996, "close": close},
+            index=DAYS,
+        )
+
+    out = {
+        "SPY": bars(spy),
+        "SSO": bars(50 * np.cumprod(1 + 2 * r)),
+        "UPRO": bars(30 * np.cumprod(1 + 3 * r)),
+        "IEF": bars(100 * np.cumprod(1 + rng.normal(0.0001, 0.003, n))),
+    }
+    return MarketData(out, RATE, {"SPY": {2: "SSO", 3: "UPRO"}})
+
+
+def test_rotation_goal_rows_cover_multiples_refuges_and_scaling() -> None:
+    rows = v._rotation_goal_rows(_rotation_market(), CONFIG, SETTINGS)
+    labels = {(r["leverage"], r["drawdown_scaling"]) for r in rows}
+    assert labels == {
+        (f"rotation {m}x/{ref}", sc)
+        for m in (2, 3) for ref in ("cash", "IEF") for sc in ("off", "on")
+    }  # fmt: skip
+
+
+def test_rotation_report_runs_the_protocol() -> None:
+    report = v.rotation_report(_rotation_market(), CONFIG, SETTINGS, bootstrap_samples=100)
+    assert report is not None
+    assert report.config_label == "3x SPY, SMA 200, band 0.0, refuge IEF"
+    assert list(report.sensitivity["change"]) == ["sma 160", "sma 240", "band 0.02", "multiple 2"]
+    assert report.walk_forward.returns.index.min() >= pd.Timestamp("2016-01-01")
+    text = v._rotation_markdown(report)
+    assert any("Phase 3 criterion for the rotation" in line for line in text)
+    assert v.rotation_report(MarketData({}, RATE), CONFIG, SETTINGS) is None

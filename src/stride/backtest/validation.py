@@ -364,7 +364,22 @@ def experiment_variants(config: StrideConfig, data: MarketData) -> dict[str, Str
         out[f"{state} the multi-horizon ensemble ({systems})"] = _toggle(config, "ensemble")
     state = "with" if "drawdown_scaling" not in config.experiments.enabled else "without"
     out[f"{state} drawdown scaling of the leverage"] = _toggle(config, "drawdown_scaling")
+    rot = config.experiments.rotation
+    state = "with" if "leverage_rotation" not in config.experiments.enabled else "without"
+    out[f"{state} leverage rotation ({rot.multiple}x {rot.underlying}, refuge {rot.refuge})"] = (
+        _toggle(config, "leverage_rotation")
+    )
     return out
+
+
+def with_rotation(config: StrideConfig, **values: object) -> StrideConfig:
+    """`config` with the leverage rotation switched on and some of its settings
+    replaced (in memory)."""
+    e = config.experiments
+    rotation = e.rotation.model_copy(update=values)
+    enabled = sorted(set(e.enabled) | {"leverage_rotation"})
+    experiments = e.model_copy(update={"rotation": rotation, "enabled": enabled})
+    return config.model_copy(update={"experiments": experiments})
 
 
 # 7. The owner's goal (2026-10-23): 30% a year without large drawdowns.
@@ -379,6 +394,7 @@ def goal_search(
     config: StrideConfig,
     settings: BacktestSettings,
     leverages: Sequence[float | None] = GOAL_LEVERAGES,
+    rotations: bool = True,
 ) -> pd.DataFrame:
     """Every leverage level (None = dynamic), with and without drawdown scaling,
     on the full period; sorted by CAGR. `meets_goal` marks the runs with a CAGR of
@@ -406,8 +422,118 @@ def goal_search(
                     "meets_goal": bool(m.cagr >= GOAL_CAGR and m.max_drawdown <= GOAL_MAX_DRAWDOWN),
                 }
             )
+    if rotations:
+        rows += _rotation_goal_rows(data, config, settings)
     table = pd.DataFrame(rows)
     return table.sort_values("cagr", ascending=False, ignore_index=True)
+
+
+ROTATION_MULTIPLES = (2, 3)
+ROTATION_REFUGES = ("cash", "IEF")
+
+
+def _rotation_goal_rows(
+    data: MarketData, config: StrideConfig, settings: BacktestSettings
+) -> list[dict[str, object]]:
+    """The leverage rotation at 2x and 3x, refuge cash or IEF, with and without
+    drawdown scaling (IEF only when it has bars)."""
+    rows: list[dict[str, object]] = []
+    for multiple in ROTATION_MULTIPLES:
+        for refuge in ROTATION_REFUGES:
+            if refuge != "cash" and refuge not in data.bars:
+                continue
+            for scaling in ("off", "on"):
+                cfg = with_rotation(config, multiple=multiple, refuge=refuge)
+                enabled = set(cfg.experiments.enabled)
+                enabled = enabled | {"drawdown_scaling"} if scaling == "on" else enabled - {
+                    "drawdown_scaling"
+                }  # fmt: skip
+                cfg = with_values(cfg, "experiments", enabled=sorted(enabled))
+                result = run_backtest(data, cfg, replace(settings, fixed_leverage=None))
+                m = _summary(result.returns, data.risk_free)
+                rows.append(
+                    {
+                        "leverage": f"rotation {multiple}x/{refuge}",
+                        "drawdown_scaling": scaling,
+                        "cagr": m.cagr,
+                        "sharpe": m.sharpe,
+                        "max_drawdown": m.max_drawdown,
+                        "average_exposure": metrics.average_exposure(
+                            result.equity["gross_exposure"], result.equity["equity"]
+                        ),
+                        "final_equity": float(result.equity["equity"].iloc[-1]),
+                        "meets_goal": bool(
+                            m.cagr >= GOAL_CAGR and m.max_drawdown <= GOAL_MAX_DRAWDOWN
+                        ),
+                    }
+                )
+    return rows
+
+
+# 8. The leverage rotation through the whole protocol (owner request, 2026-10-23).
+
+
+@dataclass(frozen=True)
+class RotationReport:
+    config_label: str
+    walk_forward: WalkForward
+    bootstrap: Bootstrap
+    sensitivity: pd.DataFrame  # rotation settings moved one at a time
+    full: metrics.Metrics
+    verdict: Verdict
+
+
+def rotation_report(
+    data: MarketData,
+    config: StrideConfig,
+    settings: BacktestSettings,
+    *,
+    bootstrap_samples: int = BOOTSTRAP_SAMPLES,
+) -> RotationReport | None:
+    """Walk-forward, block bootstrap and sensitivity of the leverage rotation as
+    configured in `experiments.rotation`, so it faces the same Phase 3 test as the
+    main strategy. None when the underlying has no bars."""
+    rot = config.experiments.rotation
+    if rot.underlying not in data.bars:
+        return None
+    cfg = with_rotation(config)
+    walk = walk_forward(data, cfg, settings.initial_cash, settings.start, settings.end)
+    rf = daily_risk_free(data.risk_free, pd.DatetimeIndex(walk.returns.index))
+    boot = block_bootstrap(walk.returns, rf, samples=bootstrap_samples)
+    base = _summary(run_backtest(data, cfg, settings).returns, data.risk_free)
+    moves: dict[str, dict[str, object]] = {
+        f"sma {round(rot.sma * 0.8)}": {"sma": round(rot.sma * 0.8)},
+        f"sma {round(rot.sma * 1.2)}": {"sma": round(rot.sma * 1.2)},
+        "band 0.02": {"band": 0.02},
+        f"multiple {5 - rot.multiple if rot.multiple > 1 else 2}": {
+            "multiple": 5 - rot.multiple if rot.multiple > 1 else 2
+        },
+    }
+    rows = []
+    for name, values in moves.items():
+        moved = with_rotation(cfg, **values)
+        m = _summary(run_backtest(data, moved, settings).returns, data.risk_free)
+        drop = sharpe_drop(base.sharpe, m.sharpe)
+        rows.append(
+            {
+                "change": name,
+                "cagr": m.cagr,
+                "sharpe": m.sharpe,
+                "max_drawdown": m.max_drawdown,
+                "drop": drop,
+                "fragile": bool(not math.isfinite(drop) or drop > FRAGILE_SHARPE_DROP),
+            }
+        )
+    sens = pd.DataFrame(rows)
+    table = pd.DataFrame({"parameter": sens["change"], "fragile": sens["fragile"]})
+    return RotationReport(
+        f"{rot.multiple}x {rot.underlying}, SMA {rot.sma}, band {rot.band}, refuge {rot.refuge}",
+        walk,
+        boot,
+        sens,
+        base,
+        verdict(walk, Sensitivity(base.sharpe, table)),
+    )
 
 
 def goal_summary(table: pd.DataFrame) -> str:
@@ -523,6 +649,7 @@ class Validation:
     leverage: pd.DataFrame
     experiments: pd.DataFrame  # each improvement turned off in turn
     goal: pd.DataFrame  # section 7: leverage x drawdown scaling against the 30% goal
+    rotation: RotationReport | None  # section 8: the leverage rotation, full protocol
     full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
@@ -537,6 +664,7 @@ def validate_strategy(
     parameters: Sequence[tuple[str, str]] = SENSITIVITY_PARAMETERS,
     levels: Sequence[float] = FIXED_LEVERAGES,
     goal_leverages: Sequence[float | None] = GOAL_LEVERAGES,
+    rotation: bool = True,
 ) -> Validation:
     """The whole SPEC 9 protocol on one data set (`parameters` and `levels` are
     only narrowed by tests)."""
@@ -552,9 +680,14 @@ def validate_strategy(
     rule = compare_variants(
         data, settings, improvement_variants(config) | experiment_variants(config, data)
     )
-    goal = goal_search(data, config, settings, goal_leverages)
+    goal = goal_search(data, config, settings, goal_leverages, rotations=rotation)
+    rotation_part = (
+        rotation_report(data, config, settings, bootstrap_samples=bootstrap_samples)
+        if rotation
+        else None
+    )
     return Validation(
-        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, goal, full,
+        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, goal, rotation_part, full,
         verdict(walk, sens),
         (settings.start, settings.end),
     )  # fmt: skip
@@ -571,6 +704,38 @@ def _table(frame: pd.DataFrame) -> list[str]:
     rule = "| " + " | ".join("---" for _ in frame.columns) + " |"
     body = ["| " + " | ".join(_fmt(v) for v in row) + " |" for row in frame.itertuples(index=False)]
     return [head, rule, *body]
+
+
+def _rotation_markdown(r: RotationReport | None) -> list[str]:
+    if r is None:
+        return ["", "## 8. Leverage rotation", "", "Not run: no bars for the underlying."]
+    w, verdict_ = r.walk_forward, r.verdict
+    spy = w.spy
+    return [
+        "",
+        f"## 8. Leverage rotation ({r.config_label}): full protocol",
+        "",
+        f"- Out-of-sample Sharpe: **{_fmt(verdict_.oos_sharpe)}**; SPY over the same days:"
+        f" {_fmt(verdict_.spy_sharpe)} -> {'above' if verdict_.beats_spy else 'NOT above'} SPY",
+        f"- Out-of-sample CAGR {_fmt(w.strategy.cagr)}, max drawdown"
+        f" {_fmt(w.strategy.max_drawdown)}"
+        + (f"; SPY CAGR {_fmt(spy.cagr)}, max drawdown {_fmt(spy.max_drawdown)}" if spy else ""),
+        f"- Full period: CAGR {_fmt(r.full.cagr)}, Sharpe {_fmt(r.full.sharpe)},"
+        f" max drawdown {_fmt(r.full.max_drawdown)}",
+        f"- Below the 1.5 alarm: {'yes' if verdict_.below_alarm else 'NO -- AUDIT REQUIRED'};"
+        f" sensitivity stable: {'yes' if verdict_.stable else 'NO'}",
+        f"- **Phase 3 criterion for the rotation: {'PASS' if verdict_.passes else 'FAIL'}**",
+        "",
+        *_table(w.per_window),
+        "",
+        "Block bootstrap (out of sample): Sharpe "
+        + " / ".join(_fmt(x) for x in r.bootstrap.sharpe)
+        + "; max drawdown "
+        + " / ".join(_fmt(x) for x in r.bootstrap.max_drawdown)
+        + " (2.5% / median / 97.5%)",
+        "",
+        *_table(r.sensitivity),
+    ]
 
 
 def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
@@ -631,6 +796,7 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         f"**{goal_summary(v.goal)}**",
         "",
         *_table(v.goal),
+        *_rotation_markdown(v.rotation),
     ]
     if notes:
         lines += ["", "## Notes", ""] + [f"- **{k}:** {text}" for k, text in notes.items()]
@@ -676,6 +842,21 @@ def to_json(v: Validation) -> dict[str, object]:
         "leverage": records(v.leverage),
         "experiments": records(v.experiments),
         "goal": {"summary": goal_summary(v.goal), "runs": records(v.goal)},
+        "rotation": None
+        if v.rotation is None
+        else {
+            "config": v.rotation.config_label,
+            "verdict": {k: clean(x) for k, x in vars(v.rotation.verdict).items()}
+            | {"passes": v.rotation.verdict.passes},
+            "full_period": {k: clean(x) for k, x in vars(v.rotation.full).items()},
+            "out_of_sample": {
+                k: clean(x) for k, x in vars(v.rotation.walk_forward.strategy).items()
+            },
+            "windows": records(v.rotation.walk_forward.per_window),
+            "bootstrap_sharpe": list(v.rotation.bootstrap.sharpe),
+            "bootstrap_max_drawdown": list(v.rotation.bootstrap.max_drawdown),
+            "sensitivity": records(v.rotation.sensitivity),
+        },
     }
 
 

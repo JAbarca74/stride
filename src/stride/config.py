@@ -167,8 +167,22 @@ class DataConfig(_Section):
         return self
 
 
-Experiment = Literal["extra_universe", "ensemble", "drawdown_scaling"]
+Experiment = Literal["extra_universe", "ensemble", "drawdown_scaling", "leverage_rotation"]
 BreakoutSystem = Annotated[list[Lookback], Field(min_length=2, max_length=2)]
+
+
+class RotationConfig(_Section):
+    """Experiment leverage_rotation (Gayed and Bilello, "Leverage for the Long Run",
+    2016): hold the `multiple`x version of `underlying` while its close is above
+    its `sma`-day average, and `refuge` (an ETF of the universe, or "cash") when
+    it is below. `band` adds hysteresis: switch on above sma x (1 + band), off
+    below sma x (1 - band)."""
+
+    underlying: Ticker
+    sma: Lookback
+    band: Annotated[float, Field(ge=0, lt=0.2)]
+    multiple: Literal[1, 2, 3]
+    refuge: Annotated[str, Field(pattern=r"^([A-Z]{1,6}|cash)$")]
 
 
 class ExperimentsConfig(_Section):
@@ -183,6 +197,7 @@ class ExperimentsConfig(_Section):
     dd_scale_start: Fraction  # drawdown where leverage starts to shrink
     dd_scale_full: Fraction  # drawdown where it reaches the floor
     dd_scale_floor: Fraction  # share of the leverage kept at and beyond dd_scale_full
+    rotation: RotationConfig
 
     @model_validator(mode="after")
     def _systems_exit_shorter(self) -> Self:
@@ -239,6 +254,15 @@ class StrideConfig(_Section):
         for name, members in self.experiments.extra_groups.items():
             if any(m not in known for m in members):
                 raise ValueError(f"experiments.extra_groups.{name}: unknown symbol")
+        rotation = self.experiments.rotation
+        if rotation.underlying not in universe:
+            raise ValueError("experiments.rotation.underlying must be in the universe")
+        if rotation.refuge != "cash" and rotation.refuge not in universe:
+            raise ValueError("experiments.rotation.refuge must be in the universe or cash")
+        if rotation.multiple > 1 and rotation.multiple not in self.leveraged_etfs.get(
+            rotation.underlying, {}
+        ):
+            raise ValueError("experiments.rotation.multiple has no leveraged version")
         return self
 
     @model_validator(mode="after")

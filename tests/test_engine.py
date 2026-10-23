@@ -575,3 +575,74 @@ def test_drawdown_scaling_lowers_the_leverage_in_a_drawdown() -> None:
     assert (shallow["leverage"] == 2.0).all()
     assert not deep.empty
     assert np.allclose(deep["leverage"], 2.0 * CONFIG.experiments.dd_scale_floor)
+
+
+def _rotation(**values: object) -> StrideConfig:
+    e = CONFIG.experiments
+    rotation = e.rotation.model_copy(update=values)
+    experiments = e.model_copy(update={"enabled": ["leverage_rotation"], "rotation": rotation})
+    return CONFIG.model_copy(update={"experiments": experiments})
+
+
+def _trend_then_crash() -> MarketData:
+    days = trading_days(date(2018, 1, 2), date(2020, 12, 31))
+    n = len(days)
+    drift = np.where(np.arange(n) < 450, 0.0012, -0.004)
+    spy = 100 * np.cumprod(1 + drift)
+    r = pd.Series(spy).pct_change().fillna(0.0).to_numpy()
+
+    def bars(close: np.ndarray) -> pd.DataFrame:
+        return pd.DataFrame(
+            {"open": close, "high": close * 1.002, "low": close * 0.998, "close": close},
+            index=days,
+        )
+
+    data = {
+        "SPY": bars(spy),
+        "UPRO": bars(30 * np.cumprod(1 + 3 * r)),
+        "IEF": bars(np.full(n, 100.0)),
+    }
+    rate = pd.Series(0.0, index=pd.date_range("2017-12-01", "2021-01-31"))
+    return MarketData(data, rate, {"SPY": {3: "UPRO"}})
+
+
+def test_rotation_holds_the_leveraged_etf_above_the_average_and_the_refuge_below() -> None:
+    result = run_backtest(
+        _trend_then_crash(),
+        _rotation(),
+        BacktestSettings(date(2018, 1, 2), date(2020, 12, 31), 10_000.0),
+    )
+    signals = result.signals.reset_index()
+    assert set(signals["rule"]) <= {"ROTATE_ON", "ROTATE_OFF", "HOLD"}
+    on = signals[signals["rule"] == "ROTATE_ON"]
+    off = signals[signals["rule"] == "ROTATE_OFF"]
+    assert len(on) >= 1 and len(off) >= 1
+    first_on, first_off = on["date"].min(), off["date"].min()
+    assert first_on < first_off  # in the trend first, out in the crash
+    bought = result.orders[result.orders["side"] == "buy"]
+    assert {"UPRO", "IEF"} <= set(bought["symbol"])
+    assert result.risk_decisions["binding_limit"].isin(["ROTATION", "KILL_SWITCH"]).all()
+    upro_buys = bought[bought["symbol"] == "UPRO"]
+    assert (pd.DatetimeIndex(upro_buys["date"]) >= first_on).all()
+
+
+def test_rotation_with_cash_refuge_and_no_leveraged_etf_falls_back() -> None:
+    data = _trend_then_crash()
+    no_etf = MarketData(data.bars, data.risk_free, {})  # UPRO did not pass the filters
+    result = run_backtest(
+        no_etf,
+        _rotation(refuge="cash"),
+        BacktestSettings(date(2018, 1, 2), date(2020, 12, 31), 10_000.0),
+    )
+    bought = set(result.orders.loc[result.orders["side"] == "buy", "symbol"])
+    assert bought == {"SPY"}  # the underlying itself, and nothing in the refuge
+
+
+def test_rotation_band_delays_the_switches() -> None:
+    settings = BacktestSettings(date(2018, 1, 2), date(2020, 12, 31), 10_000.0)
+    plain = run_backtest(_trend_then_crash(), _rotation(), settings).signals.reset_index()
+    banded = run_backtest(_trend_then_crash(), _rotation(band=0.05), settings).signals.reset_index()
+    assert (
+        banded.loc[banded["rule"] == "ROTATE_ON", "date"].min()
+        >= plain.loc[plain["rule"] == "ROTATE_ON", "date"].min()
+    )

@@ -346,3 +346,19 @@ def test_wider_universe_merges_symbols_and_groups() -> None:
         }
     )
     assert effective_config(enabled).universe == wide.universe
+
+
+@pytest.mark.parametrize(
+    ("values", "match"),
+    [
+        ({"underlying": "QQQ"}, "underlying must be in the universe"),
+        ({"refuge": "BIL"}, "refuge must be in the universe or cash"),
+        ({"underlying": "IEF", "multiple": 2}, "no leveraged version"),
+        ({"refuge": "Cash"}, None),  # wrong spelling: the pattern rejects it
+    ],
+)
+def test_rotation_is_validated(tmp_path: Path, values: dict[str, Any], match: str | None) -> None:
+    data = _reference()
+    data["experiments"]["rotation"].update(values)
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write(tmp_path, data), env={})
