@@ -160,3 +160,39 @@ def test_missing_bar_cancels_and_market_calendar() -> None:
     assert broker.is_market_open(T1)
     assert not broker.is_market_open(date(2026, 11, 26))  # Thanksgiving
     assert broker.today == T1
+
+
+def test_full_sell_closes_the_position_after_a_gap_up() -> None:
+    gap = {"SPY": _bars([(99, 101, 98, 100), (102, 104, 100, 103), (110, 112, 109, 111)])}
+    broker = SimBroker(gap, CONFIG, cash=1_000.0, start=T0)
+    broker.submit_order("SPY", "buy", 500.0)
+    broker.step(T1)
+    value = broker.get_positions()["SPY"].quantity * 103  # the close of T1
+    full = broker.submit_order("SPY", "sell", value)
+    broker.step(T2)  # opens 7% higher: value / price would leave shares behind
+    assert broker.get_order(full).status == "filled"
+    assert "SPY" not in broker.get_positions()
+
+
+def test_partial_sell_is_not_a_full_exit() -> None:
+    broker = _broker()
+    broker.submit_order("SPY", "buy", 1_000.0)
+    broker.step(T1)
+    held = broker.get_positions()["SPY"].quantity
+    broker.submit_order("SPY", "sell", 0.5 * held * 103)
+    broker.step(T2)
+    assert broker.get_positions()["SPY"].quantity == pytest.approx(
+        held - 0.5 * held * 103 / (103 * (1 - 0.0005))
+    )
+
+
+def test_deposits_and_interest_credit_cash() -> None:
+    broker = _broker(cash=100.0)
+    broker.deposit(20.0)
+    broker.credit_interest(0.5)
+    broker.credit_interest(0.0)
+    assert broker.get_account().cash == pytest.approx(120.5)
+    with pytest.raises(ValueError, match="deposit"):
+        broker.deposit(0.0)
+    with pytest.raises(ValueError, match="interest"):
+        broker.credit_interest(-1.0)

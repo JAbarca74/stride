@@ -13,6 +13,7 @@ from stride.data.leveraged import (
     annualized_return,
     calibrate_spread,
     expense_ratio_for,
+    leveraged_bars,
     load_etf_facts,
     passes_filters,
     rate_known_at_t_minus_1,
@@ -237,3 +238,49 @@ def test_fred_rate_is_a_fraction_without_holidays() -> None:
 def test_fred_http_error_is_a_source_error() -> None:
     with pytest.raises(SourceError, match="HTTP 500"):
         FredRateSource(session=TextFake(500, "")).fetch_rate()
+
+
+# Bars for the backtest: real from launch, synthetic before.
+
+
+def _base_bars() -> pd.DataFrame:
+    days = pd.bdate_range("2020-01-01", periods=8)
+    close = pd.Series([100, 101, 99, 102, 104, 103, 105, 106], index=days, dtype=float)
+    open_ = close.shift(1).fillna(100.0) * 1.002
+    return pd.DataFrame({"open": open_, "high": close + 1, "low": close - 1, "close": close})
+
+
+def test_leveraged_bars_splice_synthetic_history_onto_the_real_etf() -> None:
+    base = _base_bars()
+    real = pd.DataFrame(
+        {"open": [40.0, 41.0], "high": [42.0, 42.5], "low": [39.5, 40.5], "close": [41.0, 42.0],
+         "volume": [10, 20]},
+        index=base.index[5:7],
+    )  # fmt: skip
+    rate = pd.Series(0.0, index=base.index)
+    bars = leveraged_bars(base, real, 2, rate=rate, spread=0.0, annual_fee=0.0)
+    assert list(bars.index) == list(base.index[:7])
+    assert list(bars["source"]) == ["synthetic"] * 5 + ["real"] * 2
+    assert bars.loc[real.index[0], "close"] == 41.0  # no jump at the splice
+    syn = bars["close"].iloc[:6].pct_change().iloc[1:]
+    assert syn.to_numpy() == pytest.approx(2 * base["close"].iloc[:6].pct_change().iloc[1:])
+    day = base.index[2]
+    overnight = base.loc[day, "open"] / base["close"].iloc[1] - 1
+    assert bars.loc[day, "open"] == pytest.approx(bars["close"].iloc[1] * (1 + 2 * overnight))
+    synthetic = bars.iloc[:5]
+    assert (synthetic["low"] <= synthetic[["open", "close"]].min(axis=1)).all()
+    assert (synthetic["high"] >= synthetic[["open", "close"]].max(axis=1)).all()
+
+
+def test_leveraged_bars_without_overlap_keep_only_the_real_bars() -> None:
+    base = _base_bars()
+    real = pd.DataFrame(
+        {"open": [40.0], "high": [42.0], "low": [39.5], "close": [41.0]},
+        index=[pd.Timestamp("2021-06-01")],
+    )
+    bars = leveraged_bars(base, real, 2, rate=pd.Series(0.0, index=base.index), spread=0.0,
+                          annual_fee=0.0)  # fmt: skip
+    assert list(bars["source"]) == ["real"]
+    with pytest.raises(ValueError, match="anchor"):
+        leveraged_bars(base, real.iloc[:0], 2, rate=pd.Series(dtype=float), spread=0.0,
+                       annual_fee=0.0)  # fmt: skip

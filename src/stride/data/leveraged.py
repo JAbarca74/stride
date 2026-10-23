@@ -183,3 +183,52 @@ def calibrate_spread(
         best = (low + high) / 2
     syn = synthetic_returns(overlap, multiple, rf, best, annual_fee)
     return Calibration(best, tracking_diff_per_year(syn, real))
+
+
+def leveraged_bars(
+    underlying: pd.DataFrame,
+    real: pd.DataFrame,
+    multiple: int,
+    *,
+    rate: pd.Series,
+    spread: float,
+    annual_fee: float,
+) -> pd.DataFrame:
+    """Daily bars of a leveraged ETF for the backtest: the real bars from its first
+    day, and before that a synthetic history built from the underlying.
+
+    The synthetic close follows `synthetic_returns`, scaled to the real close on
+    the ETF's first day (no jump at the splice). The synthetic open applies m times
+    the underlying's overnight move to the previous synthetic close; high and low
+    are the larger and smaller of open and close (the intraday range of a daily
+    reset ETF is not modeled, so limit orders on synthetic days only fill at the
+    open or the close). `rate` is aligned to t-1 and indexed like `underlying`.
+    """
+    if real.empty:
+        raise ValueError("the real ETF has no bars to anchor the synthetic history")
+    base = underlying.sort_index()
+    real = real.sort_index()
+    first_real = pd.Timestamp(real.index[0])
+    history = base[base.index <= first_real]
+    real_part = real[["open", "high", "low", "close"]].assign(
+        volume=real.get("volume", 0), source="real"
+    )
+    if len(history) < 2 or history.index[-1] != first_real:  # noqa: PLR2004
+        return real_part
+    returns = synthetic_returns(history["close"], multiple, rate, spread, annual_fee)
+    close = synthetic_prices(returns, history.index[0], first_real, float(real["close"].iloc[0]))
+    overnight = history["open"] / history["close"].shift(1) - 1
+    open_ = (close.shift(1) * (1 + multiple * overnight)).fillna(close)
+    synthetic = pd.DataFrame(
+        {
+            "open": open_,
+            "high": pd.concat([open_, close], axis=1).max(axis=1),
+            "low": pd.concat([open_, close], axis=1).min(axis=1),
+            "close": close,
+            "volume": 0,
+            "source": "synthetic",
+        }
+    ).iloc[:-1]  # the first real day comes from the real bars
+    combined = pd.concat([synthetic, real_part])
+    combined.index.name = "date"
+    return combined

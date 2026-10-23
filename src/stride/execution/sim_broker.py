@@ -9,6 +9,11 @@ rejected and sells are capped at the shares held.
 Limit orders: a buy fills at the open if the open is at or below the limit,
 otherwise at the limit if the day's low reaches it; sells mirror this with the
 high. Spread is applied to the fill price in both cases.
+
+A sell whose notional covers the whole position at the close of the day it is
+sent (within `FULL_SELL_TOLERANCE_USD`) is a full exit: it sells every share at
+the fill, so a gap up at the open leaves no remainder. Deposits and interest
+on idle cash are credited by the backtest engine (`deposit`, `credit_interest`).
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from stride.execution.broker import (
 )
 
 _DUST = 1e-12  # a remaining quantity this small counts as a closed position
+FULL_SELL_TOLERANCE_USD = 0.01  # the guard's rounding tolerance for sells
 
 
 class SimBroker(Broker):
@@ -49,6 +55,7 @@ class SimBroker(Broker):
         self._today = start
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, OrderState] = {}
+        self._full_sells: set[str] = set()  # order ids that close the whole position
 
     # Broker interface.
 
@@ -80,6 +87,11 @@ class SimBroker(Broker):
         self._orders[order_id] = OrderState(
             order_id, symbol, side, float(notional), type, limit_price, self._today, "pending"
         )
+        held = self._positions.get(symbol)
+        if side == "sell" and held is not None:
+            value = held.quantity * self._close(symbol, self._today)
+            if notional >= value - FULL_SELL_TOLERANCE_USD:
+                self._full_sells.add(order_id)
         return order_id
 
     def get_order(self, order_id: str) -> OrderState:
@@ -93,6 +105,20 @@ class SimBroker(Broker):
 
     def is_market_open(self, day: date) -> bool:
         return is_trading_day(day)
+
+    # Cash flows (backtest only).
+
+    def deposit(self, amount: float) -> None:
+        """An external deposit credited to cash (SPEC 9: $20 each month)."""
+        if not amount > 0:
+            raise ValueError("a deposit must be positive")
+        self._cash += float(amount)
+
+    def credit_interest(self, amount: float) -> None:
+        """Interest earned by idle cash (`costs.cash_interest`); never negative."""
+        if amount < 0:
+            raise ValueError("interest on cash cannot be negative")
+        self._cash += float(amount)
 
     # Simulation clock.
 
@@ -154,6 +180,8 @@ class SimBroker(Broker):
         held = self._positions.get(order.symbol)
         if order.side == "sell":
             quantity = min(order.notional / price, held.quantity if held else 0.0)
+            if order.order_id in self._full_sells and held is not None:
+                quantity = held.quantity
             if quantity <= 0:
                 return replace(order, status="rejected", reason="no position to sell (long only)")
         else:
