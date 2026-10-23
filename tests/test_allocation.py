@@ -65,8 +65,9 @@ def test_relative_strength_holds_the_top_assets_above_t_bills() -> None:
     }
     weights = relative_strength(closes, 0.0, top=3, **kw)
     assert weights == pytest.approx({"A": 1 / 3, "B": 1 / 3, "C": 1 / 3})
-    # With a 15% T-bill rate only A beats it: two slots go to the refuge.
-    weights = relative_strength(closes, 0.15, top=3, **kw)
+    # With a 25% T-bill rate (22.9% over the 231 days) only A (27.2%) beats it:
+    # two slots go to the refuge.
+    weights = relative_strength(closes, 0.25, top=3, **kw)
     assert weights == pytest.approx({"A": 1 / 3, "IEF": 2 / 3})
     assert sum(weights.values()) == pytest.approx(1.0)
 
