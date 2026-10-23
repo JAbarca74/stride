@@ -105,3 +105,25 @@ ETHU:
   as_of: 2026-10-21
   source:
     - https://www.volatilityshares.com/ethu
+
+QLD:
+  underlying: QQQ
+  multiple: 2
+  expense_ratio: 0.0089        # 0.96% before a 0.07% fee waiver
+  aum_usd: 13672685776
+  median_spread_30d: 0.0001      # issuer page, 30 days to 2026-10-22
+  as_of: 2026-10-22
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001007/f46054d1.htm
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/qld
+
+TQQQ:
+  underlying: QQQ
+  multiple: 3
+  expense_ratio: 0.0078        # 0.94% before a 0.16% fee waiver
+  aum_usd: 33819253534
+  median_spread_30d: 0.0001      # issuer page, 30 days to 2026-10-22
+  as_of: 2026-10-22
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001035/f46111d1.htm
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/tqqq

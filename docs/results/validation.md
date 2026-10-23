@@ -196,15 +196,18 @@ Block bootstrap (out of sample): Sharpe -0.328 / 0.208 / 0.759; max drawdown 0.2
 | 2025 | 1.5x | off | 1.112 | 0.313 | 0.119 | traded |
 | 2026 | 3x | off | 1.092 | 0.242 | 0.092 | traded |
 
-## 10. Pre-registered strategy search (docs/design/strategy_search.md)
+## 10. Pre-registered strategy search (docs/design/strategy_search.md and strategy_search_round2.md)
 
 Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95, max drawdown <= 40%.
 
 | strategy | oos_sharpe | spy_sharpe | oos_cagr | spy_cagr | oos_max_drawdown | deflated_sharpe | passes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| dual_momentum | 0.435 | 0.827 | 0.072 | 0.150 | 0.375 | 0.105 | FAIL |
-| relative_strength | 0.431 | 0.827 | 0.096 | 0.150 | 0.656 | 0.085 | FAIL |
-| vol_managed | 0.625 | 0.827 | 0.135 | 0.150 | 0.383 | 0.254 | FAIL |
+| dual_momentum | 0.435 | 0.827 | 0.072 | 0.150 | 0.375 | 0.127 | FAIL |
+| relative_strength | 0.431 | 0.827 | 0.096 | 0.150 | 0.656 | 0.103 | FAIL |
+| vol_managed | 0.625 | 0.827 | 0.135 | 0.150 | 0.383 | 0.292 | FAIL |
+| sector_momentum | 0.420 | 0.827 | 0.081 | 0.150 | 0.407 | 0.099 | FAIL |
+| momentum_vol | 0.380 | 0.827 | 0.071 | 0.150 | 0.359 | 0.077 | FAIL |
+| risk_parity | 0.557 | 0.827 | 0.099 | 0.150 | 0.288 | 0.236 | FAIL |
 
 ### dual_momentum: leverage chosen in sample
 
@@ -299,7 +302,94 @@ Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95, max dr
 | vol_managed | 2x | off | -0.018 | -0.328 | 0.419 | 4708.554 | False |
 | vol_managed | 2x | on | 0.072 | 0.378 | 0.344 | 12321.812 | False |
 
+### sector_momentum: leverage chosen in sample
+
+| out_of_sample | chosen_leverage | drawdown_scaling | sharpe | cagr | max_drawdown | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2012 | 1x | off | 0.960 | 0.118 | 0.091 | traded |
+| 2013 | 1x | off | 2.534 | 0.349 | 0.057 | traded |
+| 2014 | 1x | off | 0.929 | 0.119 | 0.076 | traded |
+| 2015 | 1x | off | 0.345 | 0.042 | 0.128 | traded |
+| 2016 | 1.5x | off | 0.251 | 0.031 | 0.166 | traded |
+| 2017 | 1.5x | off | 1.481 | 0.197 | 0.056 | traded |
+| 2018 | 1.5x | off | -0.267 | -0.075 | 0.251 | traded |
+| 2019 | 1.5x | off | 1.284 | 0.246 | 0.102 | traded |
+| 2020 | 1.5x | off | -0.813 | -0.295 | 0.407 | stopped |
+| 2021 | 1x | off | 0.627 | 0.107 | 0.104 | traded |
+| 2022 | 1x | off | 0.059 | 0.013 | 0.175 | traded |
+| 2023 | 1x | off | 0.487 | 0.107 | 0.114 | traded |
+| 2024 | 1x | off | 0.604 | 0.140 | 0.109 | traded |
+| 2025 | 1.5x | off | 0.567 | 0.165 | 0.257 | traded |
+| 2026 | 1.5x | off | 0.525 | 0.125 | 0.113 | traded |
+
+### sector_momentum: full period (30% goal)
+
+| strategy | leverage | drawdown_scaling | cagr | sharpe | max_drawdown | final_equity | meets_goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sector_momentum | 1x | off | 0.104 | 0.560 | 0.305 | 17224.632 | False |
+| sector_momentum | 1x | on | 0.053 | 0.319 | 0.276 | 9441.130 | False |
+| sector_momentum | 1.5x | off | 0.115 | 0.542 | 0.392 | 20245.202 | False |
+| sector_momentum | 1.5x | on | 0.045 | 0.260 | 0.343 | 8616.430 | False |
+
+### momentum_vol: leverage chosen in sample
+
+| out_of_sample | chosen_leverage | drawdown_scaling | sharpe | cagr | max_drawdown | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2012 | 1x | off | 0.771 | 0.120 | 0.138 | traded |
+| 2013 | 1x | off | 1.485 | 0.233 | 0.081 | traded |
+| 2014 | 1x | off | 1.359 | 0.311 | 0.152 | traded |
+| 2015 | 1x | off | 0.385 | 0.060 | 0.175 | traded |
+| 2016 | 1x | off | 0.301 | 0.044 | 0.146 | traded |
+| 2017 | 1.5x | on | 1.257 | 0.228 | 0.081 | traded |
+| 2018 | 1x | off | -0.052 | -0.038 | 0.255 | traded |
+| 2019 | 1x | on | -0.281 | 0.000 | 0.086 | traded |
+| 2020 | 1x | on | 0.182 | 0.020 | 0.159 | traded |
+| 2021 | 1x | on | -0.131 | -0.020 | 0.089 | traded |
+| 2022 | 1x | on | -1.731 | -0.068 | 0.079 | traded |
+| 2023 | 1x | on | -0.065 | 0.049 | 0.030 | traded |
+| 2024 | 1x | on | 0.181 | 0.068 | 0.117 | traded |
+| 2025 | 1x | off | 0.400 | 0.118 | 0.251 | traded |
+| 2026 | 1.5x | on | -0.063 | -0.003 | 0.166 | traded |
+
+### momentum_vol: full period (30% goal)
+
+| strategy | leverage | drawdown_scaling | cagr | sharpe | max_drawdown | final_equity | meets_goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| momentum_vol | 1x | off | 0.086 | 0.446 | 0.302 | 12674.879 | False |
+| momentum_vol | 1x | on | 0.051 | 0.306 | 0.234 | 7938.188 | False |
+| momentum_vol | 1.5x | off | 0.111 | 0.463 | 0.395 | 16844.401 | False |
+| momentum_vol | 1.5x | on | 0.050 | 0.280 | 0.294 | 7534.875 | False |
+
+### risk_parity: leverage chosen in sample
+
+| out_of_sample | chosen_leverage | drawdown_scaling | sharpe | cagr | max_drawdown | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2012 | 1.5x | on | 0.939 | 0.111 | 0.071 | traded |
+| 2013 | 1.5x | off | -0.331 | -0.059 | 0.154 | traded |
+| 2014 | 1.5x | on | 2.019 | 0.213 | 0.056 | traded |
+| 2015 | 1.5x | off | -0.214 | -0.067 | 0.192 | traded |
+| 2016 | 1.5x | off | 1.222 | 0.219 | 0.165 | traded |
+| 2017 | 1.5x | off | 3.347 | 0.509 | 0.068 | traded |
+| 2018 | 1.5x | off | -0.491 | -0.095 | 0.232 | traded |
+| 2019 | 1.5x | off | 2.591 | 0.513 | 0.066 | traded |
+| 2020 | 1.5x | on | 0.215 | 0.027 | 0.288 | traded |
+| 2021 | 1.5x | on | 0.874 | 0.150 | 0.144 | traded |
+| 2022 | 1.5x | on | -2.326 | -0.252 | 0.267 | traded |
+| 2023 | 1.5x | on | 0.452 | 0.077 | 0.069 | traded |
+| 2024 | 1x | on | 0.396 | 0.088 | 0.064 | traded |
+| 2025 | 1x | on | 1.087 | 0.241 | 0.136 | traded |
+| 2026 | 1.5x | off | 0.252 | 0.071 | 0.193 | traded |
+
+### risk_parity: full period (30% goal)
+
+| strategy | leverage | drawdown_scaling | cagr | sharpe | max_drawdown | final_equity | meets_goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| risk_parity | 1x | off | 0.107 | 0.718 | 0.298 | 16442.523 | False |
+| risk_parity | 1x | on | 0.085 | 0.647 | 0.264 | 11936.926 | False |
+| risk_parity | 1.5x | off | 0.083 | 0.487 | 0.410 | 10267.267 | False |
+| risk_parity | 1.5x | on | 0.095 | 0.624 | 0.326 | 13235.383 | False |
+
 ## Notes
 
-- **Leveraged ETFs:** SSO spread 0.68%, tracking 0.00%/yr, UPRO spread 0.62%, tracking 0.00%/yr, TMF spread 0.72%, tracking 0.00%/yr, UGL spread 1.56%, tracking 0.00%/yr, AGQ spread 4.27%, tracking 0.00%/yr, BITX spread 10.00%, tracking 4.62%/yr, ETHU spread 10.00%, tracking 0.48%/yr
+- **Leveraged ETFs:** SSO spread 0.68%, tracking 0.00%/yr, UPRO spread 0.62%, tracking 0.00%/yr, TMF spread 0.72%, tracking 0.00%/yr, UGL spread 1.56%, tracking 0.00%/yr, AGQ spread 4.27%, tracking 0.00%/yr, BITX spread 10.00%, tracking 4.62%/yr, ETHU spread 10.00%, tracking 0.48%/yr, QLD spread 0.66%, tracking 0.00%/yr, TQQQ spread 0.59%, tracking 0.00%/yr
 - **Full-period run:** series   CAGR     vol      Sharpe  Sortino  maxDD    Calmar; STRIDE   9.04%    16.26%   0.52    0.73     34.94%   0.26; SPY      10.91%   19.53%   0.55    0.77     55.20%   0.20; 60/40    8.11%    10.97%   0.62    0.88     32.60%   0.25; final equity $15,348.40, deposited $4,840.00; turnover 26.42x/yr, costs 2.77%/yr, average exposure 1.02x; orders 2750, vetoed 36, rejected by the broker 4; instrument switches 50, cost $87.22; turnover by kind: signal 16.36x/yr, resize 9.39x/yr, switch 0.68x/yr, kill switch 0.00x/yr; kill switch: never fired
