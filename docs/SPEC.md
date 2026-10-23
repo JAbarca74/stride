@@ -438,6 +438,7 @@ Note on commissions: with small orders, IBKR's 1%-of-trade-value cap is the bind
 3. **Block bootstrap:** 5,000 resamples of daily returns in 20-day blocks for confidence intervals on Sharpe and max drawdown.
 4. **Anti-look-ahead test:** see section 5.
 5. **Leverage comparison:** run with fixed L at 1x, 2x, 3x and 4x, and with the dynamic L of section 7.
+6. **Improvements and experiments (owner request, 2026-10-23):** the configured run against the same run with each improvement removed (cost-aware resizing, Tiered pricing, realistic cash interest) and with each strategy experiment switched on (`experiments` in `config.yaml`: a wider universe of 7 more ETFs with their own correlated groups, and a multi-horizon ensemble of breakout systems 20/10, 55/20 and 100/40 whose rounded mean sets the units). An experiment enters `experiments.enabled` only after it wins out of sample; this changes the strategy and needs a SPEC version.
 
 **Always-reported metrics**
 

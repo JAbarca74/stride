@@ -231,3 +231,15 @@ def test_improvement_variants_turn_off_one_improvement_each() -> None:
     for name, cfg in variants.items():  # every other value is untouched
         if name != "Fixed pricing instead of Tiered":
             assert cfg.costs.pricing == CONFIG.costs.pricing
+
+
+def test_experiment_variants_need_data_for_the_wider_universe() -> None:
+    variants = v.experiment_variants(CONFIG, _market())  # no bars for the extra ETFs
+    assert list(variants) == ["with the multi-horizon ensemble (20/10, 55/20, 100/40)"]
+    assert variants[next(iter(variants))].experiments.enabled == ["ensemble"]
+    bars = dict(_market().bars)
+    for symbol in CONFIG.experiments.extra_universe:
+        bars[symbol] = bars["DBC"]
+    wide = v.experiment_variants(CONFIG, MarketData(bars, RATE))
+    name = "with the wider universe (7 more ETFs)"
+    assert name in wide and len(wide[name].universe) == 17

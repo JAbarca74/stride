@@ -24,6 +24,7 @@ from stride.backtest.engine import (
     MarketData,
     PlannedOrder,
     _switch_summary,
+    combine_systems,
     eligible_instruments,
     fit_buys,
     plan_orders,
@@ -31,9 +32,10 @@ from stride.backtest.engine import (
     skip_costly_resizes,
     split_orders,
 )
-from stride.config import load_config
+from stride.config import StrideConfig, load_config
 from stride.data.calendar import trading_days
 from stride.risk import guard
+from stride.strategy.rules import Decision, PositionState
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = load_config(ROOT / "config.yaml", env={})
@@ -504,3 +506,47 @@ def test_small_account_skips_resizes_and_the_rule_can_be_turned_off() -> None:
     off = run_backtest(data, CONFIG.model_copy(update={"execution": execution}), small)
     assert (off.events["type"] == "RESIZE_SKIPPED").sum() == 0
     assert len(on.fills) < len(off.fills)  # fewer fills, fewer commissions
+
+
+def _ensemble_config() -> StrideConfig:
+    experiments = CONFIG.experiments.model_copy(update={"enabled": ["ensemble"]})
+    return CONFIG.model_copy(update={"experiments": experiments})
+
+
+def test_combine_systems_needs_most_systems_to_agree() -> None:
+    flat = PositionState()
+    one = [Decision("ENTRY_HH55", 1, 10.0), Decision("HOLD", 0, None), Decision("HOLD", 0, None)]
+    assert combine_systems(one, flat, 10.0).target_units == 0  # 1 of 3: no entry
+    two = [
+        Decision("ENTRY_HH55", 1, 10.0),
+        Decision("ENTRY_HH55", 1, 10.0),
+        Decision("HOLD", 0, None),
+    ]
+    entry = combine_systems(two, flat, 10.0)
+    assert (entry.rule, entry.target_units, entry.last_entry) == ("ENTRY_HH55", 1, 10.0)
+    held = PositionState(2, 9.0)
+    exits = [Decision("EXIT_LL20", 0, None), Decision("STOP_2N", 0, None), Decision("HOLD", 2, 9.0)]
+    out = combine_systems(exits, held, 8.0)
+    assert (out.rule, out.target_units, out.last_entry) == ("EXIT_LL20", 1, 9.0)
+    same = combine_systems([Decision("HOLD", 2, 9.0)] * 3, held, 9.5)
+    assert (same.rule, same.target_units) == ("HOLD", 2)
+
+
+def test_ensemble_runs_and_differs_from_the_single_system() -> None:
+    single = run_backtest(_market(seed=5), CONFIG, _settings())
+    ensemble = run_backtest(_market(seed=5), _ensemble_config(), _settings())
+    assert len(ensemble.signals) == len(single.signals)
+    assert not ensemble.signals["target_units"].equals(single.signals["target_units"])
+    rules = set(ensemble.signals["rule"])
+    assert rules <= {"TREND_FILTER", "STOP_2N", "EXIT_LL20", "ENTRY_HH55", "PYRAMID", "HOLD"}
+
+
+@pytest.mark.parametrize("factor", [0.3, 4.0])
+def test_ensemble_reads_no_future_price(factor: float) -> None:
+    data = _market(seed=3)
+    cut = trading_days(date(2019, 1, 2), date(2020, 12, 31))[300]
+    real = run_backtest(data, _ensemble_config(), _settings())
+    fake = run_backtest(_tamper(data, cut, factor), _ensemble_config(), _settings())
+    for name in ("equity", "signals", "orders"):
+        before, after = _upto(getattr(real, name), cut), _upto(getattr(fake, name), cut)
+        pd.testing.assert_frame_equal(before, after, check_exact=True, obj=name)

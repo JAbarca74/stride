@@ -84,6 +84,7 @@ def test_plan_covers_universe_leveraged_etfs_and_crypto_spot() -> None:
     symbols = {item.symbol for item in plan}
     assert set(CONFIG.universe) <= symbols
     assert {"SSO", "UPRO", "UBT", "TMF", "UGL", "AGQ", "BITX", "ETHU"} <= symbols
+    assert set(CONFIG.experiments.extra_universe) <= symbols  # data for the experiment
     spot = {item.symbol: item for item in plan if item.source == "coinbase"}
     assert set(spot) == {"BTC-USD", "ETH-USD"}
     assert spot["BTC-USD"].start == CONFIG.data.crypto_history_start

@@ -93,3 +93,12 @@ data:
     max_daily_change: 0.25         # unflagged close-to-close move (validation 2)
     source_close_tolerance: 0.005  # historical sample, alert only (validation 4)
     latest_bar_max_diff: 0.02      # latest bar; blocks that symbol for the day (validation 4)
+
+experiments:                       # owner request 2026-10-23; measured in validation section 6
+  enabled: []                      # an experiment enters only after it wins out of sample (SPEC 9)
+  extra_universe: [EEM, VNQ, BWX, USO, CPER, DBA, FXY]
+  extra_groups:                    # correlated families share a unit cap
+    equities: [EEM, VNQ]
+    bonds: [BWX]
+    commodities: [DBC, USO, CPER, DBA]
+  breakout_systems: [[20, 10], [55, 20], [100, 40]]   # Turtle S1, S2 and a slower one

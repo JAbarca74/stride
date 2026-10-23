@@ -167,6 +167,30 @@ class DataConfig(_Section):
         return self
 
 
+Experiment = Literal["extra_universe", "ensemble"]
+BreakoutSystem = Annotated[list[Lookback], Field(min_length=2, max_length=2)]
+
+
+class ExperimentsConfig(_Section):
+    """Strategy experiments (owner request, 2026-10-23). The validation measures
+    each one with and without it; `enabled` lists those the configured run uses.
+    They enter `enabled` only after they win out of sample (SPEC 9)."""
+
+    enabled: list[Experiment]
+    extra_universe: list[Ticker]
+    extra_groups: dict[str, list[Ticker]]
+    breakout_systems: list[BreakoutSystem]  # [entry, exit] windows in trading days
+
+    @model_validator(mode="after")
+    def _systems_exit_shorter(self) -> Self:
+        for entry, exit_ in self.breakout_systems:
+            if exit_ >= entry:
+                raise ValueError("each breakout system needs exit shorter than entry")
+        if "ensemble" in self.enabled and len(self.breakout_systems) < 2:  # noqa: PLR2004
+            raise ValueError("the ensemble needs at least two breakout systems")
+        return self
+
+
 class StrideConfig(_Section):
     mode: Literal["backtest", "paper", "live"]
     universe: Annotated[list[Ticker], Field(min_length=1)]
@@ -180,6 +204,7 @@ class StrideConfig(_Section):
     cash_flows: CashFlowsConfig
     costs: CostsConfig
     data: DataConfig
+    experiments: ExperimentsConfig
 
     @model_validator(mode="after")
     def _consistent_symbols(self) -> Self:
@@ -197,6 +222,18 @@ class StrideConfig(_Section):
         for symbol in self.leveraged_etfs:
             if symbol not in universe:
                 raise ValueError(f"leveraged_etfs: {symbol} is not in the universe")
+        return self
+
+    @model_validator(mode="after")
+    def _consistent_experiments(self) -> Self:
+        universe = set(self.universe)
+        extras = self.experiments.extra_universe
+        if len(set(extras)) != len(extras) or universe & set(extras):
+            raise ValueError("experiments.extra_universe must be new, unique symbols")
+        known = universe | set(extras)
+        for name, members in self.experiments.extra_groups.items():
+            if any(m not in known for m in members):
+                raise ValueError(f"experiments.extra_groups.{name}: unknown symbol")
         return self
 
     @model_validator(mode="after")
@@ -234,4 +271,31 @@ def load_config(path: str | Path, env: Mapping[str, str] | None = None) -> Strid
             "mode: live requested without a valid %s; starting in paper mode", LIVE_CONFIRM_ENV
         )
         config = config.model_copy(update={"mode": "paper"})
+    return config
+
+
+def with_extra_universe(config: StrideConfig) -> StrideConfig:
+    """`config` with `experiments.extra_universe` added to the universe and
+    `experiments.extra_groups` merged into the groups (a symbol moves to the
+    group the experiment gives it). Built in memory and re-validated."""
+    extra = config.experiments
+    moved = {s for members in extra.extra_groups.values() for s in members}
+    groups = {
+        name: [s for s in members if s not in moved] for name, members in config.groups.items()
+    }
+    for name, members in extra.extra_groups.items():
+        groups[name] = [*groups.get(name, []), *members]
+    data = config.model_dump()
+    data["universe"] = [*config.universe, *extra.extra_universe]
+    data["groups"] = {name: members for name, members in groups.items() if members}
+    data["experiments"]["extra_universe"] = []
+    data["experiments"]["extra_groups"] = {}
+    return StrideConfig.model_validate(data)
+
+
+def effective_config(config: StrideConfig) -> StrideConfig:
+    """The configuration a run uses: `config` plus the enabled experiments that
+    change the universe (the ensemble is read by the engine itself)."""
+    if "extra_universe" in config.experiments.enabled:
+        return with_extra_universe(config)
     return config

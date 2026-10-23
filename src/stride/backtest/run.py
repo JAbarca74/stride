@@ -34,7 +34,7 @@ from stride.backtest.engine import (
     eligible_instruments,
     run_backtest,
 )
-from stride.config import StrideConfig, load_config
+from stride.config import StrideConfig, effective_config, load_config
 from stride.data.leveraged import (
     EtfFacts,
     calibrate_spread,
@@ -244,7 +244,7 @@ def main(
     args = parser.parse_args(argv)
 
     config_path = Path(args.config).resolve()
-    config = load_config(config_path)
+    config = effective_config(load_config(config_path))
     root = config_path.parent
     prices_db = (root / config.data.db_path).resolve()
     out_db = (root / args.out).resolve()

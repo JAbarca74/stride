@@ -56,7 +56,7 @@ from stride.data.calendar import trading_days
 from stride.data.leveraged import rate_known_at_t_minus_1
 from stride.execution.broker import OrderState, OrderType, Side
 from stride.execution.sim_broker import SimBroker
-from stride.indicators import compute_indicators
+from stride.indicators import compute_indicators, highest_high_before, lowest_low_before
 from stride.risk import guard
 from stride.risk.kill_switch import TwrState, advance, kill_switch_decision
 from stride.risk.leverage import (
@@ -270,6 +270,8 @@ class _Asset:
 
     rows: dict[pd.Timestamp, Row]
     dates: pd.DatetimeIndex
+    # Ensemble experiment: (HH, LL) of each breakout system, by date.
+    channels: dict[pd.Timestamp, tuple[tuple[float, float], ...]] = field(default_factory=dict)
 
     def last_row(self, day: pd.Timestamp) -> Row | None:
         """The newest row dated on or before `day` (never a later one)."""
@@ -295,8 +297,39 @@ def _prepare_assets(data: MarketData, config: StrideConfig) -> dict[str, _Asset]
         )
         index = pd.DatetimeIndex(frame.index)
         rows = {day: tuple(map(float, row)) for day, row in zip(index, values, strict=True)}
-        assets[symbol] = _Asset(rows, index)  # type: ignore[arg-type]
+        channels: dict[pd.Timestamp, tuple[tuple[float, float], ...]] = {}
+        if "ensemble" in config.experiments.enabled:
+            per_system = [
+                (
+                    highest_high_before(frame["high"], entry).to_numpy(dtype=float),
+                    lowest_low_before(frame["low"], exit_).to_numpy(dtype=float),
+                )
+                for entry, exit_ in config.experiments.breakout_systems
+            ]
+            channels = {
+                day: tuple((float(hh[i]), float(ll[i])) for hh, ll in per_system)
+                for i, day in enumerate(index)
+            }
+        assets[symbol] = _Asset(rows, index, channels)  # type: ignore[arg-type]
     return assets
+
+
+def combine_systems(
+    decisions: Sequence[Decision], current: PositionState, close: float
+) -> Decision:
+    """Ensemble experiment: the asset's target units are the rounded mean of the
+    breakout systems' targets (half up), so an entry needs most systems to agree.
+    The rule reported is the one of the first system that moved in the same
+    direction (SPEC 6 names); `last_entry` is today's close when units grow."""
+    mean = sum(d.target_units for d in decisions) / len(decisions)
+    target = math.floor(mean + 0.5)
+    if target > current.units:
+        rule = next(d.rule for d in decisions if d.target_units > current.units)
+        return Decision(rule, target, close)
+    if target < current.units:
+        rule = next((d.rule for d in decisions if d.target_units < current.units), HOLD)
+        return Decision(rule, target, current.last_entry if target else None)
+    return Decision(HOLD, target, current.last_entry if target else None)
 
 
 def _returns_matrix(data: MarketData, assets: Sequence[str]) -> pd.DataFrame:
@@ -357,6 +390,9 @@ class Engine:
             tradable, config, settings.initial_cash, self.days[0].date() - timedelta(days=1)
         )
         self.state = {asset: PositionState() for asset in self.assets}
+        self.ensemble = "ensemble" in config.experiments.enabled
+        systems = len(config.experiments.breakout_systems) if self.ensemble else 0
+        self.system_state = {asset: [PositionState()] * systems for asset in self.assets}
         self.lots: list[UnitLot] = []
         self.held: dict[str, HeldInstrument] = {}
         self.chosen: dict[str, str] = {}
@@ -505,11 +541,13 @@ class Engine:
                 continue
             close, sma200, hh55, ll20, n = row
             state = self.state[asset]
-            decisions[asset] = (
-                decide(close, Indicators(sma200, hh55, ll20, n), state, self.config.strategy),
-                state,
-                row,
-            )
+            if self.ensemble:
+                decision = self._ensemble_decision(asset, day, row, state)
+            else:
+                decision = decide(
+                    close, Indicators(sma200, hh55, ll20, n), state, self.config.strategy
+                )
+            decisions[asset] = (decision, state, row)
         lots = [
             lot
             for lot in self.lots
@@ -555,6 +593,20 @@ class Engine:
                 }
             )
         return rules, blocked
+
+    def _ensemble_decision(
+        self, asset: str, day: pd.Timestamp, row: Row, state: PositionState
+    ) -> Decision:
+        """Each breakout system runs its own state machine on the same SMA200 and
+        N; the asset follows their rounded mean (`combine_systems`)."""
+        close, sma200, _, _, n = row
+        channels = self.assets[asset].channels[day]
+        per_system = [
+            decide(close, Indicators(sma200, hh, ll, n), sys_state, self.config.strategy)
+            for (hh, ll), sys_state in zip(channels, self.system_state[asset], strict=True)
+        ]
+        self.system_state[asset] = [PositionState(d.target_units, d.last_entry) for d in per_system]
+        return combine_systems(per_system, state, close)
 
     def _targets(self, day: pd.Timestamp, equity: float, blocked: set[str]) -> dict[str, float]:
         """Unlevered dollar targets from the units (SPEC 6), with the last known
@@ -869,6 +921,7 @@ __all__ = [
     "BacktestSettings",
     "MarketData",
     "PlannedOrder",
+    "combine_systems",
     "eligible_instruments",
     "fit_buys",
     "plan_orders",

@@ -8,7 +8,13 @@ import pydantic
 import pytest
 import yaml
 
-from stride.config import ConfigError, StrideConfig, load_config
+from stride.config import (
+    ConfigError,
+    StrideConfig,
+    effective_config,
+    load_config,
+    with_extra_universe,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "config.yaml"
@@ -298,3 +304,44 @@ def test_invalid_leverage_switch_is_rejected(
     data["leverage_switch"][key] = value
     with pytest.raises(ConfigError, match=message):
         load_config(_write(tmp_path, data), env={})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "match"),
+    [
+        ("breakout_systems", [[20, 30]], "exit shorter"),
+        ("extra_universe", ["SPY"], "new, unique"),
+        ("extra_groups", {"x": ["ZZZ"]}, "unknown symbol"),
+        ("enabled", ["ensemble"], None),  # fine with the three systems
+    ],
+)
+def test_experiments_are_validated(tmp_path: Path, key: str, value: Any, match: str | None) -> None:
+    path = _write(tmp_path, _with("experiments", key, value))
+    if match is None:
+        load_config(path, env={})
+        return
+    with pytest.raises(ConfigError, match=match):
+        load_config(path, env={})
+
+
+def test_ensemble_needs_two_systems(tmp_path: Path) -> None:
+    data = _with("experiments", "enabled", ["ensemble"])
+    data["experiments"]["breakout_systems"] = [[55, 20]]
+    with pytest.raises(ConfigError, match="at least two"):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_wider_universe_merges_symbols_and_groups() -> None:
+    config = load_config(REFERENCE, env={})
+    assert config.experiments.enabled == []  # off until it wins out of sample
+    assert effective_config(config) == config
+    wide = with_extra_universe(config)
+    assert wide.universe[:10] == config.universe and len(wide.universe) == 17
+    assert wide.groups["commodities"] == ["DBC", "USO", "CPER", "DBA"]
+    assert "EEM" in wide.groups["equities"] and "BWX" in wide.groups["bonds"]
+    enabled = config.model_copy(
+        update={
+            "experiments": config.experiments.model_copy(update={"enabled": ["extra_universe"]})
+        }
+    )
+    assert effective_config(enabled).universe == wide.universe

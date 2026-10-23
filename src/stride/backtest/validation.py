@@ -38,7 +38,7 @@ from pydantic import ValidationError
 
 from stride.backtest import metrics, run
 from stride.backtest.engine import BacktestResult, BacktestSettings, MarketData, run_backtest
-from stride.config import StrideConfig, load_config
+from stride.config import StrideConfig, effective_config, load_config, with_extra_universe
 from stride.data.leveraged import load_etf_facts, rate_known_at_t_minus_1
 from stride.data.sources import FredRateSource
 from stride.data.store import connect, last_price_date
@@ -339,6 +339,32 @@ def with_values(config: StrideConfig, section: str, **values: object) -> StrideC
     return config.model_copy(update={section: block})
 
 
+def _toggle(config: StrideConfig, experiment: str) -> StrideConfig:
+    """`config` with one experiment switched on or off (the universe re-derived)."""
+    enabled = set(config.experiments.enabled) ^ {experiment}
+    base = with_values(config, "experiments", enabled=sorted(enabled))
+    if experiment == "extra_universe" and "extra_universe" not in enabled:
+        return base  # already a re-derived universe: switching off is not supported here
+    return effective_config(base)
+
+
+def experiment_variants(config: StrideConfig, data: MarketData) -> dict[str, StrideConfig]:
+    """Each strategy experiment switched to the opposite of the configured run.
+    The wider universe runs only when every extra symbol has bars."""
+    out = {}
+    extras = config.experiments.extra_universe
+    if extras and all(s in data.bars for s in extras):
+        state = "with" if "extra_universe" not in config.experiments.enabled else "without"
+        out[f"{state} the wider universe ({len(extras)} more ETFs)"] = _toggle(
+            config, "extra_universe"
+        )
+    if len(config.experiments.breakout_systems) > 1:
+        state = "with" if "ensemble" not in config.experiments.enabled else "without"
+        systems = ", ".join(f"{e}/{x}" for e, x in config.experiments.breakout_systems)
+        out[f"{state} the multi-horizon ensemble ({systems})"] = _toggle(config, "ensemble")
+    return out
+
+
 def improvement_variants(config: StrideConfig) -> dict[str, StrideConfig]:
     """The configured run, and the same run with one improvement removed each time."""
     return {
@@ -455,7 +481,9 @@ def validate_strategy(
         return block_bootstrap(returns, rf, samples=bootstrap_samples)
 
     lev = leverage_comparison(data, config, settings, levels)
-    rule = compare_variants(data, settings, improvement_variants(config))
+    rule = compare_variants(
+        data, settings, improvement_variants(config) | experiment_variants(config, data)
+    )
     return Validation(
         walk, sens, boot(walk.returns), boot(full.returns), lev, rule, full, verdict(walk, sens),
         (settings.start, settings.end),
@@ -617,7 +645,7 @@ def main(
 
     config_path = Path(args.config).resolve()
     root = config_path.parent
-    config = load_config(config_path)
+    config = effective_config(load_config(config_path))
     prices_db = (root / config.data.db_path).resolve()
     if not prices_db.exists():
         sys.stdout.write(f"error: no price database at {prices_db}\n")
@@ -626,7 +654,10 @@ def main(
     source = connect(prices_db)
     try:
         last = last_price_date(source, "SPY")
-        data, calibrated = run.load_market(source, config, rate, load_etf_facts())
+        # Bars for the extra universe too, so its experiment can run on the same data.
+        data, calibrated = run.load_market(
+            source, with_extra_universe(config), rate, load_etf_facts()
+        )
         prices = {s: series_for(source, s) for s in config.universe}
     finally:
         source.close()

@@ -76,9 +76,11 @@ class UpdateResult:
 
 
 def download_plan(config: StrideConfig) -> list[PlanItem]:
-    """Every series Phase 1 needs: the universe and the leveraged ETFs from Tiingo,
-    and the crypto spot history from Coinbase."""
-    items = [PlanItem(symbol, "tiingo", config.data.history_start) for symbol in config.universe]
+    """Every series Phase 1 needs: the universe (plus the experiments' extra
+    symbols) and the leveraged ETFs from Tiingo, and the crypto spot history from
+    Coinbase."""
+    symbols = [*config.universe, *config.experiments.extra_universe]  # experiments need data too
+    items = [PlanItem(symbol, "tiingo", config.data.history_start) for symbol in symbols]
     for versions in config.leveraged_etfs.values():
         items += [PlanItem(etf, "tiingo", config.data.history_start) for etf in versions.values()]
     items += [
