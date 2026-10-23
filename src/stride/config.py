@@ -114,6 +114,7 @@ class ExecutionConfig(_Section):
 
 
 class CashFlowsConfig(_Section):
+    initial_deposit_usd: Annotated[float, Field(gt=0)]
     monthly_deposit_usd: NonNegative
     deposit_day: Literal["first_trading_day"]
 

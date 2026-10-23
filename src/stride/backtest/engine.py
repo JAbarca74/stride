@@ -192,6 +192,24 @@ def plan_orders(
     return sorted(sells, key=lambda o: -o.notional) + sorted(buys, key=lambda o: -o.notional)
 
 
+def split_orders(
+    orders: Sequence[PlannedOrder], equity: float, config: StrideConfig
+) -> list[PlannedOrder]:
+    """PROVISIONAL (owner decision on PR #56, question A). Split every order above
+    `max_order_pct_equity` x equity into equal parts that fit, so a large exit (a
+    stop included) or a first unit worth more than 60% of equity is not vetoed
+    forever. Each part still goes through the guard and counts towards the daily
+    order limit; sells come first, so exits get the slots before entries."""
+    cap = config.execution.max_order_pct_equity * equity * (1 - 1e-9)
+    if not cap > 0:
+        return list(orders)
+    out = []
+    for order in orders:
+        parts = max(1, math.ceil(order.notional / cap))
+        out += [replace(order, notional=order.notional / parts)] * parts
+    return out
+
+
 def fit_buys(
     orders: Sequence[PlannedOrder], cash: float, config: StrideConfig
 ) -> list[PlannedOrder]:
@@ -313,6 +331,9 @@ class Engine:
         self.held: dict[str, HeldInstrument] = {}
         self.chosen: dict[str, str] = {}
         self.weights: dict[str, float] = {}  # yesterday's unlevered target weights
+        self.turnover = 0.0  # change in unlevered weights decided yesterday
+        self.traded = 0.0  # dollars filled so far
+        self.costs_paid = 0.0  # spread plus commission paid so far
         self.twr = TwrState()
         self.delever = False
         self.killed = False
@@ -377,7 +398,18 @@ class Engine:
                 else float(self.return_values[position, self.column[asset]])
             )
             gain += weight * (r if math.isfinite(r) else 0.0)
-        self.rec.unlevered[day] = gain + (1 - invested) * rf
+        # Net of costs (owner decision on PR #56, question B): yesterday's change in
+        # unlevered weights pays the cost per dollar traded seen so far in this run.
+        cost = self.turnover * self._cost_rate()
+        self.turnover = 0.0
+        self.rec.unlevered[day] = gain + (1 - invested) * rf - cost
+
+    def _cost_rate(self) -> float:
+        """Spread plus commission per dollar traded so far; before the first fill,
+        the configured spread plus the commission cap (conservative)."""
+        if self.traded > 0:
+            return self.costs_paid / self.traded
+        return self.config.costs.spread_bps / BPS + self.config.costs.commission_max_pct_of_value
 
     def _close_of_day(self, day: pd.Timestamp, equity: float, positions: dict[str, float]) -> None:
         cash = self.broker.get_account().cash
@@ -518,7 +550,11 @@ class Engine:
     ) -> None:
         rules, blocked = self._signals(day)
         unlevered = self._targets(day, equity, blocked)
-        self.weights = {a: v / equity for a, v in unlevered.items()}
+        weights = {a: v / equity for a, v in unlevered.items()}
+        self.turnover = sum(
+            abs(weights.get(a, 0.0) - self.weights.get(a, 0.0)) for a in weights | self.weights
+        )
+        self.weights = weights
         sigma = self._sigma(day, self.weights)
         history = pd.Series(list(self.rec.unlevered.values())[-KELLY_WINDOW_DAYS:], dtype=float)
         rf = float(self.rate[day])
@@ -550,12 +586,16 @@ class Engine:
         )
         self._update_instruments(day, choices)
         targets = {c.symbol: c.cash_usd for c in choices.values()}
-        planned = plan_orders(
-            targets,
-            positions_usd=positions,
-            underlying=self.underlying,
-            rules=rules,
-            config=self.config,
+        planned = split_orders(
+            plan_orders(
+                targets,
+                positions_usd=positions,
+                underlying=self.underlying,
+                rules=rules,
+                config=self.config,
+            ),
+            equity,
+            self.config,
         )
         vetoes = self._check_and_submit(day, equity, cash, positions, planned, blocked)
         self._record_risk(
@@ -663,7 +703,18 @@ class Engine:
             else math.nan
         )
         previous_close = self._close(order.symbol, day - timedelta(days=1))
+        notional = order.filled_quantity * order.average_price
         spread = abs(order.average_price - reference) * order.filled_quantity
+        if not math.isfinite(spread):  # a limit fill: the configured spread
+            spread = notional * spread_bps(order.symbol, self.config) / BPS
+        if order.reason:
+            self.rec.event(
+                day,
+                "ORDER_PARTIAL",
+                f"{order.order_id} {order.symbol} {order.side}: {order.reason}",
+            )
+        self.traded += notional
+        self.costs_paid += order.commission + spread
         self.rec.fills.append(
             {
                 "date": day,
@@ -672,14 +723,9 @@ class Engine:
                 "side": order.side,
                 "quantity": order.filled_quantity,
                 "price": order.average_price,
-                "notional": order.filled_quantity * order.average_price,
+                "notional": notional,
                 "commission": order.commission,
-                "spread_cost": spread
-                if math.isfinite(spread)
-                else order.filled_quantity
-                * order.average_price
-                * spread_bps(order.symbol, self.config)
-                / BPS,
+                "spread_cost": spread,
                 "slippage_vs_close": order.average_price / previous_close - 1,
             }
         )
@@ -786,4 +832,5 @@ __all__ = [
     "fit_buys",
     "plan_orders",
     "run_backtest",
+    "split_orders",
 ]

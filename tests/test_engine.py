@@ -27,6 +27,7 @@ from stride.backtest.engine import (
     fit_buys,
     plan_orders,
     run_backtest,
+    split_orders,
 )
 from stride.config import load_config
 from stride.data.calendar import trading_days
@@ -157,12 +158,8 @@ def _crash_market() -> tuple[MarketData, pd.Timestamp]:
 
 def test_kill_switch_at_minus_40_liquidates_and_stops() -> None:
     data, crash = _crash_market()
-    # Single orders up to 95% of equity, so the position is built before the crash
-    # (with the 60% limit the guard vetoes the first unit: see the PR questions).
-    execution = CONFIG.execution.model_copy(update={"max_order_pct_equity": 0.95})
-    config = CONFIG.model_copy(update={"execution": execution})
     result = run_backtest(
-        data, config, BacktestSettings(date(2018, 1, 2), date(2019, 12, 31), initial_cash=10_000.0)
+        data, CONFIG, BacktestSettings(date(2018, 1, 2), date(2019, 12, 31), initial_cash=10_000.0)
     )
     held_before = result.equity.loc[: crash - pd.Timedelta(days=1), "gross_exposure"]
     assert held_before.iloc[-1] > 0  # invested when the crash comes
@@ -173,12 +170,12 @@ def test_kill_switch_at_minus_40_liquidates_and_stops() -> None:
 
     orders = result.orders
     liquidation = orders[orders["rule"] == KILLED]
-    assert len(liquidation) == 1
-    assert liquidation.iloc[0]["side"] == "sell" and liquidation.iloc[0]["approved"]
+    assert len(liquidation) >= 1 and liquidation["approved"].all()
+    assert (liquidation["side"] == "sell").all()
     assert (pd.DatetimeIndex(orders["date"]) <= crash).all()  # never trades again
 
-    fill = result.fills[result.fills["order_id"] == liquidation.iloc[0]["order_id"]]
-    assert pd.Timestamp(fill.iloc[0]["date"]) > crash  # at the next open
+    fills = result.fills[result.fills["order_id"].isin(liquidation["order_id"])]
+    assert (pd.DatetimeIndex(fills["date"]) > crash).all()  # at the next open
     after = result.equity.loc[crash + pd.Timedelta(days=1) :]
     assert (after["gross_exposure"] == 0).all()
     assert (result.risk_decisions.loc[crash:, "binding_limit"] == KILLED).all()
@@ -428,3 +425,37 @@ def test_limit_orders_and_a_missing_bar_block_the_symbol() -> None:
         close = float(bars[order["symbol"]]["close"][order["date"]])
         expected = close * (1 + offset if order["side"] == "buy" else 1 - offset)
         assert order["limit_price"] == pytest.approx(expected, abs=0.006)
+
+
+def test_split_orders_keeps_each_part_within_the_order_limit() -> None:
+    big = PlannedOrder("TLT", "sell", 1_700.0, False, "TLT", "STOP_2N")
+    small = PlannedOrder("GLD", "buy", 300.0, False, "GLD", "PYRAMID")
+    parts = split_orders([big, small], equity=1_000.0, config=CONFIG)
+    tlt = [o for o in parts if o.symbol == "TLT"]
+    assert len(tlt) == 3 and all(o.notional <= 600.0 for o in tlt)
+    assert sum(o.notional for o in tlt) == pytest.approx(1_700.0)
+    assert [o for o in parts if o.symbol == "GLD"] == [small]
+    assert split_orders([big], equity=0.0, config=CONFIG) == [big]
+
+
+def test_no_order_is_vetoed_for_its_size() -> None:
+    result = run_backtest(_market(seed=11), CONFIG, _settings())
+    reasons = result.orders["reasons"].fillna("")
+    assert not reasons.str.contains("ORDER_TOO_LARGE").any()
+    assert result.orders["approved"].any()
+
+
+def test_the_kelly_series_pays_for_changes_in_weights() -> None:
+    result = run_backtest(_market(seed=11), CONFIG, _settings())
+    engine_days = result.unlevered_returns
+    flat = run_backtest(
+        _market(seed=11),
+        CONFIG.model_copy(
+            update={"costs": CONFIG.costs.model_copy(
+                update={"spread_bps": 0.0, "spread_bps_crypto": 0.0,
+                        "commission_per_share": 0.0, "commission_min_per_order": 0.0,
+                        "commission_max_pct_of_value": 0.0})}
+        ),
+        _settings(),
+    ).unlevered_returns  # fmt: skip
+    assert engine_days.sum() < flat.sum()  # costs lower the series Kelly is estimated on
