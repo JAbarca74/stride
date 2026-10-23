@@ -31,6 +31,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
+from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
@@ -667,6 +668,161 @@ def _selected_markdown(r: SelectedWalkForward | None) -> list[str]:
     ]
 
 
+# 10. Pre-registered strategy search (docs/design/strategy_search.md).
+
+SEARCH_LEVERAGES = (1.0, 1.5, 2.0)
+DSR_PASS = 0.95
+SEARCH_MAX_DRAWDOWN = 0.40
+EULER_GAMMA = 0.5772156649015329
+
+
+def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
+    """The three strategies fixed in the pre-registration, as allocation settings."""
+    return {
+        "dual_momentum": {"mode": "dual_momentum", "assets": ["SPY", "EFA"],
+                          "refuge": "IEF", "lookback": 252, "skip": 0},
+        "relative_strength": {"mode": "relative_strength", "assets": list(config.universe),
+                              "refuge": "IEF", "lookback": 252, "skip": 21, "top": 3},
+        "vol_managed": {"mode": "vol_managed", "assets": ["SPY"], "target_vol": 0.20,
+                        "max_weight": 3.0},
+    }  # fmt: skip
+
+
+def with_allocation(config: StrideConfig, **values: object) -> StrideConfig:
+    """`config` with the allocation experiment on (rotation off) and some of its
+    settings replaced, re-validated."""
+    data = config.model_dump()
+    data["experiments"]["allocation"].update(values)
+    enabled = set(data["experiments"]["enabled"]) - {"leverage_rotation"}
+    data["experiments"]["enabled"] = sorted(enabled | {"allocation"})
+    return StrideConfig.model_validate(data)
+
+
+def deflated_sharpe(returns: pd.Series, trial_sharpes: Sequence[float]) -> float:
+    """Bailey and Lopez de Prado (2014): the probability that the true Sharpe is
+    above the best one expected by chance among `trial_sharpes` (annualized Sharpe
+    of every configuration tried), given the length, skew and kurtosis of
+    `returns` (daily). NaN with fewer than 30 returns."""
+    values = returns.dropna().to_numpy(dtype=float)
+    if len(values) < 30 or not float(np.std(values, ddof=1)) > 0:  # noqa: PLR2004
+        return math.nan
+    sr = float(np.mean(values) / np.std(values, ddof=1))
+    centered = values - np.mean(values)
+    m2 = float(np.mean(centered**2))
+    skew = float(np.mean(centered**3)) / m2**1.5
+    kurt = float(np.mean(centered**4)) / m2**2  # raw kurtosis (3 for a normal)
+    trials = [x / math.sqrt(TRADING_DAYS_PER_YEAR) for x in trial_sharpes if math.isfinite(x)]
+    normal = NormalDist()
+    if len(trials) > 1:
+        n = len(trials)
+        spread = float(np.std(trials, ddof=1))
+        sr0 = spread * (
+            (1 - EULER_GAMMA) * normal.inv_cdf(1 - 1 / n)
+            + EULER_GAMMA * normal.inv_cdf(1 - 1 / (n * math.e))
+        )
+    else:
+        sr0 = 0.0
+    denom = 1 - skew * sr + (kurt - 1) / 4 * sr**2
+    if not denom > 0:
+        return math.nan
+    return normal.cdf((sr - sr0) * math.sqrt(len(values) - 1) / math.sqrt(denom))
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    name: str
+    selected: SelectedWalkForward
+    full: pd.DataFrame  # full period at each leverage, with and without scaling
+    deflated_sharpe: float
+    passes: bool
+
+
+def strategy_search(
+    data: MarketData,
+    config: StrideConfig,
+    settings: BacktestSettings,
+    prior_sharpes: Sequence[float],
+    *,
+    levels: Sequence[float] = SEARCH_LEVERAGES,
+    names: Sequence[str] | None = None,
+) -> list[SearchResult]:
+    """Run each pre-registered strategy: walk-forward with the leverage chosen in
+    sample, full-period runs for the 30% goal, and the deflated Sharpe ratio of
+    the out-of-sample returns against every configuration tried in sections 7-10."""
+    candidates = strategy_candidates(config)
+    chosen = [n for n in (names or list(candidates)) if n in candidates]
+    fulls: dict[str, pd.DataFrame] = {}
+    selections: dict[str, SelectedWalkForward] = {}
+    for name in chosen:
+        cfg = with_allocation(config, **candidates[name])
+        selections[name] = walk_forward_selected(
+            data, cfg, settings.initial_cash, settings.start, settings.end, levels=levels
+        )
+        rows = []
+        for level in levels:
+            for scaling in (False, True):
+                run = run_backtest(data, _choice(cfg, level, scaling),
+                                   replace(settings, fixed_leverage=level))  # fmt: skip
+                m = _summary(run.returns, data.risk_free)
+                meets = m.cagr >= GOAL_CAGR and m.max_drawdown <= GOAL_MAX_DRAWDOWN
+                rows.append({"strategy": name, "leverage": f"{level:g}x",
+                             "drawdown_scaling": "on" if scaling else "off", "cagr": m.cagr,
+                             "sharpe": m.sharpe, "max_drawdown": m.max_drawdown,
+                             "final_equity": float(run.equity["equity"].iloc[-1]),
+                             "meets_goal": bool(meets)})  # fmt: skip
+        fulls[name] = pd.DataFrame(rows)
+    trials = [*prior_sharpes, *(x for f in fulls.values() for x in f["sharpe"])]
+    results = []
+    for name in chosen:
+        sel = selections[name]
+        dsr = deflated_sharpe(sel.returns, trials)
+        spy = sel.spy
+        passes = bool(
+            spy is not None
+            and math.isfinite(sel.strategy.sharpe)
+            and sel.strategy.sharpe > spy.sharpe
+            and sel.strategy.cagr > spy.cagr
+            and math.isfinite(dsr)
+            and dsr >= DSR_PASS
+            and sel.strategy.max_drawdown <= SEARCH_MAX_DRAWDOWN
+        )
+        results.append(SearchResult(name, sel, fulls[name], dsr, passes))
+    return results
+
+
+def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
+    if not results:
+        return []
+    lines = [
+        "",
+        "## 10. Pre-registered strategy search (docs/design/strategy_search.md)",
+        "",
+        "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
+        " max drawdown <= 40%.",
+        "",
+        "| strategy | oos_sharpe | spy_sharpe | oos_cagr | spy_cagr | oos_max_drawdown"
+        " | deflated_sharpe | passes |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for r in results:
+        st, spy = r.selected.strategy, r.selected.spy
+        lines.append(
+            f"| {r.name} | {_fmt(st.sharpe)} | {_fmt(spy.sharpe if spy else math.nan)}"
+            f" | {_fmt(st.cagr)} | {_fmt(spy.cagr if spy else math.nan)}"
+            f" | {_fmt(st.max_drawdown)} | {_fmt(r.deflated_sharpe)}"
+            f" | {'**PASS**' if r.passes else 'FAIL'} |"
+        )
+    for r in results:
+        lines += [
+            "",
+            f"### {r.name}: leverage chosen in sample",
+            "",
+            *_table(r.selected.per_window),
+        ]
+        lines += ["", f"### {r.name}: full period (30% goal)", "", *_table(r.full)]
+    return lines
+
+
 def goal_summary(table: pd.DataFrame) -> str:
     """One line: the best run that meets the goal, or the best within the
     drawdown limit and how far it is from 30%."""
@@ -782,6 +938,7 @@ class Validation:
     goal: pd.DataFrame  # section 7: leverage x drawdown scaling against the 30% goal
     rotation: RotationReport | None  # section 8: the leverage rotation, full protocol
     selected: SelectedWalkForward | None  # section 9: leverage chosen in sample
+    search: list[SearchResult]  # section 10: pre-registered strategies
     full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
@@ -798,6 +955,7 @@ def validate_strategy(
     goal_leverages: Sequence[float | None] = GOAL_LEVERAGES,
     rotation: bool = True,
     selection_levels: Sequence[float] = SELECTION_LEVERAGES,
+    search_levels: Sequence[float] = SEARCH_LEVERAGES,
 ) -> Validation:
     """The whole SPEC 9 protocol on one data set (`parameters` and `levels` are
     only narrowed by tests)."""
@@ -831,9 +989,14 @@ def validate_strategy(
         if selection_levels
         else None
     )
+    search = (
+        strategy_search(data, config, settings, list(goal["sharpe"]), levels=search_levels)
+        if search_levels
+        else []
+    )
     return Validation(
         walk, sens, boot(walk.returns), boot(full.returns), lev, rule, goal, rotation_part,
-        selected, full,
+        selected, search, full,
         verdict(walk, sens),
         (settings.start, settings.end),
     )  # fmt: skip
@@ -949,6 +1112,7 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         *_table(v.goal),
         *_rotation_markdown(v.rotation),
         *_selected_markdown(v.selected),
+        *_search_markdown(v.search),
     ]
     if notes:
         lines += ["", "## Notes", ""] + [f"- **{k}:** {text}" for k, text in notes.items()]
@@ -994,6 +1158,20 @@ def to_json(v: Validation) -> dict[str, object]:
         "leverage": records(v.leverage),
         "experiments": records(v.experiments),
         "goal": {"summary": goal_summary(v.goal), "runs": records(v.goal)},
+        "search": [
+            {
+                "strategy": r.name,
+                "passes": r.passes,
+                "deflated_sharpe": clean(r.deflated_sharpe),
+                "out_of_sample": {k: clean(x) for k, x in vars(r.selected.strategy).items()},
+                "spy": {k: clean(x) for k, x in vars(r.selected.spy).items()}
+                if r.selected.spy
+                else None,
+                "windows": records(r.selected.per_window),
+                "full_period": records(r.full),
+            }
+            for r in v.search
+        ],
         "selected": None
         if v.selected is None
         else {

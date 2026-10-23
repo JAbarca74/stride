@@ -167,7 +167,9 @@ class DataConfig(_Section):
         return self
 
 
-Experiment = Literal["extra_universe", "ensemble", "drawdown_scaling", "leverage_rotation"]
+Experiment = Literal[
+    "extra_universe", "ensemble", "drawdown_scaling", "leverage_rotation", "allocation"
+]
 BreakoutSystem = Annotated[list[Lookback], Field(min_length=2, max_length=2)]
 
 
@@ -185,6 +187,28 @@ class RotationConfig(_Section):
     refuge: Annotated[str, Field(pattern=r"^([A-Z]{1,6}|cash)$")]
 
 
+class AllocationConfig(_Section):
+    """Experiment allocation: one of the pre-registered monthly strategies of
+    docs/design/strategy_search.md (strategy/allocation.py). `leverage` multiplies
+    the weights; above 1x it is reached with the eligible leveraged ETFs."""
+
+    mode: Literal["dual_momentum", "relative_strength", "vol_managed"]
+    assets: Annotated[list[Ticker], Field(min_length=1)]
+    refuge: Annotated[str, Field(pattern=r"^([A-Z]{1,6}|cash)$")]
+    lookback: Lookback
+    skip: Annotated[int, Field(ge=0)]
+    top: Annotated[int, Field(ge=1)]
+    target_vol: Fraction
+    max_weight: Annotated[float, Field(gt=0, le=4)]
+    leverage: Annotated[float, Field(gt=0, le=4)]
+
+    @model_validator(mode="after")
+    def _skip_shorter(self) -> Self:
+        if self.skip >= self.lookback:
+            raise ValueError("allocation.skip must be shorter than allocation.lookback")
+        return self
+
+
 class ExperimentsConfig(_Section):
     """Strategy experiments (owner request, 2026-10-23). The validation measures
     each one with and without it; `enabled` lists those the configured run uses.
@@ -198,6 +222,7 @@ class ExperimentsConfig(_Section):
     dd_scale_full: Fraction  # drawdown where it reaches the floor
     dd_scale_floor: Fraction  # share of the leverage kept at and beyond dd_scale_full
     rotation: RotationConfig
+    allocation: AllocationConfig
 
     @model_validator(mode="after")
     def _systems_exit_shorter(self) -> Self:
@@ -263,6 +288,11 @@ class StrideConfig(_Section):
             rotation.underlying, {}
         ):
             raise ValueError("experiments.rotation.multiple has no leveraged version")
+        alloc = self.experiments.allocation
+        if any(a not in universe for a in alloc.assets):
+            raise ValueError("experiments.allocation.assets must be in the universe")
+        if alloc.refuge != "cash" and alloc.refuge not in universe:
+            raise ValueError("experiments.allocation.refuge must be in the universe or cash")
         return self
 
     @model_validator(mode="after")

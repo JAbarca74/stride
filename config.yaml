@@ -111,3 +111,13 @@ experiments:                       # owner request 2026-10-23; measured in valid
     band: 0.0                      # hysteresis around the average (0 = none)
     multiple: 3                    # UPRO; 2 = SSO
     refuge: IEF                    # below the average: IEF, or cash
+  allocation:                      # pre-registered search: docs/design/strategy_search.md
+    mode: dual_momentum            # dual_momentum | relative_strength | vol_managed
+    assets: [SPY, EFA]             # dual momentum: US vs international equities
+    refuge: IEF
+    lookback: 252                  # 12 months
+    skip: 0
+    top: 3                         # relative_strength: number of assets held
+    target_vol: 0.20               # vol_managed: annual volatility aimed at
+    max_weight: 3.0                # vol_managed: weight cap
+    leverage: 1.0                  # multiplies the weights (leveraged ETFs above 1x)

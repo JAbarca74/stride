@@ -168,6 +168,7 @@ def test_validate_strategy_and_outputs(tmp_path: Path) -> None:
         goal_leverages=(None,),
         rotation=False,
         selection_levels=(),
+        search_levels=(),
     )
     text = v.to_markdown(result, {"Data": "synthetic"})
     for heading in ("Phase 3 exit criterion", "Walk-forward", "Sensitivity", "bootstrap",
@@ -194,6 +195,7 @@ def test_main_writes_results_and_returns_the_verdict(
             goal_leverages=(None,),
             rotation=False,
             selection_levels=(1.0,),
+            search_levels=(),
         )
 
     monkeypatch.setattr(v, "validate_strategy", light)
@@ -351,3 +353,28 @@ def test_walk_forward_selected_chooses_in_sample_and_reports_out_of_sample() -> 
     text = v._selected_markdown(result)
     assert any("leverage chosen in sample" in line for line in text)
     assert v._selected_markdown(None) == []
+
+
+def test_deflated_sharpe_falls_as_more_variants_are_tried() -> None:
+    rng = np.random.default_rng(9)
+    returns = pd.Series(rng.normal(0.0006, 0.01, 2_500))
+    few = v.deflated_sharpe(returns, [0.9])
+    many = v.deflated_sharpe(returns, list(np.linspace(-0.5, 1.2, 60)))
+    assert 0 <= many < few <= 1
+    assert math.isnan(v.deflated_sharpe(returns.iloc[:10], [0.5]))
+
+
+def test_strategy_search_reports_each_candidate_against_spy() -> None:
+    data = _market()
+    bars = dict(data.bars) | {"EFA": data.bars["DBC"], "IEF": data.bars["IEF"]}
+    market = MarketData(bars, data.risk_free)
+    results = v.strategy_search(
+        market, CONFIG, SETTINGS, [0.5, 0.6], levels=(1.0,), names=["dual_momentum"]
+    )
+    assert [r.name for r in results] == ["dual_momentum"]
+    r = results[0]
+    assert list(r.full["leverage"]) == ["1x", "1x"]
+    assert r.selected.returns.index.min() >= pd.Timestamp("2016-01-01")
+    assert isinstance(r.passes, bool)
+    text = v._search_markdown(results)
+    assert any("Pre-registered strategy search" in line for line in text)

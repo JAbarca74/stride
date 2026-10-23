@@ -70,10 +70,14 @@ from stride.risk.leverage import (
     kelly_estimate,
 )
 from stride.risk.sizing import UnitLot, apply_caps, target_usd
+from stride.strategy.allocation import target_weights
 from stride.strategy.rules import HOLD, Decision, Indicators, PositionState, decide
 
 Row = tuple[float, float, float, float, float]  # close, SMA200, HH55, LL20, N
 
+ALLOCATION = "ALLOCATION"  # binding limit in the allocation experiment
+ALLOCATE_IN = "ALLOCATE_IN"  # allocation: the asset enters the portfolio this month
+ALLOCATE_OUT = "ALLOCATE_OUT"  # allocation: the asset leaves it
 ROTATION = "ROTATION"  # binding limit in the leverage_rotation experiment
 ROTATE_ON = "ROTATE_ON"  # rotation: the underlying crossed above its average
 ROTATE_OFF = "ROTATE_OFF"  # rotation: it crossed below; move to the refuge
@@ -369,6 +373,16 @@ def _rotation_average(data: MarketData, config: StrideConfig) -> dict[pd.Timesta
     return dict(zip(pd.DatetimeIndex(average.index), average, strict=True))
 
 
+def _allocation_closes(data: MarketData, config: StrideConfig) -> pd.DataFrame:
+    """Closes of the allocation assets (and refuge), one column each, by date."""
+    alloc = config.experiments.allocation
+    symbols = [*alloc.assets, *([alloc.refuge] if alloc.refuge != "cash" else [])]
+    missing = [s for s in symbols if s not in data.bars]
+    if missing:
+        raise ValueError(f"no bars for the allocation symbols {missing}")
+    return pd.DataFrame({s: data.bars[s]["close"].astype(float) for s in symbols}).sort_index()
+
+
 def _returns_matrix(data: MarketData, assets: Sequence[str]) -> pd.DataFrame:
     closes = {s: data.bars[s]["close"].sort_index().astype(float) for s in assets}
     frame = pd.DataFrame(closes).sort_index()
@@ -433,6 +447,10 @@ class Engine:
         self.rotating = "leverage_rotation" in config.experiments.enabled
         self.rotation_on = False
         self.rotation_sma = _rotation_average(data, config) if self.rotating else {}
+        self.allocating = "allocation" in config.experiments.enabled and not self.rotating
+        self.allocation_closes = _allocation_closes(data, config) if self.allocating else None
+        self.allocation_month: tuple[int, int] | None = None
+        self.allocation_weights: dict[str, float] = {}
         self.lots: list[UnitLot] = []
         self.held: dict[str, HeldInstrument] = {}
         self.chosen: dict[str, str] = {}
@@ -760,9 +778,94 @@ class Engine:
             day, None, 0, 0.0, multiple * scale, ROTATION, drawdown, vetoes, multiple * scale
         )
 
+    def _allocate(
+        self, day: pd.Timestamp, equity: float, cash: float, positions: dict[str, float]
+    ) -> None:
+        """Experiment allocation (docs/design/strategy_search.md): on the first trading
+        day of each month, the pre-registered strategy sets weights from closes up
+        to t and the risk-free rate known at t-1; the weights times the leverage
+        (`fixed_leverage` when the run sets one, else `allocation.leverage`), times
+        the drawdown scaling when enabled, become exposures that the leveraged-ETF
+        route maps to instruments. Other days send nothing (the kill switch is
+        still checked every day). Orders go through the same resizing rule, split,
+        guard and broker as the main strategy."""
+        drawdown = min(max(self.twr.drawdown, 0.0), 1.0)
+        month = (day.year, day.month)
+        if month == self.allocation_month or self.allocation_closes is None:
+            self._record_risk(day, None, 0, 0.0, 0.0, ALLOCATION, drawdown, [])
+            return
+        self.allocation_month = month
+        settings = self.config.experiments.allocation
+        history = self.allocation_closes.loc[:day]
+        weights = target_weights(settings, history, float(self.rate[day]))
+        level = self.settings.fixed_leverage or settings.leverage
+        scale = 1.0
+        if "drawdown_scaling" in self.config.experiments.enabled:
+            scale = drawdown_scale(drawdown, self.config)
+        exposures = {a: w * equity * level * scale for a, w in weights.items() if w > 0}
+        choices = choose_instruments(
+            exposures,
+            equity,
+            eligible=self.data.eligible,
+            current=self.held,
+            switch=self.config.leverage_switch,
+            max_etf_portfolio_leverage=self.config.risk.max_etf_portfolio_leverage,
+            borrow=1.0,
+        )
+        self._update_instruments(day, choices)
+        targets = {c.symbol: c.cash_usd for c in choices.values()}
+        rules = {}
+        for asset in set(weights) | set(self.allocation_weights):
+            was, now = self.allocation_weights.get(asset, 0.0) > 0, weights.get(asset, 0.0) > 0
+            rules[asset] = (
+                ALLOCATE_IN if now and not was else ALLOCATE_OUT if was and not now else HOLD
+            )
+            self.rec.signals.append(
+                {
+                    "date": day,
+                    "symbol": asset,
+                    "close": float(history[asset].iloc[-1]) if asset in history else math.nan,
+                    "sma200": math.nan,
+                    "hh55": math.nan,
+                    "ll20": math.nan,
+                    "n": math.nan,
+                    "rule": rules[asset],
+                    "current_units": int(was),
+                    "target_units": int(now),
+                    "last_entry": None,
+                    "capped": 0,
+                }
+            )
+        self.allocation_weights = weights
+        planned, skipped = skip_costly_resizes(
+            plan_orders(
+                targets,
+                positions_usd=positions,
+                underlying=self.underlying,
+                rules=rules,
+                config=self.config,
+            ),
+            {s: self._close(s, day) for s in self.closes},
+            self.config,
+            targets,
+        )
+        for order in skipped:
+            self.rec.event(
+                day,
+                "RESIZE_SKIPPED",
+                f"{order.symbol} {order.side} {order.notional:.2f}: cost above limit",
+            )
+        planned = split_orders(planned, equity, self.config)
+        vetoes = self._check_and_submit(day, equity, cash, positions, planned, set())
+        gross = sum(c.exposure_usd for c in choices.values()) / equity if equity > 0 else 0.0
+        self._record_risk(day, None, 0, 0.0, gross, ALLOCATION, drawdown, vetoes, gross)
+
     def _trade(
         self, day: pd.Timestamp, equity: float, cash: float, positions: dict[str, float]
     ) -> None:
+        if self.allocating:
+            self._allocate(day, equity, cash, positions)
+            return
         if self.rotating:
             self._rotate(day, equity, cash, positions)
             return
