@@ -35,6 +35,7 @@ from stride.backtest.engine import (
     run_backtest,
 )
 from stride.config import StrideConfig, load_config
+from stride.data import store
 from stride.data.leveraged import (
     EtfFacts,
     calibrate_spread,
@@ -59,7 +60,15 @@ from stride.data.store import (
 from stride.data.update import series_for
 
 DEFAULT_INITIAL_CASH = 100.0  # SPEC section 2: starting capital
-RESULT_TABLES = ("equity", "signals", "risk_decisions", "events", "cash_flows")
+RESULT_TABLES = (
+    "equity",
+    "signals",
+    "risk_decisions",
+    "events",
+    "cash_flows",
+    "orders",
+    "fills",
+)
 OHLC = ["open", "high", "low", "close"]
 
 
@@ -106,6 +115,34 @@ def load_market(
     return MarketData(bars, rate, eligible), calibrated
 
 
+def order_rows(result: BacktestResult) -> pd.DataFrame:
+    """The run's orders as rows of the `orders` table, with their final status:
+    vetoed by the guard, filled, or rejected or cancelled by the broker."""
+    orders = result.orders
+    if orders.empty:
+        return pd.DataFrame(columns=list(store.ORDER_COLUMNS))
+    filled = set(result.fills["order_id"]) if not result.fills.empty else set()
+    outcome: dict[str, str] = {}
+    for kind, detail in zip(result.events["type"], result.events["detail"], strict=True):
+        if kind in {"ORDER_REJECTED", "ORDER_CANCELLED"}:
+            outcome[str(detail).split(" ", 1)[0]] = kind.removeprefix("ORDER_").lower()
+
+    def status(row: pd.Series) -> str:
+        if not row["approved"]:
+            return "vetoed"
+        if row["order_id"] in filled:
+            return "filled"
+        return outcome.get(str(row["order_id"]), "pending")
+
+    rows = orders.assign(
+        client_id=[f"bt-{pd.Timestamp(d).date()}-{i}" for i, d in enumerate(orders["date"])],
+        broker_id=orders["order_id"],
+        status=orders.apply(status, axis=1),
+        switch=orders["switch"].astype(int),
+    )
+    return rows[list(store.ORDER_COLUMNS)]
+
+
 def write_results(
     conn: sqlite3.Connection, result: BacktestResult, prices: Mapping[str, pd.DataFrame]
 ) -> None:
@@ -126,6 +163,11 @@ def write_results(
         pd.DatetimeIndex(result.cash_flows.index), result.cash_flows, strict=True
     ):
         record_cash_flow(conn, day.date(), float(amount), "deposit", "backtest monthly deposit")
+    orders = order_rows(result)
+    if not orders.empty:
+        store.record_orders(conn, orders)
+    if not result.fills.empty:
+        store.record_fills(conn, result.fills.rename(columns={"order_id": "broker_id"}))
     for frame in prices.values():
         upsert_prices(conn, frame)
 
