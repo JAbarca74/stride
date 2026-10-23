@@ -29,6 +29,7 @@ import pandas as pd
 
 from stride.config import StrideConfig, load_config
 from stride.data.calendar import is_trading_day, previous_trading_day, trading_days
+from stride.data.events import PriceEvent, flagged_dates, load_price_events
 from stride.data.leveraged import (
     Calibration,
     EtfFacts,
@@ -154,12 +155,25 @@ def series_for(conn: sqlite3.Connection, symbol: str) -> pd.DataFrame:
 
 
 def validate_universe(
-    conn: sqlite3.Connection, config: StrideConfig, evaluation_date: date
+    conn: sqlite3.Connection,
+    config: StrideConfig,
+    evaluation_date: date,
+    events: Mapping[str, list[PriceEvent]] | None = None,
 ) -> list[CheckResult]:
-    """Section 5 validations 1-3 on every universe symbol (spliced for crypto)."""
+    """Section 5 validations 1-3 on every universe symbol (spliced for crypto).
+
+    `events` are the reviewed exceptions to validation 2 (`reference/price_events.yaml`).
+    """
+    events = events or {}
     results: list[CheckResult] = []
     for symbol in config.universe:
-        results += validate(symbol, series_for(conn, symbol), evaluation_date, config.data.quality)
+        results += validate(
+            symbol,
+            series_for(conn, symbol),
+            evaluation_date,
+            config.data.quality,
+            flagged_dates=flagged_dates(events, symbol),
+        )
     return results
 
 
@@ -289,7 +303,7 @@ def _run(
         return 1 if any(r.error for r in results) else 0
 
     if command == "validate":
-        checks = validate_universe(conn, config, day)
+        checks = validate_universe(conn, config, day, load_price_events())
         for check in checks:
             mark = "ok  " if check.passed else "FAIL"
             _print(f"{mark} {check.symbol:5} {check.name:22} {check.severity:6} {check.detail}")
