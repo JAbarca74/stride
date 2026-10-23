@@ -145,6 +145,7 @@ Needs `data/stride.db` (above) and network access to FRED for the 3-month T-bill
 python -m stride.backtest.run                              # 2007 to the last stored day, $100 start
 python -m stride.backtest.run --fixed-leverage 2           # leverage comparison (SPEC 9)
 python -m stride.backtest.run --report reports/backtest.html
+python -m stride.backtest.validation                       # SPEC 9 protocol -> docs/results/
 ```
 
 </details>

@@ -1,0 +1,197 @@
+"""Validation protocol (SPEC section 9)."""
+
+from __future__ import annotations
+
+import json
+import math
+from datetime import date
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from stride.backtest import validation as v
+from stride.backtest.engine import BacktestSettings, MarketData
+from stride.backtest.metrics import Metrics
+from stride.config import load_config
+from stride.data.calendar import trading_days
+from stride.data.store import connect, upsert_prices
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = load_config(ROOT / "config.yaml", env={})
+DAYS = trading_days(date(2010, 1, 4), date(2017, 6, 30))
+RATE = pd.Series(0.01, index=pd.date_range("2009-12-01", "2017-07-31"))
+
+
+def _market() -> MarketData:
+    bars = {}
+    for i, (symbol, vol) in enumerate({"SPY": 0.18, "IEF": 0.07, "DBC": 0.35}.items()):
+        rng = np.random.default_rng(i)
+        close = 100 * np.cumprod(1 + rng.normal(0.0005, vol / math.sqrt(252), len(DAYS)))
+        open_ = close * (1 + rng.normal(0, 0.002, len(DAYS)))
+        bars[symbol] = pd.DataFrame(
+            {"open": open_, "high": np.maximum(open_, close) * 1.006,
+             "low": np.minimum(open_, close) * 0.994, "close": close},
+            index=DAYS,
+        )  # fmt: skip
+    return MarketData(bars, RATE)
+
+
+SETTINGS = BacktestSettings(date(2010, 1, 4), date(2017, 6, 30), 10_000.0)
+ONE = [("strategy", "entry_breakout")]  # a single parameter keeps the tests fast
+
+
+def test_walk_forward_windows_are_five_years_then_one() -> None:
+    windows = v.walk_forward_windows(date(2007, 1, 1), date(2026, 10, 22))
+    assert windows[0] == v.Window(date(2007, 1, 1), date(2012, 1, 1), date(2012, 12, 31))
+    assert windows[-1] == v.Window(date(2021, 1, 1), date(2026, 1, 1), date(2026, 10, 22))
+    assert len(windows) == 15
+    # A first year that starts after 1 January is not a full in-sample year.
+    assert v.walk_forward_windows(date(2010, 1, 4), date(2017, 6, 30))[0].out_start == date(
+        2016, 1, 1
+    )
+    assert v.walk_forward_windows(date(2010, 1, 4), date(2015, 6, 30)) == []
+
+
+def test_walk_forward_reports_only_out_of_sample_days() -> None:
+    walk = v.walk_forward(_market(), CONFIG, 10_000.0, SETTINGS.start, SETTINGS.end)
+    assert walk.returns.index.min() >= pd.Timestamp("2016-01-01")
+    assert walk.returns.index.max() <= pd.Timestamp("2017-06-30")
+    assert list(walk.per_window["out_of_sample"]) == ["2016", "2017"]
+    assert walk.spy is not None
+    with pytest.raises(ValueError, match="shorter"):
+        v.walk_forward(_market(), CONFIG, 10_000.0, date(2014, 1, 1), SETTINGS.end)
+
+
+def test_shifted_config_moves_one_parameter_in_memory() -> None:
+    down = v.shifted_config(CONFIG, "strategy", "entry_breakout", 0.8)
+    up = v.shifted_config(CONFIG, "strategy", "entry_breakout", 1.2)
+    assert (down.strategy.entry_breakout, up.strategy.entry_breakout) == (44, 66)
+    stop = v.shifted_config(CONFIG, "strategy", "stop_n", 0.8)
+    assert stop.strategy.stop_n == pytest.approx(1.6)
+    assert CONFIG.strategy.entry_breakout == 55
+    assert stop.risk == CONFIG.risk
+    for section, key in v.SENSITIVITY_PARAMETERS:  # every shift is a valid config
+        for factor in (0.8, 1.2):
+            v.shifted_config(CONFIG, section, key, factor)
+
+
+def test_sharpe_drop() -> None:
+    assert v.sharpe_drop(1.0, 0.6) == pytest.approx(0.4)
+    assert v.sharpe_drop(-0.5, -1.0) == pytest.approx(1.0)
+    assert v.sharpe_drop(1.0, 1.2) == pytest.approx(-0.2)
+    assert math.isnan(v.sharpe_drop(0.0, 1.0))
+    assert math.isnan(v.sharpe_drop(1.0, math.nan))
+
+
+def test_sensitivity_flags_fragile_parameters() -> None:
+    sens = v.sensitivity(_market(), CONFIG, SETTINGS, ONE)
+    assert list(sens.table["value"]) == [44, 66]
+    expected = [bool(not math.isfinite(d) or d > v.FRAGILE_SHARPE_DROP) for d in sens.table["drop"]]
+    assert list(sens.table["fragile"]) == expected
+    assert sens.fragile == (["strategy.entry_breakout"] if any(expected) else [])
+
+
+def test_block_bootstrap_brackets_the_true_sharpe_and_is_reproducible() -> None:
+    rng = np.random.default_rng(1)
+    days = pd.bdate_range("2010-01-01", periods=2_000)
+    returns = pd.Series(rng.normal(0.0006, 0.01, len(days)), index=days)
+    first = v.block_bootstrap(returns, samples=1_000, seed=3)
+    again = v.block_bootstrap(returns, samples=1_000, seed=3)
+    assert first == again
+    true_sharpe = 0.0006 / 0.01 * math.sqrt(252)
+    low, mid, high = first.sharpe
+    assert low < true_sharpe < high
+    assert low < mid < high
+    assert 0 < first.max_drawdown[0] <= first.max_drawdown[2] < 1
+    rising = pd.Series(0.001, index=days[:100])
+    flat = v.block_bootstrap(rising, samples=50)
+    assert flat.max_drawdown == (0.0, 0.0, 0.0)
+    assert all(math.isnan(x) for x in flat.sharpe)  # zero volatility: no Sharpe
+    with pytest.raises(ValueError, match="two blocks"):
+        v.block_bootstrap(rising.iloc[:30])
+
+
+def test_block_bootstrap_uses_each_days_risk_free() -> None:
+    days = pd.bdate_range("2010-01-01", periods=500)
+    rng = np.random.default_rng(2)
+    returns = pd.Series(rng.normal(0.0004, 0.01, len(days)), index=days)
+    rf = pd.Series(0.05, index=days)
+    with_rf = v.block_bootstrap(returns, rf, samples=500)
+    without = v.block_bootstrap(returns, 0.0, samples=500)
+    assert with_rf.sharpe[1] < without.sharpe[1]
+
+
+def test_leverage_comparison_has_the_dynamic_and_fixed_rows() -> None:
+    table = v.leverage_comparison(_market(), CONFIG, SETTINGS, levels=(1.0, 2.0))
+    assert list(table["leverage"]) == ["dynamic", "1x", "2x"]
+    assert set(table.columns) >= {"cagr", "sharpe", "max_drawdown", "average_exposure"}
+
+
+def _walk(sharpe: float, spy: float) -> v.WalkForward:
+    m = Metrics(0.1, 0.1, sharpe, 1.0, 0.1, 1.0)
+    s = Metrics(0.1, 0.1, spy, 1.0, 0.1, 1.0)
+    return v.WalkForward([], pd.Series(dtype=float), pd.DataFrame(), m, s)
+
+
+def _sens(fragile: bool) -> v.Sensitivity:
+    table = pd.DataFrame({"parameter": ["strategy.sma_filter"], "fragile": [fragile]})
+    return v.Sensitivity(1.0, table)
+
+
+def test_verdict_applies_the_phase_3_exit_criterion() -> None:
+    assert v.verdict(_walk(0.8, 0.5), _sens(False)).passes
+    assert not v.verdict(_walk(0.4, 0.5), _sens(False)).passes  # below SPY
+    assert not v.verdict(_walk(0.8, 0.5), _sens(True)).passes  # fragile
+    alarm = v.verdict(_walk(1.6, 0.5), _sens(False))
+    assert alarm.alarm and not alarm.passes  # above 1.5: audit
+    assert not v.verdict(_walk(math.nan, 0.5), _sens(False)).passes
+
+
+def test_validate_strategy_and_outputs(tmp_path: Path) -> None:
+    result = v.validate_strategy(
+        _market(), CONFIG, SETTINGS, bootstrap_samples=200, parameters=ONE, levels=(1.0,)
+    )
+    text = v.to_markdown(result, {"Data": "synthetic"})
+    for heading in ("Phase 3 exit criterion", "Walk-forward", "Sensitivity", "bootstrap",
+                    "Leverage comparison", "Notes"):  # fmt: skip
+        assert heading in text
+    v.write_outputs(tmp_path / "results", result, {"Data": "synthetic"})
+    payload = json.loads((tmp_path / "results" / "validation.json").read_text(encoding="utf-8"))
+    assert payload["bootstrap"]["samples"] == 200
+    assert payload["verdict"]["passes"] == result.verdict.passes
+    assert len(payload["sensitivity"]["runs"]) == 2
+
+
+def test_main_writes_results_and_returns_the_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full = v.validate_strategy
+
+    def light(*args: object, **kwargs: object) -> v.Validation:
+        return full(*args, **kwargs, parameters=ONE, levels=(2.0,))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(v, "validate_strategy", light)
+    conn = connect(tmp_path / "p.db")
+    for symbol, frame in _market().bars.items():
+        upsert_prices(
+            conn,
+            frame.assign(symbol=symbol, volume=1, source="test",
+                         fetched_at=pd.Timestamp("2017-07-01", tz="UTC")).rename_axis("date"),
+        )  # fmt: skip
+    conn.close()
+    text = (ROOT / "config.yaml").read_text(encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text(text.replace("db_path: data/stride.db", "db_path: p.db"), encoding="utf-8")
+    code = v.main(
+        ["--config", str(config), "--start", "2010-01-04", "--samples", "100"],
+        rate_source=lambda: RATE,
+    )
+    results = tmp_path / "docs" / "results"
+    assert code in {0, 1}
+    assert (results / "validation.md").exists()
+    assert (results / "backtest.html").exists()
+    assert (tmp_path / "data" / "validation.db").exists()
+    (tmp_path / "p.db").unlink()
+    assert v.main(["--config", str(config)], rate_source=lambda: RATE) == 2
