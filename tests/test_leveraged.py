@@ -77,11 +77,13 @@ def test_filters(spread: float | None, aum: float | None, expected: bool) -> Non
 def test_reference_facts_file_loads_and_covers_every_mapped_etf() -> None:
     facts = load_etf_facts()
     config = load_config(ROOT / "config.yaml", env={})
-    mapped = {etf for versions in config.leveraged_etfs.values() for etf in versions.values()}
+    # The strategy search's leveraged versions (QLD, TQQQ) have facts too.
+    every = config.leveraged_etfs | config.experiments.search_leveraged_etfs
+    mapped = {etf for versions in every.values() for etf in versions.values()}
     assert mapped <= set(facts)
     for ticker, fact in facts.items():
-        assert fact.underlying in config.leveraged_etfs
-        assert config.leveraged_etfs[fact.underlying][fact.multiple] == ticker
+        assert fact.underlying in every
+        assert every[fact.underlying][fact.multiple] == ticker
 
 
 def test_reference_facts_are_complete_and_only_ubt_fails_the_filters() -> None:
