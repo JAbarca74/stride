@@ -177,16 +177,21 @@ def test_trend_breakout_and_range_states_from_closes() -> None:
     assert not breakout_on(turn, 55, 20)
 
 
-def test_dip_buys_after_a_deep_fall_and_sells_on_a_small_recovery() -> None:
-    kw: dict[str, Any] = {"drop": 0.25, "window": 90, "take_profit": 0.05}
-    flat = pd.Series(np.full(100, 100.0))
-    assert not dip_on(flat, **kw)
-    fallen = pd.concat([flat, pd.Series([90.0, 80.0, 74.0])], ignore_index=True)
-    assert dip_on(fallen, **kw)  # 26% below the 90-day high: bought at 74
-    still = pd.concat([fallen, pd.Series([70.0, 77.0])], ignore_index=True)
-    assert dip_on(still, **kw)  # 77 is below 74 * 1.05 = 77.7
-    sold = pd.concat([still, pd.Series([78.0])], ignore_index=True)
-    assert not dip_on(sold, **kw)  # 78 >= 77.7: profit taken
+def test_dip_buys_deep_falls_and_rides_the_rise_past_the_target() -> None:
+    kw: dict[str, Any] = {"drop": 0.25, "window": 90, "take_profit": 0.30, "trail": 3}
+
+    def path(*tail: float) -> pd.Series:
+        return pd.Series([*np.full(100, 100.0), *tail])
+
+    assert not dip_on(path(), **kw)
+    assert dip_on(path(90, 80, 74), **kw)  # 26% below the 90-day high: bought at 74
+    assert dip_on(path(90, 80, 74, 60, 70, 90), **kw)  # 90 < 74 * 1.3 = 96.2: holds
+    # Target reached at 97 and the rise goes on: it holds.
+    assert dip_on(path(90, 80, 74, 85, 97, 105, 112), **kw)
+    # Then a close below the prior 3-day low (97, 105, 112 -> 97): sold.
+    assert not dip_on(path(90, 80, 74, 85, 97, 105, 112, 96), **kw)
+    # Before the target, a fall below the 3-day low does not sell (no stop).
+    assert dip_on(path(90, 80, 74, 85, 90, 70), **kw)
 
 
 def test_kelly_share_is_a_clipped_fraction_of_excess_return_over_variance() -> None:

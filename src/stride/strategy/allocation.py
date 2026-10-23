@@ -21,7 +21,8 @@ missing or too short history never adds a position.
 - sleeve             Round 5: `core` holds 1 - `sleeve`; each asset gets an equal
                      part of `sleeve` while its signal is on (hold, trend above
                      an average, breakout 55/20, range at 20-day lows/highs, or
-                     dip: bought after a deep fall, sold on a small recovery),
+                     dip: bought after a deep fall, held past +30% until the
+                     rise breaks),
                      sized by a fraction of Kelly; the rest stays in cash.
 """
 
@@ -234,20 +235,27 @@ def range_on(close: pd.Series, entry: int, exit: int) -> bool:
     return last_in >= 0 and last_in > last_out
 
 
-def dip_on(close: pd.Series, *, drop: float, window: int, take_profit: float) -> bool:
+def dip_on(close: pd.Series, *, drop: float, window: int, take_profit: float, trail: int) -> bool:
     """Buy the dip (owner idea, round 5): in once the close is `drop` below the
-    highest close of the prior `window` days; out once it closes `take_profit`
-    above the close it was bought at. No stop: it waits for the recovery."""
+    highest close of the prior `window` days. No stop: it waits for the recovery.
+    Once a close is `take_profit` above the buy close the target is reached, but
+    it holds while the rise goes on and sells on the first close below the
+    lowest close of the prior `trail` days."""
     clean = close.dropna()
     high = clean.shift(1).rolling(window).max().to_numpy()
+    low = clean.shift(1).rolling(trail).min().to_numpy()
     values = clean.to_numpy()
-    bought = math.nan
-    for price, top in zip(values, high, strict=True):
+    bought, reached = math.nan, False
+    for price, top, floor in zip(values, high, low, strict=True):
         if math.isnan(bought):
             if math.isfinite(top) and price <= top * (1 - drop):
-                bought = float(price)
-        elif price >= bought * (1 + take_profit):
-            bought = math.nan
+                bought, reached = float(price), False
+            continue
+        if reached and math.isfinite(floor) and price < floor:
+            bought, reached = math.nan, False
+            continue
+        if price >= bought * (1 + take_profit):
+            reached = True
     return not math.isnan(bought)
 
 
@@ -302,7 +310,9 @@ def sleeve(
             "breakout": breakout_on(close, entry, exit),
             "range": range_on(close, entry, exit),
             "dip": signal == "dip"
-            and dip_on(close, drop=dip_drop, window=dip_window, take_profit=take_profit),
+            and dip_on(
+                close, drop=dip_drop, window=dip_window, take_profit=take_profit, trail=exit
+            ),
         }[signal]
         if not on:
             continue

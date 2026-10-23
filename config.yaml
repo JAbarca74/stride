@@ -138,4 +138,5 @@ experiments:                       # owner request 2026-10-23; measured in valid
     kelly_window: 504              # two years of returns
     dip_drop: 0.25                 # dip (owner idea): buy 25% below the 90-day high,
     dip_window: 90
-    take_profit: 0.30              # sell 30% above the buy close (owner: 10k -> 13k)
+    take_profit: 0.30              # target 30% above the buy close (owner: 10k -> 13k),
+                                   # then held until a close below the prior `exit`-day low
