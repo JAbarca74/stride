@@ -380,6 +380,8 @@ def _allocation_closes(data: MarketData, config: StrideConfig) -> pd.DataFrame:
     """Closes of the allocation assets (and refuge), one column each, by date."""
     alloc = config.experiments.allocation
     symbols = [*alloc.assets, *([alloc.refuge] if alloc.refuge != "cash" else [])]
+    if alloc.mode == "sleeve":
+        symbols = [*alloc.core, *[s for s in alloc.assets if s not in alloc.core]]
     missing = [s for s in symbols if s not in data.bars]
     if missing:
         raise ValueError(f"no bars for the allocation symbols {missing}")
@@ -452,7 +454,7 @@ class Engine:
         self.rotation_sma = _rotation_average(data, config) if self.rotating else {}
         self.allocating = "allocation" in config.experiments.enabled and not self.rotating
         self.allocation_closes = _allocation_closes(data, config) if self.allocating else None
-        self.allocation_month: tuple[int, int] | None = None
+        self.allocation_month: tuple[int, ...] | None = None
         self.allocation_weights: dict[str, float] = {}
         self.lots: list[UnitLot] = []
         self.held: dict[str, HeldInstrument] = {}
@@ -796,15 +798,18 @@ class Engine:
         self, day: pd.Timestamp, equity: float, cash: float, positions: dict[str, float]
     ) -> None:
         """Experiment allocation (docs/design/strategy_search.md): on the first trading
-        day of each month, the pre-registered strategy sets weights from closes up
-        to t and the risk-free rate known at t-1; the weights times the leverage
+        day of each month (every day with `rebalance: daily`), the pre-registered
+        strategy sets weights from closes up to t and the risk-free rate known at t-1;
+        the weights times the leverage
         (`fixed_leverage` when the run sets one, else `allocation.leverage`), times
         the drawdown scaling when enabled, become exposures that the leveraged-ETF
         route maps to instruments. Other days send nothing (the kill switch is
         still checked every day). Orders go through the same resizing rule, split,
         guard and broker as the main strategy."""
         drawdown = min(max(self.twr.drawdown, 0.0), 1.0)
-        month = (day.year, day.month)
+        month: tuple[int, ...] = (day.year, day.month)
+        if self.config.experiments.allocation.rebalance == "daily":
+            month = (day.year, day.month, day.day)
         if month == self.allocation_month or self.allocation_closes is None:
             self._record_risk(day, None, 0, 0.0, 0.0, ALLOCATION, drawdown, [])
             return

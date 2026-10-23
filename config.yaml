@@ -117,7 +117,7 @@ experiments:                       # owner request 2026-10-23; measured in valid
     refuge: IEF                    # below the average: IEF, or cash
   allocation:                      # pre-registered search: docs/design/strategy_search.md
     mode: dual_momentum            # dual_momentum | relative_strength | vol_managed |
-                                   # momentum_vol | risk_parity | hold
+                                   # momentum_vol | risk_parity | hold | sleeve
     assets: [SPY, EFA]             # dual momentum: US vs international equities
     refuge: IEF
     lookback: 252                  # 12 months
@@ -127,3 +127,15 @@ experiments:                       # owner request 2026-10-23; measured in valid
     max_weight: 3.0                # vol_managed: weight cap
     vol_window: 21                 # days behind the realized volatility (Moreira and Muir: 21)
     leverage: 1.0                  # multiplies the weights (leveraged ETFs above 1x)
+    rebalance: monthly             # monthly | daily
+    core: [SPY]                    # sleeve (round 5): holds 1 - sleeve of equity
+    sleeve: 0.20                   # owner request 2026-10-23: 20% in crypto
+    signal: trend                  # hold | trend | breakout | range | dip
+    trend_sma: 200
+    entry: 55                      # breakout 55/20 (Turtle); range uses 20/20
+    exit: 20
+    kelly_fraction: 0.5            # half Kelly; 0 = the full share
+    kelly_window: 504              # two years of returns
+    dip_drop: 0.25                 # dip (owner idea): buy 25% below the 90-day high,
+    dip_window: 90
+    take_profit: 0.05              # sell 5% above the buy close (costs covered)

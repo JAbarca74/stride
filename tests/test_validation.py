@@ -408,6 +408,25 @@ def test_round_four_uses_the_twelve_month_window_and_two_levels() -> None:
     assert v.candidate_config(CONFIG, "spy_levered").experiments.dd_scale_window == 0
 
 
+def test_round_five_is_a_twenty_percent_crypto_sleeve_without_leverage() -> None:
+    names = [n for n in v.strategy_candidates(CONFIG) if n.startswith("crypto_")]
+    assert names == list(v.ROUND_5)
+    for name in names:
+        assert v.candidate_levels(name, (1.5, 2.0)) == (1.0,)
+        alloc = v.candidate_config(CONFIG, name).experiments.allocation
+        assert alloc.mode == "sleeve" and alloc.sleeve == 0.20
+        assert alloc.core == ["SPY"] and alloc.assets == ["IBIT", "ETHA"]
+    trend = v.candidate_config(CONFIG, "crypto_trend").experiments.allocation
+    assert trend.kelly_fraction == 0.5 and trend.rebalance == "daily"
+    held = v.candidate_config(CONFIG, "crypto_hold").experiments.allocation
+    assert held.kelly_fraction == 0.0 and held.rebalance == "monthly"
+    rng = v.candidate_config(CONFIG, "crypto_range").experiments.allocation
+    assert (rng.entry, rng.exit) == (20, 20)
+    dip = v.candidate_config(CONFIG, "crypto_dip").experiments.allocation
+    assert (dip.dip_drop, dip.dip_window, dip.take_profit) == (0.25, 90, 0.05)
+    assert dip.kelly_fraction == 0.0
+
+
 def test_round_three_holds_spy_at_one_and_a_half_only() -> None:
     assert v.candidate_levels("spy_levered", (1.0,)) == (1.5,)
     cfg = v.candidate_config(CONFIG, "spy_levered")

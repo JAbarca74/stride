@@ -690,6 +690,8 @@ ROUND_4 = ("spy_levered_12m", "qqq_levered_12m")
 ROUND_4_LEVELS = (1.5, 2.0)
 ROUND_4_SCALE_WINDOW = 252
 SEARCH_UNIVERSE_CANDIDATES = (*ROUND_2, "qqq_levered_12m")
+# Round 5 (docs/design/strategy_search_round5.md): 80% SPY, 20% crypto sleeve.
+ROUND_5 = ("crypto_hold", "crypto_trend", "crypto_breakout", "crypto_range", "crypto_dip")
 DSR_PASS = 0.95
 SEARCH_MAX_DRAWDOWN = 0.40
 EULER_GAMMA = 0.5772156649015329
@@ -717,6 +719,17 @@ def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
         "spy_levered": {"mode": "hold", "assets": ["SPY"]},
         "spy_levered_12m": {"mode": "hold", "assets": ["SPY"]},
         "qqq_levered_12m": {"mode": "hold", "assets": ["QQQ"]},
+        **{
+            f"crypto_{signal}": {
+                "mode": "sleeve", "core": ["SPY"], "assets": ["IBIT", "ETHA"],
+                "sleeve": 0.20, "signal": signal, "trend_sma": 200,
+                "entry": 20 if signal == "range" else 55, "exit": 20,
+                "kelly_fraction": 0.0 if signal in ("hold", "dip") else 0.5,
+                "kelly_window": 504, "dip_drop": 0.25, "dip_window": 90, "take_profit": 0.05,
+                "rebalance": "monthly" if signal == "hold" else "daily",
+            }
+            for signal in ("hold", "trend", "breakout", "range", "dip")
+        },
     }  # fmt: skip
 
 
@@ -731,20 +744,23 @@ def candidate_config(config: StrideConfig, name: str) -> StrideConfig:
 
 def candidate_levels(name: str, levels: Sequence[float]) -> tuple[float, ...]:
     """The leverage levels a candidate may try (round 2 at most 1.5x; round 3
-    only 1.5x and round 4 1.5x and 2x, whatever `levels` says)."""
+    only 1.5x, round 4 1.5x and 2x, round 5 1x, whatever `levels` says)."""
     if name == "spy_levered":
         return (ROUND_3_LEVERAGE,)
     if name in ROUND_4:
         return ROUND_4_LEVELS
+    if name in ROUND_5:
+        return (1.0,)
     if name in ROUND_2:
         return tuple(x for x in levels if x <= ROUND_2_MAX_LEVERAGE)
     return tuple(levels)
 
 
 def _has_data(data: MarketData, settings: Mapping[str, object]) -> bool:
-    assets = settings.get("assets", [])
+    assets, core = settings.get("assets", []), settings.get("core", [])
     refuge = settings.get("refuge", "cash")
     symbols = [*(assets if isinstance(assets, list) else []), refuge]
+    symbols += core if isinstance(core, list) else []
     return all(s in data.bars for s in symbols if s != "cash")
 
 
@@ -865,7 +881,7 @@ def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
     lines = [
         "",
         "## 10. Pre-registered strategy search (docs/design/strategy_search.md,"
-        " strategy_search_round2.md to strategy_search_round4.md)",
+        " strategy_search_round2.md to strategy_search_round5.md)",
         "",
         "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
         " max drawdown <= 40%.",
