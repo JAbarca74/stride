@@ -193,7 +193,7 @@ class AllocationConfig(_Section):
     the weights; above 1x it is reached with the eligible leveraged ETFs."""
 
     mode: Literal[
-        "dual_momentum", "relative_strength", "vol_managed", "momentum_vol", "risk_parity"
+        "dual_momentum", "relative_strength", "vol_managed", "momentum_vol", "risk_parity", "hold"
     ]
     assets: Annotated[list[Ticker], Field(min_length=1)]
     refuge: Annotated[str, Field(pattern=r"^([A-Z]{1,6}|cash)$")]

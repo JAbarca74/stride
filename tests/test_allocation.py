@@ -16,6 +16,7 @@ from stride.config import ConfigError, StrideConfig, load_config
 from stride.data.calendar import trading_days
 from stride.strategy.allocation import (
     dual_momentum,
+    hold,
     hurdle,
     lookback_return,
     momentum_vol,
@@ -150,12 +151,19 @@ def test_risk_parity_weights_inverse_to_volatility_and_hits_the_target() -> None
     assert risk_parity(closes.iloc[:10], 0.0, **kw) == {}
 
 
+def test_hold_is_always_fully_invested_in_equal_weights() -> None:
+    closes = _closes(SPY=-0.5, EFA=0.1)
+    assert hold(closes, 0.5, assets=["SPY"]) == {"SPY": 1.0}  # even in a crash
+    assert hold(closes, 0.0, assets=["SPY", "EFA", "MISSING"]) == {"SPY": 0.5, "EFA": 0.5}
+    assert hold(closes, 0.0, assets=["MISSING"]) == {}
+
+
 def test_target_weights_dispatch_on_the_config_mode() -> None:
     closes = _closes(SPY=0.15, EFA=0.05, IEF=0.0)
     settings = CONFIG.experiments.allocation
     assert target_weights(settings, closes, 0.02) == {"SPY": 1.0}
     noisy = _noisy(SPY=0.20, EFA=0.10, IEF=0.05)
-    for mode in ("momentum_vol", "risk_parity", "vol_managed", "relative_strength"):
+    for mode in ("momentum_vol", "risk_parity", "vol_managed", "relative_strength", "hold"):
         weights = target_weights(settings.model_copy(update={"mode": mode}), noisy, 0.0)
         assert weights, mode
         assert set(weights) <= {"SPY", "EFA", "IEF"}

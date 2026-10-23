@@ -682,6 +682,8 @@ def _selected_markdown(r: SelectedWalkForward | None) -> list[str]:
 SEARCH_LEVERAGES = (1.0, 1.5, 2.0)
 ROUND_2 = ("sector_momentum", "momentum_vol", "risk_parity")
 ROUND_2_MAX_LEVERAGE = 1.5  # round 2 never tries more than 1.5x
+# Round 3 (docs/design/strategy_search_round3.md): SPY held at 1.5x, owner choice.
+ROUND_3_LEVERAGE = 1.5
 DSR_PASS = 0.95
 SEARCH_MAX_DRAWDOWN = 0.40
 EULER_GAMMA = 0.5772156649015329
@@ -706,6 +708,7 @@ def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
                          "max_weight": 2.0, "vol_window": 63},
         "risk_parity": {"mode": "risk_parity", "assets": ["SPY", "QQQ", "TLT", "GLD"],
                         "target_vol": 0.15, "max_weight": 2.0, "vol_window": 63},
+        "spy_levered": {"mode": "hold", "assets": ["SPY"]},
     }  # fmt: skip
 
 
@@ -716,7 +719,10 @@ def candidate_config(config: StrideConfig, name: str) -> StrideConfig:
 
 
 def candidate_levels(name: str, levels: Sequence[float]) -> tuple[float, ...]:
-    """The leverage levels a candidate may try (round 2 at most 1.5x)."""
+    """The leverage levels a candidate may try (round 2 at most 1.5x; round 3
+    only 1.5x, whatever `levels` says)."""
+    if name == "spy_levered":
+        return (ROUND_3_LEVERAGE,)
     if name in ROUND_2:
         return tuple(x for x in levels if x <= ROUND_2_MAX_LEVERAGE)
     return tuple(levels)
@@ -845,8 +851,8 @@ def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
         return []
     lines = [
         "",
-        "## 10. Pre-registered strategy search (docs/design/strategy_search.md and"
-        " strategy_search_round2.md)",
+        "## 10. Pre-registered strategy search (docs/design/strategy_search.md,"
+        " strategy_search_round2.md and strategy_search_round3.md)",
         "",
         "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
         " max drawdown <= 40%.",

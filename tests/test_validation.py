@@ -396,3 +396,10 @@ def test_round_two_is_capped_at_one_and_a_half_and_uses_the_search_universe() ->
     assert cfg.experiments.allocation.mode == "relative_strength"
     assert "QQQ" in cfg.leveraged_etfs
     assert set(v.candidate_config(CONFIG, "vol_managed").universe) == set(CONFIG.universe)
+
+
+def test_round_three_holds_spy_at_one_and_a_half_only() -> None:
+    assert v.candidate_levels("spy_levered", (1.0,)) == (1.5,)
+    cfg = v.candidate_config(CONFIG, "spy_levered")
+    assert cfg.experiments.allocation.mode == "hold"
+    assert cfg.experiments.allocation.assets == ["SPY"]

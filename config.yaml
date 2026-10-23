@@ -115,7 +115,8 @@ experiments:                       # owner request 2026-10-23; measured in valid
     multiple: 3                    # UPRO; 2 = SSO
     refuge: IEF                    # below the average: IEF, or cash
   allocation:                      # pre-registered search: docs/design/strategy_search.md
-    mode: dual_momentum            # dual_momentum | relative_strength | vol_managed
+    mode: dual_momentum            # dual_momentum | relative_strength | vol_managed |
+                                   # momentum_vol | risk_parity | hold
     assets: [SPY, EFA]             # dual momentum: US vs international equities
     refuge: IEF
     lookback: 252                  # 12 months

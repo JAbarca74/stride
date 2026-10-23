@@ -17,6 +17,7 @@ missing or too short history never adds a position.
                      vol_managed (the refuge stays at 1).
 - risk_parity        Round 2: inverse-volatility weights, the whole portfolio
                      scaled to the target volatility, total weight capped.
+- hold               Round 3: equal weights in the assets, always invested.
 """
 
 from __future__ import annotations
@@ -187,10 +188,18 @@ def risk_parity(
     return {a: w * scale for a, w in base.items()}
 
 
+def hold(closes: pd.DataFrame, risk_free: float, *, assets: Sequence[str]) -> dict[str, float]:
+    """Equal weights in the assets that have a price today, always invested."""
+    held = [a for a in assets if a in closes.columns and closes[a].notna().any()]
+    return dict.fromkeys(held, 1.0 / len(held)) if held else {}
+
+
 def target_weights(
     settings: AllocationConfig, closes: pd.DataFrame, risk_free: float
 ) -> dict[str, float]:
     """Dispatch on `settings.mode` (`experiments.allocation` in config.yaml)."""
+    if settings.mode == "hold":
+        return hold(closes, risk_free, assets=settings.assets)
     if settings.mode == "dual_momentum":
         return dual_momentum(
             closes,
