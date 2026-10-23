@@ -4,22 +4,22 @@
     "2026-10-22"
   ],
   "verdict": {
-    "oos_sharpe": 0.40391095851425785,
+    "oos_sharpe": 0.28774323592679774,
     "spy_sharpe": 0.8270580545404728,
     "beats_spy": false,
     "below_alarm": true,
-    "stable": true,
+    "stable": false,
     "alarm": false,
     "passes": false
   },
   "walk_forward": {
     "strategy": {
-      "cagr": 0.05541156286518678,
-      "volatility": 0.10565688106428728,
-      "sharpe": 0.40391095851425785,
-      "sortino": 0.5628951453585531,
-      "max_drawdown": 0.2217219319579974,
-      "calmar": 0.24991466733062676
+      "cagr": 0.050095204882497635,
+      "volatility": 0.15136397836957682,
+      "sharpe": 0.28774323592679774,
+      "sortino": 0.3913748181775812,
+      "max_drawdown": 0.34651053536539533,
+      "calmar": 0.14457051018570688
     },
     "spy": {
       "cagr": 0.14977856524841893,
@@ -33,246 +33,249 @@
       {
         "out_of_sample": "2012",
         "days": 250,
-        "sharpe": 0.6161939116455798,
-        "cagr": 0.04688761783418083,
-        "max_drawdown": 0.04813886571498893,
+        "sharpe": 0.42629692470362995,
+        "cagr": 0.051997811575724695,
+        "max_drawdown": 0.10903417440140828,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2013",
         "days": 252,
-        "sharpe": 0.13503197244421675,
-        "cagr": 0.007477238409627329,
-        "max_drawdown": 0.087912928247867,
+        "sharpe": 0.14797924576023977,
+        "cagr": 0.010647604999889149,
+        "max_drawdown": 0.131201693328457,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2014",
         "days": 252,
-        "sharpe": -0.9601861803633529,
-        "cagr": -0.0650276012852985,
-        "max_drawdown": 0.11415869709867188,
+        "sharpe": -1.392544707729871,
+        "cagr": -0.15071377310844558,
+        "max_drawdown": 0.2134589184078045,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2015",
         "days": 252,
-        "sharpe": -0.8319305672585467,
-        "cagr": -0.06152638030941149,
-        "max_drawdown": 0.1303656590134027,
+        "sharpe": -0.7545049237390635,
+        "cagr": -0.0602253320939683,
+        "max_drawdown": 0.1346975561245276,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2016",
         "days": 252,
-        "sharpe": -0.1686321077201037,
-        "cagr": -0.01991049358939434,
-        "max_drawdown": 0.12737304803494431,
-        "kill_switch": ""
+        "sharpe": -0.6233016690146377,
+        "cagr": -0.10340627071722575,
+        "max_drawdown": 0.1645607754542754,
+        "kill_switch": "2016-09-13"
       },
       {
         "out_of_sample": "2017",
         "days": 251,
-        "sharpe": 2.1448542781743534,
-        "cagr": 0.22166343246225084,
-        "max_drawdown": 0.0441748065989751,
+        "sharpe": 1.4889314698637024,
+        "cagr": 0.202541968929554,
+        "max_drawdown": 0.0858965104006647,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2018",
         "days": 251,
-        "sharpe": -0.8237233816048649,
-        "cagr": -0.03522294929699321,
-        "max_drawdown": 0.10464075517496763,
+        "sharpe": -0.8367422558321315,
+        "cagr": -0.05966367131090311,
+        "max_drawdown": 0.14715662419314157,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2019",
         "days": 252,
-        "sharpe": 1.392803323763203,
-        "cagr": 0.13158253384409213,
-        "max_drawdown": 0.03613257712800899,
+        "sharpe": 1.3135819837391112,
+        "cagr": 0.16716602837282957,
+        "max_drawdown": 0.04625462639884448,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2020",
         "days": 253,
-        "sharpe": 1.6516707768140302,
-        "cagr": 0.2932168430991311,
-        "max_drawdown": 0.12652658598459332,
+        "sharpe": 0.8521505606207701,
+        "cagr": 0.1986637818741499,
+        "max_drawdown": 0.20858299881939812,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2021",
         "days": 252,
-        "sharpe": 0.15833614492321682,
-        "cagr": 0.013065642505129427,
-        "max_drawdown": 0.14866678492493335,
+        "sharpe": 0.2406351384846797,
+        "cagr": 0.029371333868272398,
+        "max_drawdown": 0.18188082637365266,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2022",
         "days": 251,
-        "sharpe": 0.5541864250527488,
-        "cagr": 0.08305975424787215,
-        "max_drawdown": 0.12232932363258986,
+        "sharpe": 0.7042431098550461,
+        "cagr": 0.1261610528514312,
+        "max_drawdown": 0.12060067219287851,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2023",
         "days": 250,
-        "sharpe": -0.9518077702447945,
-        "cagr": -0.054040305239336894,
-        "max_drawdown": 0.12880152202204675,
+        "sharpe": -1.1227021725213213,
+        "cagr": -0.07987856120966508,
+        "max_drawdown": 0.14901330721136574,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2024",
         "days": 252,
-        "sharpe": 0.39022590727727835,
-        "cagr": 0.08663196974248466,
-        "max_drawdown": 0.06758928903068417,
+        "sharpe": 0.4617267173682195,
+        "cagr": 0.11410382864547053,
+        "max_drawdown": 0.08965282556136245,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2025",
         "days": 250,
-        "sharpe": 1.0709420910379959,
-        "cagr": 0.1933301693540419,
-        "max_drawdown": 0.07591495856186958,
+        "sharpe": 1.0132100443721581,
+        "cagr": 0.2505717827531755,
+        "max_drawdown": 0.11172644848884028,
         "kill_switch": ""
       },
       {
         "out_of_sample": "2026",
         "days": 203,
-        "sharpe": 0.3034719922160183,
-        "cagr": 0.06862202491282576,
-        "max_drawdown": 0.07871872849031247,
+        "sharpe": 0.8775910442977964,
+        "cagr": 0.19333924479437248,
+        "max_drawdown": 0.09155907209332914,
         "kill_switch": ""
       }
     ]
   },
   "sensitivity": {
-    "base_sharpe": 0.6228833134421284,
-    "fragile": [],
+    "base_sharpe": 0.5174955724513779,
+    "fragile": [
+      "risk.kill_switch_dd",
+      "strategy.exit_breakout"
+    ],
     "runs": [
       {
         "parameter": "strategy.sma_filter",
         "value": 160.0,
-        "sharpe": 0.559745544483626,
-        "drop": 0.10136371868688453,
+        "sharpe": 0.4918967173535387,
+        "drop": 0.04946680988317904,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.sma_filter",
         "value": 240.0,
-        "sharpe": 0.6288149913010994,
-        "drop": -0.009522935886967024,
+        "sharpe": 0.4341585617806922,
+        "drop": 0.1610390795730253,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.entry_breakout",
         "value": 44.0,
-        "sharpe": 0.6457727117286765,
-        "drop": -0.03674748992721997,
+        "sharpe": 0.5355437799506113,
+        "drop": -0.03487606167090282,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.entry_breakout",
         "value": 66.0,
-        "sharpe": 0.6033223206201898,
-        "drop": 0.031403944205604536,
+        "sharpe": 0.44395711106833613,
+        "drop": 0.14210452281686176,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.exit_breakout",
         "value": 16.0,
-        "sharpe": 0.5481223641505248,
-        "drop": 0.1200240039799197,
+        "sharpe": 0.48148192659930755,
+        "drop": 0.06959218159388998,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.exit_breakout",
         "value": 24.0,
-        "sharpe": 0.6076336425811063,
-        "drop": 0.02448238784364059,
-        "fragile": false,
+        "sharpe": -0.11439449965064634,
+        "drop": 1.2210540644990628,
+        "fragile": true,
         "note": ""
       },
       {
         "parameter": "strategy.atr_period",
         "value": 16.0,
-        "sharpe": 0.6256916996243665,
-        "drop": -0.004508687456593801,
+        "sharpe": 0.5140008406545472,
+        "drop": 0.006753162699105099,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.atr_period",
         "value": 24.0,
-        "sharpe": 0.5888112351000675,
-        "drop": 0.05470057971817309,
+        "sharpe": 0.506776189049543,
+        "drop": 0.020713961572766938,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.stop_n",
         "value": 1.6,
-        "sharpe": 0.5289233237113442,
-        "drop": 0.15084685639040477,
+        "sharpe": 0.4132004886873166,
+        "drop": 0.2015381180364794,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.stop_n",
         "value": 2.4,
-        "sharpe": 0.5385779225470855,
-        "drop": 0.13534700492964113,
+        "sharpe": 0.4464793037114961,
+        "drop": 0.13723067890895677,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.pyramid_step_n",
         "value": 0.4,
-        "sharpe": 0.6252989635638404,
-        "drop": -0.0038781744021408934,
+        "sharpe": 0.4961594492299354,
+        "drop": 0.041229576362118894,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "strategy.pyramid_step_n",
         "value": 0.6,
-        "sharpe": 0.6054213100038534,
-        "drop": 0.028034148710418885,
+        "sharpe": 0.5326586046499073,
+        "drop": -0.029300795998508957,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.risk_per_unit",
         "value": 0.008,
-        "sharpe": 0.6305719132234509,
-        "drop": -0.012343563578279666,
+        "sharpe": 0.5328752546877121,
+        "drop": -0.029719446996388087,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.risk_per_unit",
         "value": 0.012,
-        "sharpe": 0.6326141424929975,
-        "drop": -0.015622234278673073,
+        "sharpe": 0.507505143526307,
+        "drop": 0.019305341836542023,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.kelly_fraction",
         "value": 0.8,
-        "sharpe": 0.6108396485966229,
-        "drop": 0.019335346742475435,
+        "sharpe": 0.49523261643572536,
+        "drop": 0.04302057293010809,
         "fragile": false,
         "note": ""
       },
@@ -287,63 +290,63 @@
       {
         "parameter": "risk.max_portfolio_vol",
         "value": 0.48,
-        "sharpe": 0.6196854545947468,
-        "drop": 0.005133961334924688,
+        "sharpe": 0.5560032126730351,
+        "drop": -0.07441153561806609,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.max_portfolio_vol",
         "value": 0.72,
-        "sharpe": 0.6257046544577233,
-        "drop": -0.004529485627097257,
+        "sharpe": 0.529964424778303,
+        "drop": -0.024094606776749967,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.max_etf_portfolio_leverage",
         "value": 2.0,
-        "sharpe": 0.6228833134421254,
-        "drop": 4.812461823584278e-15,
+        "sharpe": 0.49171116425700556,
+        "drop": 0.04982536965916737,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.max_etf_portfolio_leverage",
         "value": 3.0,
-        "sharpe": 0.6228833134421271,
-        "drop": 2.1388719215930123e-15,
+        "sharpe": 0.5178783700582317,
+        "drop": -0.0007397118492057168,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.dd_delever_at",
         "value": 0.16000000000000003,
-        "sharpe": 0.6075633754024607,
-        "drop": 0.024595197381364838,
+        "sharpe": 0.48180672532553237,
+        "drop": 0.06896454583521819,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.dd_delever_at",
         "value": 0.24,
-        "sharpe": 0.6298758314193814,
-        "drop": -0.01122604800345586,
+        "sharpe": 0.5691233697997004,
+        "drop": -0.09976471316220435,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "risk.kill_switch_dd",
         "value": 0.32000000000000006,
-        "sharpe": 0.6228833134421284,
-        "drop": 0.0,
-        "fragile": false,
+        "sharpe": 0.05472165353696605,
+        "drop": 0.894256769622686,
+        "fragile": true,
         "note": ""
       },
       {
         "parameter": "risk.kill_switch_dd",
         "value": 0.48,
-        "sharpe": 0.6228833134421284,
+        "sharpe": 0.5174955724513779,
         "drop": 0.0,
         "fragile": false,
         "note": ""
@@ -351,32 +354,32 @@
       {
         "parameter": "execution.rebalance_band",
         "value": 0.16000000000000003,
-        "sharpe": 0.6144037468940009,
-        "drop": 0.013613410995501594,
+        "sharpe": 0.49567975626690813,
+        "drop": 0.042156527216509664,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "execution.rebalance_band",
         "value": 0.24,
-        "sharpe": 0.6439719972471207,
-        "drop": -0.03385655603527678,
+        "sharpe": 0.5368112642301863,
+        "drop": -0.037325327610649786,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "execution.max_resize_cost_pct",
         "value": 0.004,
-        "sharpe": 0.6088695255788951,
-        "drop": 0.0224982553887846,
+        "sharpe": 0.5157765118971169,
+        "drop": 0.003321884564379499,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "execution.max_resize_cost_pct",
         "value": 0.006,
-        "sharpe": 0.6253860149892541,
-        "drop": -0.004017929992851129,
+        "sharpe": 0.5045333861503871,
+        "drop": 0.025047917298285014,
         "fragile": false,
         "note": ""
       },
@@ -391,40 +394,40 @@
       {
         "parameter": "leverage_switch.enter_k",
         "value": 1.5,
-        "sharpe": 0.6228833134421284,
-        "drop": 0.0,
+        "sharpe": 0.5132904061570814,
+        "drop": 0.008125994729532805,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "leverage_switch.exit_k",
         "value": 0.76,
-        "sharpe": 0.6228833134421284,
-        "drop": 0.0,
+        "sharpe": 0.5195139867076651,
+        "drop": -0.0039003507734877885,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "leverage_switch.exit_k",
         "value": 1.14,
-        "sharpe": 0.6228833134421284,
-        "drop": 0.0,
+        "sharpe": 0.5693783115144014,
+        "drop": -0.10025735837169557,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "leverage_switch.min_hold_days",
         "value": 16.0,
-        "sharpe": 0.6228833134421284,
-        "drop": 0.0,
+        "sharpe": 0.4962792500612018,
+        "drop": 0.04099807519062297,
         "fragile": false,
         "note": ""
       },
       {
         "parameter": "leverage_switch.min_hold_days",
         "value": 24.0,
-        "sharpe": 0.6228833134421284,
-        "drop": 0.0,
+        "sharpe": 0.5175033054054011,
+        "drop": -1.4943034172448656e-05,
         "fragile": false,
         "note": ""
       }
@@ -434,135 +437,270 @@
     "samples": 5000,
     "block_days": 20,
     "sharpe": [
-      -0.12565606991110925,
-      0.39490872529703624,
-      0.9179324850365815
+      -0.19392653995555445,
+      0.29041475515389265,
+      0.7701269885123375
     ],
     "max_drawdown": [
-      0.14194856180665427,
-      0.2303668782640293,
-      0.4083188555270309
+      0.21005413165047468,
+      0.3484859669923058,
+      0.590601692262656
     ],
     "full_period": {
       "sharpe": [
-        0.18271261003378528,
-        0.6263581146733839,
-        1.0514013896322096
+        0.08430567894723938,
+        0.5254079852548439,
+        0.9425434389873389
       ],
       "max_drawdown": [
-        0.15373163028404682,
-        0.2350957691805014,
-        0.4010889923739399
+        0.2230175188843548,
+        0.33981225936764853,
+        0.5589684359698657
       ]
     }
   },
   "leverage": [
     {
       "leverage": "dynamic",
-      "cagr": 0.08504454968963282,
-      "volatility": 0.11690806929632228,
-      "sharpe": 0.6228833134421284,
-      "max_drawdown": 0.2589318359755819,
-      "average_exposure": 0.7839725335296681,
+      "cagr": 0.09036302275588204,
+      "volatility": 0.16256885931408074,
+      "sharpe": 0.5174955724513779,
+      "max_drawdown": 0.34943636060348415,
+      "average_exposure": 1.0226526504259206,
       "kill_switch": ""
     },
     {
       "leverage": "1x",
-      "cagr": 0.09820599494037352,
-      "volatility": 0.12175108326979589,
-      "sharpe": 0.7019058333590116,
-      "max_drawdown": 0.22146253657827752,
-      "average_exposure": 0.814201585538018,
+      "cagr": 0.11600703665610324,
+      "volatility": 0.17772139796638933,
+      "sharpe": 0.6186924268496783,
+      "max_drawdown": 0.3594448739991539,
+      "average_exposure": 1.1300557699900258,
       "kill_switch": ""
     },
     {
       "leverage": "2x",
-      "cagr": 0.10165569303611188,
-      "volatility": 0.12678246531139334,
-      "sharpe": 0.7035908638790602,
-      "max_drawdown": 0.23435521579546836,
-      "average_exposure": 0.8201083505566479,
+      "cagr": 0.13280587403673305,
+      "volatility": 0.1961065340290127,
+      "sharpe": 0.654076139881484,
+      "max_drawdown": 0.38028927697635606,
+      "average_exposure": 1.1785420630108026,
       "kill_switch": ""
     },
     {
       "leverage": "3x",
-      "cagr": 0.10145982080945726,
-      "volatility": 0.12704398244666337,
-      "sharpe": 0.7009997217611056,
-      "max_drawdown": 0.23948705869264564,
-      "average_exposure": 0.8203483186976651,
+      "cagr": 0.13359879617953951,
+      "volatility": 0.20292370084106034,
+      "sharpe": 0.6420873452945923,
+      "max_drawdown": 0.3967818356359285,
+      "average_exposure": 1.1898747392188231,
       "kill_switch": ""
     },
     {
       "leverage": "4x",
-      "cagr": 0.10145982080945681,
-      "volatility": 0.1270439824466634,
-      "sharpe": 0.7009997217611039,
-      "max_drawdown": 0.23948705869264963,
-      "average_exposure": 0.8203483186976651,
-      "kill_switch": ""
+      "cagr": 0.020529114762123157,
+      "volatility": 0.12869127311368952,
+      "sharpe": 0.10085199511770843,
+      "max_drawdown": 0.40364170618367456,
+      "average_exposure": 0.5498992647574976,
+      "kill_switch": "2016-09-13"
     }
   ],
   "experiments": [
     {
       "run": "configured (all improvements)",
-      "cagr": 0.08504454968963282,
-      "sharpe": 0.6228833134421284,
-      "max_drawdown": 0.2589318359755819,
-      "costs_per_year": 0.027068214638766998,
-      "fills": 2720,
-      "resizes_skipped": 368,
-      "final_equity": 13938.332100701757
+      "cagr": 0.09036302275588204,
+      "sharpe": 0.5174955724513779,
+      "max_drawdown": 0.34943636060348415,
+      "costs_per_year": 0.027679326243505244,
+      "fills": 2710,
+      "resizes_skipped": 666,
+      "final_equity": 15348.400173903145
     },
     {
       "run": "without cost-aware resizing",
-      "cagr": 0.08003213801793319,
-      "sharpe": 0.5755812197987924,
-      "max_drawdown": 0.3761990442313864,
-      "costs_per_year": 0.029393762931703423,
-      "fills": 2761,
+      "cagr": 0.01009666232629236,
+      "sharpe": 4.0466466661554426e-05,
+      "max_drawdown": 0.40007991584866265,
+      "costs_per_year": 0.014331230659608384,
+      "fills": 1166,
       "resizes_skipped": 0,
-      "final_equity": 13403.188596318
+      "final_equity": 4538.586612513262
     },
     {
       "run": "Fixed pricing instead of Tiered",
-      "cagr": -0.013436419066423344,
-      "sharpe": -0.3979682959363582,
-      "max_drawdown": 0.40316838272611644,
-      "costs_per_year": 0.021125036659014326,
-      "fills": 1026,
-      "resizes_skipped": 617,
-      "final_equity": 4317.016010316599
+      "cagr": -0.008654508503154523,
+      "sharpe": -0.3096586724518402,
+      "max_drawdown": 0.4009951367613923,
+      "costs_per_year": 0.012278366792938634,
+      "fills": 719,
+      "resizes_skipped": 839,
+      "final_equity": 4558.282056810362
     },
     {
       "run": "cash earning the full rate (old assumption)",
-      "cagr": 0.08968874102651214,
-      "sharpe": 0.6587478777933747,
-      "max_drawdown": 0.2583291056889968,
-      "costs_per_year": 0.026756199126249106,
-      "fills": 2720,
-      "resizes_skipped": 359,
-      "final_equity": 14491.420184904553
+      "cagr": 0.0980369919854922,
+      "sharpe": 0.5600041469008007,
+      "max_drawdown": 0.3501655875949744,
+      "costs_per_year": 0.027472306452679326,
+      "fills": 2718,
+      "resizes_skipped": 615,
+      "final_equity": 16210.602917233853
     },
     {
       "run": "with the wider universe (7 more ETFs)",
-      "cagr": 0.059547832881610585,
-      "sharpe": 0.4222005189900752,
-      "max_drawdown": 0.25410435091418215,
-      "costs_per_year": 0.03206407853312567,
-      "fills": 3449,
-      "resizes_skipped": 505,
-      "final_equity": 10638.749956654425
+      "cagr": 0.04880771236482784,
+      "sharpe": 0.29853144688229943,
+      "max_drawdown": 0.31805779026290226,
+      "costs_per_year": 0.03396184888277991,
+      "fills": 3531,
+      "resizes_skipped": 1015,
+      "final_equity": 9130.366220858376
     },
     {
       "run": "with the multi-horizon ensemble (20/10, 55/20, 100/40)",
-      "cagr": 0.04389979557764967,
-      "sharpe": 0.3176069017498082,
-      "max_drawdown": 0.34866913667590804,
-      "costs_per_year": 0.040605836061658476,
-      "fills": 3757,
-      "resizes_skipped": 1538,
-      "final_equity": 10271.212762343766
+      "cagr": 0.05527613377995255,
+      "sharpe": 0.346603718458523,
+      "max_drawdown": 0.3574781834923395,
+      "costs_per_year": 0.03987732139042447,
+      "fills": 3565,
+      "resizes_skipped": 2589,
+      "final_equity": 11599.12160923938
+    },
+    {
+      "run": "with drawdown scaling of the leverage",
+      "cagr": 0.0806876988018741,
+      "sharpe": 0.5062205985590881,
+      "max_drawdown": 0.20971279759507677,
+      "costs_per_year": 0.027633534209833444,
+      "fills": 2712,
+      "resizes_skipped": 708,
+      "final_equity": 14443.637344688103
     }
-  ]
+  ],
+  "goal": {
+    "summary": "NOT MET: best within a 25% drawdown is dynamic leverage, drawdown scaling on: CAGR 8.1% (21.9% short of 30%)",
+    "runs": [
+      {
+        "leverage": "3x",
+        "drawdown_scaling": "off",
+        "cagr": 0.13359879617953951,
+        "sharpe": 0.6420873452945923,
+        "max_drawdown": 0.3967818356359285,
+        "average_exposure": 1.1898747392188231,
+        "final_equity": 26397.35235804935,
+        "meets_goal": false
+      },
+      {
+        "leverage": "2x",
+        "drawdown_scaling": "off",
+        "cagr": 0.13280587403673305,
+        "sharpe": 0.654076139881484,
+        "max_drawdown": 0.38028927697635606,
+        "average_exposure": 1.1785420630108026,
+        "final_equity": 25899.19524289274,
+        "meets_goal": false
+      },
+      {
+        "leverage": "2.5x",
+        "drawdown_scaling": "off",
+        "cagr": 0.13029689400296895,
+        "sharpe": 0.6362833013775225,
+        "max_drawdown": 0.3917534944041492,
+        "average_exposure": 1.1851770884577424,
+        "final_equity": 25079.578098093127,
+        "meets_goal": false
+      },
+      {
+        "leverage": "1.5x",
+        "drawdown_scaling": "off",
+        "cagr": 0.12320222129954672,
+        "sharpe": 0.626342893017172,
+        "max_drawdown": 0.3749927148739223,
+        "average_exposure": 1.1599759971029258,
+        "final_equity": 23861.395047632173,
+        "meets_goal": false
+      },
+      {
+        "leverage": "1x",
+        "drawdown_scaling": "off",
+        "cagr": 0.11600703665610324,
+        "sharpe": 0.6186924268496783,
+        "max_drawdown": 0.3594448739991539,
+        "average_exposure": 1.1300557699900258,
+        "final_equity": 20956.130418031153,
+        "meets_goal": false
+      },
+      {
+        "leverage": "3x",
+        "drawdown_scaling": "on",
+        "cagr": 0.10960342156221192,
+        "sharpe": 0.5704004645488869,
+        "max_drawdown": 0.36200197150061075,
+        "average_exposure": 1.1431312181014295,
+        "final_equity": 19205.22720334279,
+        "meets_goal": false
+      },
+      {
+        "leverage": "2.5x",
+        "drawdown_scaling": "on",
+        "cagr": 0.10929217573836558,
+        "sharpe": 0.5752522910457587,
+        "max_drawdown": 0.33370163192676616,
+        "average_exposure": 1.1336474099231408,
+        "final_equity": 18941.334210123772,
+        "meets_goal": false
+      },
+      {
+        "leverage": "2x",
+        "drawdown_scaling": "on",
+        "cagr": 0.10718918047054782,
+        "sharpe": 0.5748010903489289,
+        "max_drawdown": 0.35384065043816826,
+        "average_exposure": 1.1114830591545606,
+        "final_equity": 18442.832524241276,
+        "meets_goal": false
+      },
+      {
+        "leverage": "1x",
+        "drawdown_scaling": "on",
+        "cagr": 0.10668686792096427,
+        "sharpe": 0.60645464616955,
+        "max_drawdown": 0.28288025584823084,
+        "average_exposure": 1.0424763983382213,
+        "final_equity": 18350.27229681423,
+        "meets_goal": false
+      },
+      {
+        "leverage": "1.5x",
+        "drawdown_scaling": "on",
+        "cagr": 0.09899610684038596,
+        "sharpe": 0.5509311200566891,
+        "max_drawdown": 0.37380105165774913,
+        "average_exposure": 1.0776440265439868,
+        "final_equity": 17042.941323742973,
+        "meets_goal": false
+      },
+      {
+        "leverage": "dynamic",
+        "drawdown_scaling": "off",
+        "cagr": 0.09036302275588204,
+        "sharpe": 0.5174955724513779,
+        "max_drawdown": 0.34943636060348415,
+        "average_exposure": 1.0226526504259206,
+        "final_equity": 15348.400173903145,
+        "meets_goal": false
+      },
+      {
+        "leverage": "dynamic",
+        "drawdown_scaling": "on",
+        "cagr": 0.0806876988018741,
+        "sharpe": 0.5062205985590881,
+        "max_drawdown": 0.20971279759507677,
+        "average_exposure": 0.9082883600990818,
+        "final_equity": 14443.637344688103,
+        "meets_goal": false
+      }
+    ]
+  }
 }
