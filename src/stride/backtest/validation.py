@@ -684,6 +684,12 @@ ROUND_2 = ("sector_momentum", "momentum_vol", "risk_parity")
 ROUND_2_MAX_LEVERAGE = 1.5  # round 2 never tries more than 1.5x
 # Round 3 (docs/design/strategy_search_round3.md): SPY held at 1.5x, owner choice.
 ROUND_3_LEVERAGE = 1.5
+# Round 4 (docs/design/strategy_search_round4.md): SPY or QQQ held at 1.5x or 2x,
+# the drawdown scaling measured from the peak of the last 12 months.
+ROUND_4 = ("spy_levered_12m", "qqq_levered_12m")
+ROUND_4_LEVELS = (1.5, 2.0)
+ROUND_4_SCALE_WINDOW = 252
+SEARCH_UNIVERSE_CANDIDATES = (*ROUND_2, "qqq_levered_12m")
 DSR_PASS = 0.95
 SEARCH_MAX_DRAWDOWN = 0.40
 EULER_GAMMA = 0.5772156649015329
@@ -709,20 +715,27 @@ def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
         "risk_parity": {"mode": "risk_parity", "assets": ["SPY", "QQQ", "TLT", "GLD"],
                         "target_vol": 0.15, "max_weight": 2.0, "vol_window": 63},
         "spy_levered": {"mode": "hold", "assets": ["SPY"]},
+        "spy_levered_12m": {"mode": "hold", "assets": ["SPY"]},
+        "qqq_levered_12m": {"mode": "hold", "assets": ["QQQ"]},
     }  # fmt: skip
 
 
 def candidate_config(config: StrideConfig, name: str) -> StrideConfig:
-    """The configuration one candidate runs with (round 2 on the search universe)."""
-    base = with_search_universe(config) if name in ROUND_2 else config
+    """The configuration one candidate runs with (round 2 and QQQ on the search
+    universe; round 4 with the 12-month drawdown window)."""
+    base = with_search_universe(config) if name in SEARCH_UNIVERSE_CANDIDATES else config
+    if name in ROUND_4:
+        base = with_values(base, "experiments", dd_scale_window=ROUND_4_SCALE_WINDOW)
     return with_allocation(base, **strategy_candidates(config)[name])
 
 
 def candidate_levels(name: str, levels: Sequence[float]) -> tuple[float, ...]:
     """The leverage levels a candidate may try (round 2 at most 1.5x; round 3
-    only 1.5x, whatever `levels` says)."""
+    only 1.5x and round 4 1.5x and 2x, whatever `levels` says)."""
     if name == "spy_levered":
         return (ROUND_3_LEVERAGE,)
+    if name in ROUND_4:
+        return ROUND_4_LEVELS
     if name in ROUND_2:
         return tuple(x for x in levels if x <= ROUND_2_MAX_LEVERAGE)
     return tuple(levels)
@@ -852,7 +865,7 @@ def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
     lines = [
         "",
         "## 10. Pre-registered strategy search (docs/design/strategy_search.md,"
-        " strategy_search_round2.md and strategy_search_round3.md)",
+        " strategy_search_round2.md to strategy_search_round4.md)",
         "",
         "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
         " max drawdown <= 40%.",

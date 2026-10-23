@@ -228,6 +228,9 @@ class ExperimentsConfig(_Section):
     dd_scale_start: Fraction  # drawdown where leverage starts to shrink
     dd_scale_full: Fraction  # drawdown where it reaches the floor
     dd_scale_floor: Fraction  # share of the leverage kept at and beyond dd_scale_full
+    # Days behind the peak the scaling drawdown is measured from; 0 = all-time peak
+    # (round 4 of the strategy search, docs/design/strategy_search_round4.md).
+    dd_scale_window: Annotated[int, Field(ge=0)]
     rotation: RotationConfig
     allocation: AllocationConfig
 

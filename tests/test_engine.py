@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from datetime import date
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from stride.backtest.costs import max_commission_rate
 from stride.backtest.engine import (
     KILLED,
     BacktestSettings,
+    Engine,
     MarketData,
     PlannedOrder,
     _switch_summary,
@@ -36,6 +38,7 @@ from stride.backtest.engine import (
 from stride.config import StrideConfig, load_config
 from stride.data.calendar import trading_days
 from stride.risk import guard
+from stride.risk.kill_switch import TwrState
 from stride.strategy.rules import Decision, PositionState
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -575,6 +578,33 @@ def test_drawdown_scaling_lowers_the_leverage_in_a_drawdown() -> None:
     assert (shallow["leverage"] == 2.0).all()
     assert not deep.empty
     assert np.allclose(deep["leverage"], 2.0 * CONFIG.experiments.dd_scale_floor)
+
+
+def test_scaling_drawdown_uses_the_recent_peak_when_a_window_is_set() -> None:
+    engine = Engine.__new__(Engine)  # only the state _scaling_drawdown reads
+    engine.twr = TwrState(index=0.7, peak=1.0)
+    engine.twr_recent = deque([0.8, 0.75, 0.7], maxlen=3)
+    engine.config = CONFIG  # dd_scale_window 0: from the all-time peak
+    assert engine._scaling_drawdown() == pytest.approx(0.3)
+    windowed = CONFIG.experiments.model_copy(update={"dd_scale_window": 3})
+    engine.config = CONFIG.model_copy(update={"experiments": windowed})
+    assert engine._scaling_drawdown() == pytest.approx(1 - 0.7 / 0.8)
+
+
+def test_a_short_scaling_window_restores_leverage_sooner_after_a_crash() -> None:
+    settings = BacktestSettings(date(2019, 1, 2), date(2020, 12, 31), 10_000.0, fixed_leverage=2.0)
+
+    def deep_days(window: int) -> int:
+        experiments = CONFIG.experiments.model_copy(
+            update={"enabled": ["drawdown_scaling"], "dd_scale_window": window}
+        )
+        config = CONFIG.model_copy(update={"experiments": experiments})
+        risk = run_backtest(_market(seed=5), config, settings).risk_decisions
+        live = risk[risk["binding_limit"] != KILLED]
+        floor = 2.0 * CONFIG.experiments.dd_scale_floor
+        return int(np.isclose(live["leverage"], floor).sum())
+
+    assert deep_days(21) <= deep_days(0)
 
 
 def _rotation(**values: object) -> StrideConfig:

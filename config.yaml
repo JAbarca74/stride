@@ -108,6 +108,7 @@ experiments:                       # owner request 2026-10-23; measured in valid
   dd_scale_start: 0.05             # drawdown_scaling: full leverage up to -5%,
   dd_scale_full: 0.20              # shrinking linearly to dd_scale_floor at -20%
   dd_scale_floor: 0.25             # (keeps large drawdowns out; owner goal 2026-10-23)
+  dd_scale_window: 0               # drawdown from the peak of the last N days; 0 = all-time peak
   rotation:                        # leverage_rotation (Gayed & Bilello 2016; owner goal 30%/yr)
     underlying: SPY                # hold its leveraged version above its moving average
     sma: 200

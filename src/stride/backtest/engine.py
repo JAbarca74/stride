@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -242,7 +243,9 @@ def drawdown_scale(drawdown: float, config: StrideConfig) -> float:
     """Experiment (owner request, 2026-10-23: keep large drawdowns out). The
     leverage is multiplied by 1 until the drawdown of the time-weighted index
     reaches `dd_scale_start`, then falls linearly to `dd_scale_floor` at
-    `dd_scale_full`, and stays there until the index recovers."""
+    `dd_scale_full`, and stays there until the index recovers. The engine passes
+    the drawdown from the peak of the last `dd_scale_window` days (all-time when
+    0); see `Engine._scaling_drawdown`."""
     e = config.experiments
     if drawdown <= e.dd_scale_start:
         return 1.0
@@ -459,6 +462,8 @@ class Engine:
         self.traded = 0.0  # dollars filled so far
         self.costs_paid = 0.0  # spread plus commission paid so far
         self.twr = TwrState()
+        window = config.experiments.dd_scale_window
+        self.twr_recent: deque[float] = deque(maxlen=window) if window else deque(maxlen=1)
         self.delever = False
         self.killed = False
         self.rec = _Recorder()
@@ -488,9 +493,18 @@ class Engine:
             if previous is not None:
                 self._record_unlevered(day)
                 self.twr = advance(self.twr, previous_equity, equity, flow)
+            self.twr_recent.append(self.twr.index)
             self._close_of_day(day, equity, positions)
             previous, previous_equity = day, equity
         return self._result()
+
+    def _scaling_drawdown(self) -> float:
+        """The drawdown the scaling uses: from the all-time peak of the TWR index,
+        or from the peak of the last `dd_scale_window` days when it is set."""
+        if not self.config.experiments.dd_scale_window or not self.twr_recent:
+            return min(max(self.twr.drawdown, 0.0), 1.0)
+        peak = max(self.twr_recent)
+        return min(max(1.0 - self.twr.index / peak, 0.0), 1.0) if peak > 0 else 0.0
 
     def _open(self, day: pd.Timestamp, previous: pd.Timestamp | None) -> float:
         """Interest, fills at the open, deposit. Returns the day's external flow."""
@@ -726,7 +740,7 @@ class Engine:
         self.rotation_on = on
         scale = 1.0
         if "drawdown_scaling" in self.config.experiments.enabled:
-            scale = drawdown_scale(drawdown, self.config)
+            scale = drawdown_scale(self._scaling_drawdown(), self.config)
         symbol = self._rotation_symbol()
         targets: dict[str, float] = {}
         if on:
@@ -801,7 +815,7 @@ class Engine:
         level = self.settings.fixed_leverage or settings.leverage
         scale = 1.0
         if "drawdown_scaling" in self.config.experiments.enabled:
-            scale = drawdown_scale(drawdown, self.config)
+            scale = drawdown_scale(self._scaling_drawdown(), self.config)
         exposures = {a: w * equity * level * scale for a, w in weights.items() if w > 0}
         choices = choose_instruments(
             exposures,
@@ -895,7 +909,7 @@ class Engine:
         if self.settings.fixed_leverage is not None:
             leverage, binding = self.settings.fixed_leverage, FIXED
         if "drawdown_scaling" in self.config.experiments.enabled:
-            leverage *= drawdown_scale(drawdown, self.config)
+            leverage *= drawdown_scale(self._scaling_drawdown(), self.config)
         exposures = {a: v * leverage for a, v in unlevered.items()}
         k = sum(exposures.values()) / (lev.borrow * equity)
         choices = choose_instruments(
