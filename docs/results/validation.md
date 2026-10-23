@@ -103,6 +103,7 @@ Base Sharpe (full period): 0.517.
 | with the wider universe (7 more ETFs) | 0.049 | 0.299 | 0.318 | 0.034 | 3531 | 1015 | 9130.366 |
 | with the multi-horizon ensemble (20/10, 55/20, 100/40) | 0.055 | 0.347 | 0.357 | 0.040 | 3565 | 2589 | 11599.122 |
 | with drawdown scaling of the leverage | 0.081 | 0.506 | 0.210 | 0.028 | 2712 | 708 | 14443.637 |
+| with leverage rotation (3x SPY, refuge IEF) | -0.025 | -0.576 | 0.420 | 0.001 | 60 | 85 | 4657.599 |
 
 ## 7. Owner goal: 30% a year with a maximum drawdown of 25% (full period)
 
@@ -122,6 +123,49 @@ Base Sharpe (full period): 0.517.
 | 1.5x | on | 0.099 | 0.551 | 0.374 | 1.078 | 17042.941 | False |
 | dynamic | off | 0.090 | 0.517 | 0.349 | 1.023 | 15348.400 | False |
 | dynamic | on | 0.081 | 0.506 | 0.210 | 0.908 | 14443.637 | False |
+| rotation 3x/IEF | on | 0.055 | 0.306 | 0.328 | 1.237 | 10599.218 | False |
+| rotation 2x/cash | on | 0.053 | 0.327 | 0.261 | 0.902 | 11322.362 | False |
+| rotation 3x/cash | on | 0.050 | 0.280 | 0.319 | 1.122 | 10468.276 | False |
+| rotation 2x/IEF | on | 0.049 | 0.306 | 0.275 | 0.970 | 10767.883 | False |
+| rotation 2x/IEF | off | -0.015 | -0.314 | 0.405 | 0.214 | 4678.768 | False |
+| rotation 2x/cash | off | -0.020 | -0.396 | 0.441 | 0.111 | 4634.729 | False |
+| rotation 3x/IEF | off | -0.025 | -0.576 | 0.420 | 0.137 | 4657.599 | False |
+| rotation 3x/cash | off | -0.025 | -0.765 | 0.405 | 0.027 | 4681.398 | False |
+
+## 8. Leverage rotation (3x SPY, SMA 200, band 0.0, refuge IEF): full protocol
+
+- Out-of-sample Sharpe: **0.187**; SPY over the same days: 0.827 -> NOT above SPY
+- Out-of-sample CAGR 0.034, max drawdown 0.414; SPY CAGR 0.150, max drawdown 0.337
+- Full period: CAGR -0.025, Sharpe -0.576, max drawdown 0.420
+- Below the 1.5 alarm: yes; sensitivity stable: yes
+- **Phase 3 criterion for the rotation: FAIL**
+
+| out_of_sample | days | sharpe | cagr | max_drawdown | kill_switch |
+| --- | --- | --- | --- | --- | --- |
+| 2012 | 250 | -62.709 | 0.000 | 0.000 | 2009-07-07 |
+| 2013 | 252 | -35.749 | 0.000 | 0.000 | 2010-06-03 |
+| 2014 | 252 | -36.864 | 0.000 | 0.000 | 2010-06-01 |
+| 2015 | 252 | -12.608 | 0.000 | 0.000 | 2010-06-22 |
+| 2016 | 252 | 0.977 | 0.259 | 0.156 |  |
+| 2017 | 251 | 2.798 | 0.630 | 0.073 |  |
+| 2018 | 251 | -0.266 | -0.142 | 0.339 |  |
+| 2019 | 252 | 1.019 | 0.336 | 0.183 |  |
+| 2020 | 253 | -1.323 | -0.297 | 0.414 | 2020-03-03 |
+| 2021 | 252 | -37.284 | 0.000 | 0.000 | 2020-03-03 |
+| 2022 | 251 | -21.832 | 0.000 | 0.000 | 2020-03-06 |
+| 2023 | 250 | -281.437 | 0.000 | 0.000 | 2020-03-03 |
+| 2024 | 252 | -217.440 | 0.000 | 0.000 | 2020-03-06 |
+| 2025 | 250 | -292.659 | 0.000 | 0.000 | 2020-03-03 |
+| 2026 | 203 | -382.859 | 0.000 | 0.000 | 2022-12-15 |
+
+Block bootstrap (out of sample): Sharpe -0.328 / 0.208 / 0.759; max drawdown 0.234 / 0.461 / 0.774 (2.5% / median / 97.5%)
+
+| change | cagr | sharpe | max_drawdown | drop | fragile |
+| --- | --- | --- | --- | --- | --- |
+| sma 160 | -0.003 | -0.072 | 0.429 | -0.874 | False |
+| sma 240 | 0.010 | 0.011 | 0.407 | -1.019 | False |
+| band 0.02 | 0.064 | 0.331 | 0.429 | -1.575 | False |
+| multiple 2 | -0.015 | -0.314 | 0.405 | -0.454 | False |
 
 ## Notes
 

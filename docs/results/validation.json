@@ -576,6 +576,16 @@
       "fills": 2712,
       "resizes_skipped": 708,
       "final_equity": 14443.637344688103
+    },
+    {
+      "run": "with leverage rotation (3x SPY, refuge IEF)",
+      "cagr": -0.025027336114225918,
+      "sharpe": -0.575924981125411,
+      "max_drawdown": 0.420090747044085,
+      "costs_per_year": 0.0006943521776500024,
+      "fills": 60,
+      "resizes_skipped": 85,
+      "final_equity": 4657.598501135564
     }
   ],
   "goal": {
@@ -700,6 +710,280 @@
         "average_exposure": 0.9082883600990818,
         "final_equity": 14443.637344688103,
         "meets_goal": false
+      },
+      {
+        "leverage": "rotation 3x/IEF",
+        "drawdown_scaling": "on",
+        "cagr": 0.05536056146862989,
+        "sharpe": 0.305911982308654,
+        "max_drawdown": 0.327576968266596,
+        "average_exposure": 1.2367070663835007,
+        "final_equity": 10599.218385440709,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 2x/cash",
+        "drawdown_scaling": "on",
+        "cagr": 0.0530437711966798,
+        "sharpe": 0.32730275427006533,
+        "max_drawdown": 0.26120869788949375,
+        "average_exposure": 0.90204721613939,
+        "final_equity": 11322.361567082491,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 3x/cash",
+        "drawdown_scaling": "on",
+        "cagr": 0.04991257388997994,
+        "sharpe": 0.2795710406785092,
+        "max_drawdown": 0.3194477998737074,
+        "average_exposure": 1.1220685316941066,
+        "final_equity": 10468.276422507008,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 2x/IEF",
+        "drawdown_scaling": "on",
+        "cagr": 0.049316638105508126,
+        "sharpe": 0.3060609290008997,
+        "max_drawdown": 0.27457870016828545,
+        "average_exposure": 0.9699499957541886,
+        "final_equity": 10767.88252164641,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 2x/IEF",
+        "drawdown_scaling": "off",
+        "cagr": -0.014501192180803035,
+        "sharpe": -0.31426593489441845,
+        "max_drawdown": 0.4048390474032493,
+        "average_exposure": 0.21354079248501662,
+        "final_equity": 4678.768083409169,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 2x/cash",
+        "drawdown_scaling": "off",
+        "cagr": -0.019965369489509555,
+        "sharpe": -0.3955402039781513,
+        "max_drawdown": 0.44132392288980704,
+        "average_exposure": 0.11088799407166808,
+        "final_equity": 4634.728571318842,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 3x/IEF",
+        "drawdown_scaling": "off",
+        "cagr": -0.025027336114225918,
+        "sharpe": -0.575924981125411,
+        "max_drawdown": 0.420090747044085,
+        "average_exposure": 0.13652221271915707,
+        "final_equity": 4657.598501135564,
+        "meets_goal": false
+      },
+      {
+        "leverage": "rotation 3x/cash",
+        "drawdown_scaling": "off",
+        "cagr": -0.02533361642813592,
+        "sharpe": -0.7651556159464109,
+        "max_drawdown": 0.4054531910468757,
+        "average_exposure": 0.0274229441399365,
+        "final_equity": 4681.397773930567,
+        "meets_goal": false
+      }
+    ]
+  },
+  "rotation": {
+    "config": "3x SPY, SMA 200, band 0.0, refuge IEF",
+    "verdict": {
+      "oos_sharpe": 0.18703779985903263,
+      "spy_sharpe": 0.8270580545404728,
+      "beats_spy": false,
+      "below_alarm": true,
+      "stable": true,
+      "alarm": false,
+      "passes": false
+    },
+    "full_period": {
+      "cagr": -0.025027336114225918,
+      "volatility": 0.06714309245516509,
+      "sharpe": -0.575924981125411,
+      "sortino": -0.6680093307555955,
+      "max_drawdown": 0.420090747044085,
+      "calmar": -0.05957602325289852
+    },
+    "out_of_sample": {
+      "cagr": 0.03442603745210815,
+      "volatility": 0.16553805354606976,
+      "sharpe": 0.18703779985903263,
+      "sortino": 0.2408239532701564,
+      "max_drawdown": 0.4142614606129449,
+      "calmar": 0.08310219686178648
+    },
+    "windows": [
+      {
+        "out_of_sample": "2012",
+        "days": 250,
+        "sharpe": -62.70884976615533,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2009-07-07"
+      },
+      {
+        "out_of_sample": "2013",
+        "days": 252,
+        "sharpe": -35.74912149582985,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2010-06-03"
+      },
+      {
+        "out_of_sample": "2014",
+        "days": 252,
+        "sharpe": -36.863914619471736,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2010-06-01"
+      },
+      {
+        "out_of_sample": "2015",
+        "days": 252,
+        "sharpe": -12.607808600032758,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2010-06-22"
+      },
+      {
+        "out_of_sample": "2016",
+        "days": 252,
+        "sharpe": 0.9769657982439226,
+        "cagr": 0.2589362659194221,
+        "max_drawdown": 0.15562127315197627,
+        "kill_switch": ""
+      },
+      {
+        "out_of_sample": "2017",
+        "days": 251,
+        "sharpe": 2.7983614120490032,
+        "cagr": 0.6300010607037947,
+        "max_drawdown": 0.07262253953391751,
+        "kill_switch": ""
+      },
+      {
+        "out_of_sample": "2018",
+        "days": 251,
+        "sharpe": -0.2656284288440216,
+        "cagr": -0.14186553994207163,
+        "max_drawdown": 0.33856995693241665,
+        "kill_switch": ""
+      },
+      {
+        "out_of_sample": "2019",
+        "days": 252,
+        "sharpe": 1.019232538008628,
+        "cagr": 0.3364312167521333,
+        "max_drawdown": 0.18250844509834974,
+        "kill_switch": ""
+      },
+      {
+        "out_of_sample": "2020",
+        "days": 253,
+        "sharpe": -1.3225899530094312,
+        "cagr": -0.2974778320972995,
+        "max_drawdown": 0.4142614606129449,
+        "kill_switch": "2020-03-03"
+      },
+      {
+        "out_of_sample": "2021",
+        "days": 252,
+        "sharpe": -37.28435829320538,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2020-03-03"
+      },
+      {
+        "out_of_sample": "2022",
+        "days": 251,
+        "sharpe": -21.831702114325292,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2020-03-06"
+      },
+      {
+        "out_of_sample": "2023",
+        "days": 250,
+        "sharpe": -281.4369125355317,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2020-03-03"
+      },
+      {
+        "out_of_sample": "2024",
+        "days": 252,
+        "sharpe": -217.43994398720903,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2020-03-06"
+      },
+      {
+        "out_of_sample": "2025",
+        "days": 250,
+        "sharpe": -292.6586440675493,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2020-03-03"
+      },
+      {
+        "out_of_sample": "2026",
+        "days": 203,
+        "sharpe": -382.85857498769894,
+        "cagr": 0.0,
+        "max_drawdown": 0.0,
+        "kill_switch": "2022-12-15"
+      }
+    ],
+    "bootstrap_sharpe": [
+      -0.32757045950241914,
+      0.20816237034298957,
+      0.7585290920028592
+    ],
+    "bootstrap_max_drawdown": [
+      0.23410982674592137,
+      0.4605392364610277,
+      0.7743881984948268
+    ],
+    "sensitivity": [
+      {
+        "change": "sma 160",
+        "cagr": -0.003153098728757575,
+        "sharpe": -0.07238632261003872,
+        "max_drawdown": 0.4293722169171026,
+        "drop": -0.8743129314019525,
+        "fragile": false
+      },
+      {
+        "change": "sma 240",
+        "cagr": 0.010364777229141753,
+        "sharpe": 0.01073496524262123,
+        "max_drawdown": 0.40705578468470693,
+        "drop": -1.018639520066735,
+        "fragile": false
+      },
+      {
+        "change": "band 0.02",
+        "cagr": 0.06445278502926555,
+        "sharpe": 0.33097533756153635,
+        "max_drawdown": 0.42916471954853763,
+        "drop": -1.5746848086269494,
+        "fragile": false
+      },
+      {
+        "change": "multiple 2",
+        "cagr": -0.014501192180803035,
+        "sharpe": -0.31426593489441845,
+        "max_drawdown": 0.4048390474032493,
+        "drop": -0.45432834970916947,
+        "fragile": false
       }
     ]
   }
