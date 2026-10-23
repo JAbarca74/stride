@@ -76,6 +76,7 @@ SENSITIVITY_PARAMETERS: tuple[tuple[str, str], ...] = (
     ("risk", "dd_delever_at"),
     ("risk", "kill_switch_dd"),
     ("execution", "rebalance_band"),
+    ("execution", "max_resize_cost_pct"),
     ("leverage_switch", "enter_k"),
     ("leverage_switch", "exit_k"),
     ("leverage_switch", "min_hold_days"),
@@ -327,6 +328,49 @@ def leverage_comparison(
     return pd.DataFrame(rows)
 
 
+# 6. Cost-aware resizing: the run with and without the rule (owner request).
+
+NO_RESIZE_LIMIT = 0.999  # a cost limit no order reaches: the rule is off
+
+
+def cost_rule_comparison(
+    data: MarketData, config: StrideConfig, settings: BacktestSettings
+) -> pd.DataFrame:
+    """Full-period metrics with the cost-aware resize rule on (the configured
+    `max_resize_cost_pct`) and off, and the costs each run paid per year."""
+    off = config.model_copy(
+        update={
+            "execution": config.execution.model_copy(
+                update={"max_resize_cost_pct": NO_RESIZE_LIMIT}
+            )
+        }
+    )
+    rows = []
+    for name, cfg in (("with rule", config), ("without rule", off)):
+        result = run_backtest(data, cfg, settings)
+        m = _summary(result.returns, data.risk_free)
+        fills = result.fills
+        costs = (
+            (fills["commission"] + fills["spread_cost"]).set_axis(pd.DatetimeIndex(fills["date"]))
+            if not fills.empty
+            else pd.Series(dtype=float)
+        )
+        skipped = int((result.events["type"] == "RESIZE_SKIPPED").sum())
+        rows.append(
+            {
+                "run": name,
+                "cagr": m.cagr,
+                "sharpe": m.sharpe,
+                "max_drawdown": m.max_drawdown,
+                "costs_per_year": metrics.cost_ratio(costs, result.equity["equity"]),
+                "fills": len(fills),
+                "resizes_skipped": skipped,
+                "final_equity": float(result.equity["equity"].iloc[-1]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 # Verdict.
 
 
@@ -366,6 +410,7 @@ class Validation:
     bootstrap: Bootstrap  # out-of-sample returns
     bootstrap_full: Bootstrap  # full-period returns (second layer)
     leverage: pd.DataFrame
+    cost_rule: pd.DataFrame  # with and without the cost-aware resize rule
     full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
@@ -391,8 +436,9 @@ def validate_strategy(
         return block_bootstrap(returns, rf, samples=bootstrap_samples)
 
     lev = leverage_comparison(data, config, settings, levels)
+    rule = cost_rule_comparison(data, config, settings)
     return Validation(
-        walk, sens, boot(walk.returns), boot(full.returns), lev, full, verdict(walk, sens),
+        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, full, verdict(walk, sens),
         (settings.start, settings.end),
     )  # fmt: skip
 
@@ -458,6 +504,10 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         "## 5. Leverage comparison (full period)",
         "",
         *_table(v.leverage),
+        "",
+        "## 6. Cost-aware resize rule (full period)",
+        "",
+        *_table(v.cost_rule),
     ]
     if notes:
         lines += ["", "## Notes", ""] + [f"- **{k}:** {text}" for k, text in notes.items()]
@@ -501,6 +551,7 @@ def to_json(v: Validation) -> dict[str, object]:
             },
         },
         "leverage": records(v.leverage),
+        "cost_rule": records(v.cost_rule),
     }
 
 

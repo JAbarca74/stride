@@ -44,7 +44,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from stride.backtest.costs import cash_interest, spread_bps
+from stride.backtest.costs import cash_interest, commission, spread_bps
 from stride.backtest.metrics import time_weighted_returns
 from stride.config import StrideConfig
 from stride.data.calendar import trading_days
@@ -65,7 +65,7 @@ from stride.risk.leverage import (
     kelly_estimate,
 )
 from stride.risk.sizing import UnitLot, apply_caps, target_usd
-from stride.strategy.rules import Decision, Indicators, PositionState, decide
+from stride.strategy.rules import HOLD, Decision, Indicators, PositionState, decide
 
 Row = tuple[float, float, float, float, float]  # close, SMA200, HH55, LL20, N
 
@@ -190,6 +190,31 @@ def plan_orders(
         )
         (buys if diff > 0 else sells).append(order)
     return sorted(sells, key=lambda o: -o.notional) + sorted(buys, key=lambda o: -o.notional)
+
+
+def skip_costly_resizes(
+    orders: Sequence[PlannedOrder], prices: Mapping[str, float], config: StrideConfig
+) -> tuple[list[PlannedOrder], list[PlannedOrder]]:
+    """Cost-aware resizing (owner request, 2026-10-23). Returns (kept, skipped).
+
+    A top-up buy on a position whose rule is HOLD (no new signal: the target moved
+    because equity, L or N moved) is skipped when its commission plus spread is
+    more than `execution.max_resize_cost_pct` of the order: the correction is not
+    worth its cost. Never skipped: sells (they only reduce risk, the drawdown
+    deleveraging included), entries, pyramid adds, exits and switch legs."""
+    limit = config.execution.max_resize_cost_pct
+    kept, skipped = [], []
+    for order in orders:
+        price = prices.get(order.symbol, math.nan)
+        resize = order.side == "buy" and order.rule == HOLD and not order.switch
+        if resize and price > 0 and order.notional > 0:
+            fee = commission(order.notional / price, price, config)
+            rate = fee / order.notional + spread_bps(order.symbol, config) / BPS
+            if rate > limit:
+                skipped.append(order)
+                continue
+        kept.append(order)
+    return kept, skipped
 
 
 def split_orders(
@@ -586,7 +611,7 @@ class Engine:
         )
         self._update_instruments(day, choices)
         targets = {c.symbol: c.cash_usd for c in choices.values()}
-        planned = split_orders(
+        planned, skipped = skip_costly_resizes(
             plan_orders(
                 targets,
                 positions_usd=positions,
@@ -594,9 +619,14 @@ class Engine:
                 rules=rules,
                 config=self.config,
             ),
-            equity,
+            {symbol: self._close(symbol, day) for symbol in self.closes},
             self.config,
         )
+        for order in skipped:
+            self.rec.event(
+                day, "RESIZE_SKIPPED", f"{order.symbol} buy {order.notional:.2f}: cost above limit"
+            )
+        planned = split_orders(planned, equity, self.config)
         vetoes = self._check_and_submit(day, equity, cash, positions, planned, blocked)
         self._record_risk(
             day, kelly.l_star, kelly.days, sigma, leverage, binding, drawdown, vetoes, k
@@ -832,5 +862,6 @@ __all__ = [
     "fit_buys",
     "plan_orders",
     "run_backtest",
+    "skip_costly_resizes",
     "split_orders",
 ]

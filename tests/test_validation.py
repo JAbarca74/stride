@@ -162,7 +162,7 @@ def test_validate_strategy_and_outputs(tmp_path: Path) -> None:
     )
     text = v.to_markdown(result, {"Data": "synthetic"})
     for heading in ("Phase 3 exit criterion", "Walk-forward", "Sensitivity", "bootstrap",
-                    "Leverage comparison", "Notes"):  # fmt: skip
+                    "Leverage comparison", "Cost-aware resize rule", "Notes"):  # fmt: skip
         assert heading in text
     v.write_outputs(tmp_path / "results", result, {"Data": "synthetic"})
     payload = json.loads((tmp_path / "results" / "validation.json").read_text(encoding="utf-8"))
@@ -210,3 +210,11 @@ def test_sensitivity_skips_shifts_that_make_the_config_invalid() -> None:
     assert list(up["note"]) == [v.SKIPPED] and not up["fragile"].any()
     down = sens.table[sens.table["value"] < 1.0]
     assert list(down["note"]) == [""]
+
+
+def test_cost_rule_comparison_runs_with_and_without_the_rule() -> None:
+    small = BacktestSettings(SETTINGS.start, SETTINGS.end, 100.0)
+    table = v.cost_rule_comparison(_market(), CONFIG, small)
+    assert list(table["run"]) == ["with rule", "without rule"]
+    assert table.loc[1, "resizes_skipped"] == 0
+    assert set(table.columns) >= {"sharpe", "costs_per_year", "fills", "final_equity"}

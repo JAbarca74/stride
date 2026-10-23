@@ -61,6 +61,7 @@ execution:
   limit_offset: 0.005
   max_orders_per_day: 12
   max_order_pct_equity: 0.60
+  max_resize_cost_pct: 0.005       # skip HOLD top-up buys costing more (added 2026-10-23, owner request)
 
 cash_flows:
   initial_deposit_usd: 100         # SPEC 2: starting capital (added 2026-10-23, owner decision)

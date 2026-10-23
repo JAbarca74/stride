@@ -77,6 +77,7 @@ def test_max_leverage_10_is_rejected(tmp_path: Path) -> None:
         ("execution", "limit_offset", 1),
         ("execution", "max_orders_per_day", 0),
         ("execution", "max_order_pct_equity", 0),
+        ("execution", "max_resize_cost_pct", 1.0),
         ("cash_flows", "monthly_deposit_usd", -20),
         ("cash_flows", "initial_deposit_usd", 0),
         ("cash_flows", "deposit_day", "last_trading_day"),

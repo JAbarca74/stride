@@ -111,6 +111,9 @@ class ExecutionConfig(_Section):
     limit_offset: Annotated[float, Field(ge=0, lt=1)]
     max_orders_per_day: Annotated[int, Field(ge=1)]
     max_order_pct_equity: Fraction
+    # Cost-aware resizing (owner request, 2026-10-23): a HOLD top-up buy whose
+    # commission plus spread is above this fraction of the order is skipped.
+    max_resize_cost_pct: Fraction
 
 
 class CashFlowsConfig(_Section):

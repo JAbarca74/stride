@@ -27,6 +27,7 @@ from stride.backtest.engine import (
     fit_buys,
     plan_orders,
     run_backtest,
+    skip_costly_resizes,
     split_orders,
 )
 from stride.config import load_config
@@ -459,3 +460,30 @@ def test_the_kelly_series_pays_for_changes_in_weights() -> None:
         _settings(),
     ).unlevered_returns  # fmt: skip
     assert engine_days.sum() < flat.sum()  # costs lower the series Kelly is estimated on
+
+
+def test_costly_hold_top_ups_are_skipped_but_never_sells_or_signals() -> None:
+    prices = {"SPY": 500.0, "GLD": 200.0, "SSO": 50.0}
+    orders = [
+        PlannedOrder("SPY", "buy", 40.0, False, "SPY", "HOLD"),  # 1% commission: skipped
+        PlannedOrder("SPY", "sell", 40.0, False, "SPY", "HOLD"),  # sells always go
+        PlannedOrder("GLD", "buy", 40.0, False, "GLD", "PYRAMID"),  # a signal always goes
+        PlannedOrder("SSO", "buy", 40.0, True, "SPY", "HOLD"),  # switch legs always go
+        PlannedOrder("GLD", "buy", 5_000.0, False, "GLD", "HOLD"),  # $1 on $5,000: cheap
+    ]
+    kept, skipped = skip_costly_resizes(orders, prices, CONFIG)
+    assert skipped == [orders[0]]
+    assert kept == orders[1:]
+
+
+def test_small_account_skips_resizes_and_the_rule_can_be_turned_off() -> None:
+    data = _market(seed=11)
+    small = BacktestSettings(date(2019, 1, 2), date(2020, 12, 31), initial_cash=100.0)
+    on = run_backtest(data, CONFIG, small)
+    skipped = on.events[on.events["type"] == "RESIZE_SKIPPED"]
+    assert not skipped.empty
+    assert skipped["detail"].str.contains(" buy ").all()
+    execution = CONFIG.execution.model_copy(update={"max_resize_cost_pct": 0.999})
+    off = run_backtest(data, CONFIG.model_copy(update={"execution": execution}), small)
+    assert (off.events["type"] == "RESIZE_SKIPPED").sum() == 0
+    assert len(on.fills) < len(off.fills)  # fewer fills, fewer commissions
