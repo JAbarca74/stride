@@ -59,7 +59,6 @@ from stride.data.store import (
 )
 from stride.data.update import series_for
 
-DEFAULT_INITIAL_CASH = 100.0  # SPEC section 2: starting capital
 RESULT_TABLES = (
     "equity",
     "signals",
@@ -277,7 +276,9 @@ def main(
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--start", type=date.fromisoformat, help="default: data.history_start")
     parser.add_argument("--end", type=date.fromisoformat, help="default: last stored SPY bar")
-    parser.add_argument("--initial-cash", type=float, default=DEFAULT_INITIAL_CASH)
+    parser.add_argument(
+        "--initial-cash", type=float, help="default: cash_flows.initial_deposit_usd"
+    )
     parser.add_argument("--order-type", choices=["market", "limit"], default="market")
     parser.add_argument("--fixed-leverage", type=float, help="replace the dynamic L (SPEC 9)")
     parser.add_argument("--out", default="data/backtest.db", help="results database")
@@ -309,7 +310,7 @@ def main(
     settings = BacktestSettings(
         start=args.start or config.data.history_start,
         end=args.end or last,
-        initial_cash=args.initial_cash,
+        initial_cash=args.initial_cash or config.cash_flows.initial_deposit_usd,
         order_type=args.order_type,
         fixed_leverage=args.fixed_leverage,
     )

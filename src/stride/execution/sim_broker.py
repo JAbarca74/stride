@@ -3,16 +3,18 @@
 An order submitted on day t is filled at the open of the next trading day it is
 stepped to (t+1), with spread and slippage applied (`backtest/costs.py`) and the
 IBKR Pro Fixed commission. Orders are day orders: whatever is not filled that day
-is cancelled at its close. Cash only, long only: buys larger than the cash are
-rejected and sells are capped at the shares held.
+is cancelled at its close. Cash only, long only: a buy larger than the cash left
+at the fill (after the sells, so after a gap at the open) is filled for what
+the cash pays, commission included, and sells are capped at the shares held.
 
 Limit orders: a buy fills at the open if the open is at or below the limit,
 otherwise at the limit if the day's low reaches it; sells mirror this with the
 high. Spread is applied to the fill price in both cases.
 
-A sell whose notional covers the whole position at the close of the day it is
-sent (within `FULL_SELL_TOLERANCE_USD`) is a full exit: it sells every share at
-the fill, so a gap up at the open leaves no remainder. Deposits and interest
+A sell that, with the other sells of the symbol sent the same day, covers the
+whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`) is a full
+exit: it fills after them and sells every share left, so a gap up at the open
+leaves no remainder (an exit split into several orders included). Deposits and interest
 on idle cash are credited by the backtest engine (`deposit`, `credit_interest`).
 """
 
@@ -93,7 +95,13 @@ class SimBroker(Broker):
         held = self._positions.get(symbol)
         if side == "sell" and held is not None:
             value = held.quantity * self._close(symbol, self._today)
-            if notional >= value - FULL_SELL_TOLERANCE_USD:
+            already = sum(
+                o.notional
+                for o in self._orders.values()
+                if o.symbol == symbol and o.side == "sell" and o.status == "pending"
+                and o.submitted == self._today and o.order_id != order_id
+            )  # fmt: skip
+            if already + notional >= value - FULL_SELL_TOLERANCE_USD:
                 self._full_sells.add(order_id)
         return order_id
 
@@ -136,7 +144,8 @@ class SimBroker(Broker):
             raise ValueError("the simulation only moves forward")
         self._today = day
         due = [o for o in self._orders.values() if o.status == "pending" and o.submitted < day]
-        due.sort(key=lambda o: o.side != "sell")  # sells before buys, to free cash
+        # Sells before buys, to free cash; a full exit after the other sells of its symbol.
+        due.sort(key=lambda o: (o.side != "sell", o.order_id in self._full_sells))
         handled = []
         for order in due:
             result = self._fill(order, day)
@@ -187,21 +196,32 @@ class SimBroker(Broker):
             if quantity <= 0:
                 return replace(order, status="rejected", reason="no position to sell (long only)")
         else:
-            quantity = order.notional / price
+            quantity = min(order.notional, self._affordable()) / price
+            if quantity <= 0:
+                return replace(order, status="rejected", reason="not enough cash")
         fee = commission(quantity, price, self._config)
         cash_change = -(quantity * price + fee) if order.side == "buy" else quantity * price - fee
-        if self._cash + cash_change < 0:
+        if self._cash + cash_change < -_DUST:
             return replace(order, status="rejected", reason="not enough cash")
         self._cash += cash_change
         self._update_position(order.symbol, order.side, quantity, price)
+        partial = order.side == "buy" and quantity * price < order.notional * (1 - _DUST)
         return replace(
             order,
             status="filled",
+            reason="partial fill: cash available" if partial else "",
             filled_quantity=quantity,
             average_price=price,
             commission=fee,
             filled=day,
         )
+
+    def _affordable(self) -> float:
+        """The largest notional the cash pays, commission included (the commission
+        is at most `commission_max_pct_of_value` of the notional)."""
+        if self._cash <= 0:
+            return 0.0
+        return self._cash / (1 + self._config.costs.commission_max_pct_of_value)
 
     def _update_position(self, symbol: str, side: Side, quantity: float, price: float) -> None:
         held = self._positions.get(symbol)

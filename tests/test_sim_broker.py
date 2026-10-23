@@ -89,8 +89,16 @@ def test_long_only_and_cash_only() -> None:
     buy_id = broker.submit_order("SPY", "buy", 500.0)
     broker.step(T1)
     assert broker.get_order(sell_id).status == "rejected"
-    assert broker.get_order(buy_id).status == "rejected"
-    assert broker.get_order(buy_id).reason == "not enough cash"
+    buy = broker.get_order(buy_id)
+    assert buy.status == "filled" and buy.reason == "partial fill: cash available"
+    cost = buy.filled_quantity * (buy.average_price or 0) + buy.commission
+    assert cost == pytest.approx(100.0 / 1.01 + buy.commission)
+    assert broker.get_account().cash >= 0
+    broke = _broker(cash=0.0)
+    empty = broke.submit_order("SPY", "buy", 50.0)
+    broke.step(T1)
+    assert broke.get_order(empty).status == "rejected"
+    assert broke.get_order(empty).reason == "not enough cash"
 
 
 def test_buy_limit_fills_at_open_or_limit_or_expires() -> None:
@@ -196,3 +204,17 @@ def test_deposits_and_interest_credit_cash() -> None:
         broker.deposit(0.0)
     with pytest.raises(ValueError, match="interest"):
         broker.credit_interest(-1.0)
+
+
+def test_exit_split_in_two_orders_closes_the_whole_position() -> None:
+    gap = {"SPY": _bars([(99, 101, 98, 100), (102, 104, 100, 103), (110, 112, 109, 111)])}
+    broker = SimBroker(gap, CONFIG, cash=1_000.0, start=T0)
+    broker.submit_order("SPY", "buy", 900.0)
+    broker.step(T1)
+    value = broker.get_positions()["SPY"].quantity * 103
+    first = broker.submit_order("SPY", "sell", 0.5 * value)
+    last = broker.submit_order("SPY", "sell", 0.5 * value)  # together: the whole position
+    broker.step(T2)
+    assert broker.get_order(first).status == "filled"
+    assert broker.get_order(last).status == "filled"
+    assert "SPY" not in broker.get_positions()
