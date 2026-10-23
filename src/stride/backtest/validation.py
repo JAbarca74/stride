@@ -29,7 +29,7 @@ import math
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -131,6 +131,16 @@ class WalkForward:
     spy: metrics.Metrics | None
 
 
+def _window_status(kill_date: str, window: Window) -> str:
+    """'stopped in sample' when the kill switch fired before the out-of-sample
+    year (the system was in cash all year), 'stopped' when it fired during it."""
+    if not kill_date:
+        return "traded"
+    return (
+        "stopped in sample" if date.fromisoformat(kill_date[:10]) < window.out_start else "stopped"
+    )
+
+
 def walk_forward(
     data: MarketData, config: StrideConfig, initial_cash: float, first: date, last: date
 ) -> WalkForward:
@@ -147,6 +157,7 @@ def walk_forward(
         oos = returns[returns.index >= pd.Timestamp(w.out_start)]
         killed = result.events[result.events["type"] == "KILL_SWITCH"]["at"]
         m = _summary(oos, data.risk_free)
+        when = str(killed.iloc[0]) if not killed.empty else ""
         rows.append(
             {
                 "out_of_sample": f"{w.out_start.year}",
@@ -154,7 +165,8 @@ def walk_forward(
                 "sharpe": m.sharpe,
                 "cagr": m.cagr,
                 "max_drawdown": m.max_drawdown,
-                "kill_switch": str(killed.iloc[0]) if not killed.empty else "",
+                "kill_switch": when,
+                "status": _window_status(when, w),
             }
         )
         pieces.append(oos)
@@ -536,6 +548,125 @@ def rotation_report(
     )
 
 
+# 9. Walk-forward with the leverage chosen in sample (owner request, 2026-10-23).
+
+SELECTION_LEVERAGES = (1.0, 1.5, 2.0, 2.5, 3.0)
+
+
+@dataclass(frozen=True)
+class SelectedWalkForward:
+    returns: pd.Series  # out-of-sample days only
+    per_window: pd.DataFrame  # the choice made in sample and its out-of-sample result
+    strategy: metrics.Metrics
+    spy: metrics.Metrics | None
+    verdict: Verdict
+
+
+def _choice(config: StrideConfig, level: float, scaling: bool) -> StrideConfig:
+    enabled = set(config.experiments.enabled) - {"drawdown_scaling", "leverage_rotation"}
+    if scaling:
+        enabled.add("drawdown_scaling")
+    return with_values(config, "experiments", enabled=sorted(enabled))
+
+
+def walk_forward_selected(
+    data: MarketData,
+    config: StrideConfig,
+    initial_cash: float,
+    first: date,
+    last: date,
+    *,
+    levels: Sequence[float] = SELECTION_LEVERAGES,
+) -> SelectedWalkForward:
+    """For each yearly window, choose the fixed leverage and the drawdown scaling
+    (on/off) using only the 5 in-sample years: the highest CAGR among the choices
+    with a max drawdown within 25% and no kill switch; if none qualifies, the best
+    Sharpe without a kill switch; if all were stopped, 1x with scaling. Then run
+    the whole window with that choice and keep only the out-of-sample year. This
+    tests the leverage choice without looking at the year it is used in."""
+    windows = walk_forward_windows(first, last)
+    if not windows:
+        raise ValueError("the period is shorter than one in-sample window plus a year")
+    pieces, rows = [], []
+    for w in windows:
+        start = max(w.in_sample_start, first)
+        sample_end = w.out_start - timedelta(days=1)
+        candidates = []
+        for level in levels:
+            for scaling in (False, True):
+                cfg = _choice(config, level, scaling)
+                result = run_backtest(
+                    data,
+                    cfg,
+                    BacktestSettings(start, sample_end, initial_cash, fixed_leverage=level),
+                )
+                m = _summary(result.returns, data.risk_free)
+                stopped = bool((result.events["type"] == "KILL_SWITCH").any())
+                candidates.append((level, scaling, m, stopped))
+        alive = [c for c in candidates if not c[3]]
+        safe = [c for c in alive if c[2].max_drawdown <= GOAL_MAX_DRAWDOWN]
+        if safe:
+            level, scaling, _, _ = max(safe, key=lambda c: c[2].cagr)
+        elif alive:
+            level, scaling, _, _ = max(
+                alive, key=lambda c: c[2].sharpe if math.isfinite(c[2].sharpe) else -math.inf
+            )
+        else:
+            level, scaling = 1.0, True
+        result = run_backtest(
+            data,
+            _choice(config, level, scaling),
+            BacktestSettings(start, w.out_end, initial_cash, fixed_leverage=level),
+        )
+        oos = result.returns[result.returns.index >= pd.Timestamp(w.out_start)]
+        killed = result.events[result.events["type"] == "KILL_SWITCH"]["at"]
+        when = str(killed.iloc[0]) if not killed.empty else ""
+        m = _summary(oos, data.risk_free)
+        rows.append(
+            {
+                "out_of_sample": f"{w.out_start.year}",
+                "chosen_leverage": f"{level:g}x",
+                "drawdown_scaling": "on" if scaling else "off",
+                "sharpe": m.sharpe,
+                "cagr": m.cagr,
+                "max_drawdown": m.max_drawdown,
+                "status": _window_status(when, w),
+            }
+        )
+        pieces.append(oos)
+    returns = pd.concat(pieces).sort_index()
+    spy = None
+    if "SPY" in data.bars:
+        close = data.bars["SPY"]["close"].sort_index()
+        bench = metrics.buy_and_hold_returns(close).reindex(returns.index).dropna()
+        spy = _summary(bench, data.risk_free) if len(bench) > 1 else None
+    strategy = _summary(returns, data.risk_free)
+    walk = WalkForward(windows, returns, pd.DataFrame(rows), strategy, spy)
+    no_fragility = Sensitivity(strategy.sharpe, pd.DataFrame({"parameter": [], "fragile": []}))
+    return SelectedWalkForward(
+        returns, pd.DataFrame(rows), strategy, spy, verdict(walk, no_fragility)
+    )
+
+
+def _selected_markdown(r: SelectedWalkForward | None) -> list[str]:
+    if r is None:
+        return []
+    spy = r.spy
+    return [
+        "",
+        "## 9. Walk-forward with the leverage chosen in sample (out-of-sample only)",
+        "",
+        f"- Out-of-sample Sharpe: **{_fmt(r.verdict.oos_sharpe)}**; SPY over the same days:"
+        f" {_fmt(r.verdict.spy_sharpe)} -> {'above' if r.verdict.beats_spy else 'NOT above'} SPY",
+        f"- Out-of-sample CAGR {_fmt(r.strategy.cagr)}, max drawdown"
+        f" {_fmt(r.strategy.max_drawdown)}"
+        + (f"; SPY CAGR {_fmt(spy.cagr)}, max drawdown {_fmt(spy.max_drawdown)}" if spy else ""),
+        f"- Below the 1.5 alarm: {'yes' if r.verdict.below_alarm else 'NO -- AUDIT REQUIRED'}",
+        "",
+        *_table(r.per_window),
+    ]
+
+
 def goal_summary(table: pd.DataFrame) -> str:
     """One line: the best run that meets the goal, or the best within the
     drawdown limit and how far it is from 30%."""
@@ -650,6 +781,7 @@ class Validation:
     experiments: pd.DataFrame  # each improvement turned off in turn
     goal: pd.DataFrame  # section 7: leverage x drawdown scaling against the 30% goal
     rotation: RotationReport | None  # section 8: the leverage rotation, full protocol
+    selected: SelectedWalkForward | None  # section 9: leverage chosen in sample
     full: BacktestResult  # the full-period run with the frozen parameters
     verdict: Verdict
     period: tuple[date, date]
@@ -665,6 +797,7 @@ def validate_strategy(
     levels: Sequence[float] = FIXED_LEVERAGES,
     goal_leverages: Sequence[float | None] = GOAL_LEVERAGES,
     rotation: bool = True,
+    selection_levels: Sequence[float] = SELECTION_LEVERAGES,
 ) -> Validation:
     """The whole SPEC 9 protocol on one data set (`parameters` and `levels` are
     only narrowed by tests)."""
@@ -686,8 +819,21 @@ def validate_strategy(
         if rotation
         else None
     )
+    selected = (
+        walk_forward_selected(
+            data,
+            config,
+            settings.initial_cash,
+            settings.start,
+            settings.end,
+            levels=selection_levels,
+        )
+        if selection_levels
+        else None
+    )
     return Validation(
-        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, goal, rotation_part, full,
+        walk, sens, boot(walk.returns), boot(full.returns), lev, rule, goal, rotation_part,
+        selected, full,
         verdict(walk, sens),
         (settings.start, settings.end),
     )  # fmt: skip
@@ -783,6 +929,11 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         + " | ".join(_fmt(x) for x in v.bootstrap_full.max_drawdown)
         + " |",
         "",
+        "## 4. Anti-look-ahead",
+        "",
+        "Covered by tests/test_lookahead.py and tests/test_engine.py (fake future prices",
+        "change no record dated on or before the cut), run by CI on every change.",
+        "",
         "## 5. Leverage comparison (full period)",
         "",
         *_table(v.leverage),
@@ -797,6 +948,7 @@ def to_markdown(v: Validation, notes: Mapping[str, str] | None = None) -> str:
         "",
         *_table(v.goal),
         *_rotation_markdown(v.rotation),
+        *_selected_markdown(v.selected),
     ]
     if notes:
         lines += ["", "## Notes", ""] + [f"- **{k}:** {text}" for k, text in notes.items()]
@@ -842,6 +994,17 @@ def to_json(v: Validation) -> dict[str, object]:
         "leverage": records(v.leverage),
         "experiments": records(v.experiments),
         "goal": {"summary": goal_summary(v.goal), "runs": records(v.goal)},
+        "selected": None
+        if v.selected is None
+        else {
+            "verdict": {k: clean(x) for k, x in vars(v.selected.verdict).items()}
+            | {
+                "passes_sharpe_test": v.selected.verdict.beats_spy
+                and v.selected.verdict.below_alarm
+            },
+            "out_of_sample": {k: clean(x) for k, x in vars(v.selected.strategy).items()},
+            "windows": records(v.selected.per_window),
+        },
         "rotation": None
         if v.rotation is None
         else {

@@ -131,3 +131,10 @@ def test_sixty_forty_rebalances_monthly() -> None:
     assert result.iloc[2] == pytest.approx(0.06)
     # Without a rebalance the weight would have drifted to 62.3%:
     assert result.iloc[2] != pytest.approx(0.066 / 1.06)
+
+
+def test_a_flat_series_has_no_sharpe_or_sortino() -> None:
+    flat = pd.Series(0.0, index=pd.bdate_range("2020-01-01", periods=250))
+    rf = pd.Series(0.03 + 1e-6 * np.arange(250), index=flat.index)  # a rate that moves a hair
+    assert math.isnan(sharpe(flat, rf))
+    assert math.isnan(sortino(flat, rf))

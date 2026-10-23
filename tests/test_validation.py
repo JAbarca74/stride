@@ -167,6 +167,7 @@ def test_validate_strategy_and_outputs(tmp_path: Path) -> None:
         levels=(1.0,),
         goal_leverages=(None,),
         rotation=False,
+        selection_levels=(),
     )
     text = v.to_markdown(result, {"Data": "synthetic"})
     for heading in ("Phase 3 exit criterion", "Walk-forward", "Sensitivity", "bootstrap",
@@ -186,7 +187,13 @@ def test_main_writes_results_and_returns_the_verdict(
 
     def light(*args: Any, **kwargs: Any) -> v.Validation:
         return full(
-            *args, **kwargs, parameters=ONE, levels=(2.0,), goal_leverages=(None,), rotation=False
+            *args,
+            **kwargs,
+            parameters=ONE,
+            levels=(2.0,),
+            goal_leverages=(None,),
+            rotation=False,
+            selection_levels=(1.0,),
         )
 
     monkeypatch.setattr(v, "validate_strategy", light)
@@ -323,3 +330,24 @@ def test_rotation_report_runs_the_protocol() -> None:
     text = v._rotation_markdown(report)
     assert any("Phase 3 criterion for the rotation" in line for line in text)
     assert v.rotation_report(MarketData({}, RATE), CONFIG, SETTINGS) is None
+
+
+def test_window_status_marks_a_system_stopped_before_its_year() -> None:
+    w = v.Window(date(2007, 1, 1), date(2012, 1, 1), date(2012, 12, 31))
+    assert v._window_status("", w) == "traded"
+    assert v._window_status("2009-07-07", w) == "stopped in sample"
+    assert v._window_status("2012-05-02", w) == "stopped"
+
+
+def test_walk_forward_selected_chooses_in_sample_and_reports_out_of_sample() -> None:
+    result = v.walk_forward_selected(
+        _market(), CONFIG, 10_000.0, SETTINGS.start, SETTINGS.end, levels=(1.0, 2.0)
+    )
+    table = result.per_window
+    assert list(table["out_of_sample"]) == ["2016", "2017"]
+    assert set(table["chosen_leverage"]) <= {"1x", "2x"}
+    assert set(table["drawdown_scaling"]) <= {"on", "off"}
+    assert result.returns.index.min() >= pd.Timestamp("2016-01-01")
+    text = v._selected_markdown(result)
+    assert any("leverage chosen in sample" in line for line in text)
+    assert v._selected_markdown(None) == []
