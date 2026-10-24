@@ -61,6 +61,7 @@ class SimBroker(Broker):
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, OrderState] = {}
         self._full_sells: set[str] = set()  # order ids that close the whole position
+        self._client_ids: dict[str, str] = {}  # client order id -> order id
 
     # Broker interface.
 
@@ -81,7 +82,14 @@ class SimBroker(Broker):
         notional: float,
         type: OrderType = "market",
         limit_price: float | None = None,
+        *,
+        client_order_id: str | None = None,
+        quantity: float | None = None,
     ) -> str:
+        if quantity is not None:
+            raise ValueError("SimBroker is always fractionable: send a notional order")
+        if client_order_id is not None and client_order_id in self._client_ids:
+            raise ValueError("duplicate client_order_id")
         if notional <= 0:
             raise ValueError("notional must be positive")
         if type == "limit" and (limit_price is None or limit_price <= 0):
@@ -90,8 +98,11 @@ class SimBroker(Broker):
             raise ValueError(f"no prices for {symbol}")
         order_id = f"sim-{len(self._orders) + 1}"
         self._orders[order_id] = OrderState(
-            order_id, symbol, side, float(notional), type, limit_price, self._today, "pending"
-        )
+            order_id, symbol, side, float(notional), type, limit_price, self._today, "pending",
+            client_order_id=client_order_id,
+        )  # fmt: skip
+        if client_order_id is not None:
+            self._client_ids[client_order_id] = order_id
         held = self._positions.get(symbol)
         if side == "sell" and held is not None:
             value = held.quantity * self._close(symbol, self._today)
@@ -107,6 +118,13 @@ class SimBroker(Broker):
 
     def get_order(self, order_id: str) -> OrderState:
         return self._orders[order_id]
+
+    def find_order(self, client_order_id: str) -> OrderState | None:
+        order_id = self._client_ids.get(client_order_id)
+        return self._orders[order_id] if order_id is not None else None
+
+    def is_fractionable(self, symbol: str) -> bool:
+        return True
 
     def cancel_all(self) -> int:
         pending = [o for o in self._orders.values() if o.status == "pending"]
