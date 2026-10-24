@@ -443,11 +443,13 @@ class DailyJob:
             store.delete_unsent_orders(self.conn, day)
             self._risk_row(day, 0.0, KILLED, drawdown, [])
             self._send_report(day)
+            self._check_phase4_verdict(day)
             return "kill switch active: the morning liquidates from the broker's positions"
 
         planned_count = self._plan(day, data, closes, equity, cash, held, positions_usd,
                                    blocked, halted, drawdown)  # fmt: skip
         self._send_report(day)
+        self._check_phase4_verdict(day)
         return f"{planned_count} orders planned; equity {equity:.2f}"
 
     def _account(
@@ -646,6 +648,14 @@ class DailyJob:
         except AlertError as exc:
             logger.warning("daily report not sent: %s", scrub(str(exc), self.secrets))
 
+    def _check_phase4_verdict(self, day: date) -> None:
+        if store.read_events(self.conn, daily.PHASE4_VERDICT_EVENT):
+            return
+        verdict = daily.evaluate_phase4(self.conn, title=self.inst.title)
+        if verdict.ready:
+            self.event(daily.PHASE4_VERDICT_EVENT, verdict.message, day)
+            self.alert("PHASE4_VERDICT", verdict.message)
+
     # Morning.
 
     def morning(self, day: date) -> str:
@@ -776,6 +786,9 @@ class DailyJob:
             self.event(RECONCILIATION_BREAK, ",".join(breaks), day)
             self.alert("RECONCILIATION", f"reconciliation break: {', '.join(breaks)}")
         return breaks
+
+
+Runner = DailyJob
 
 
 class _NoData(Exception):
