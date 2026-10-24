@@ -61,6 +61,8 @@ The results should also be compared with `crypto_hold`, though that comparison i
 
 ## Result (prices to 2026-10-23, commit 4c7eaeb)
 
+> **Status: possible winner (owner, 2026-10-24).** `crypto_dip`, an 80% SPY core plus a 20% crypto sleeve with the owner's buy-the-dip rule, returned **22.4% a year out of sample (2012–2026)** with a Sharpe ratio of 1.30. It is the strongest candidate of rounds 1 to 5. It remains a candidate, not a validated strategy, until it passes the robustness check below and paper trading. The continuous-account figure from 2007 (13.7%) and the caveats below belong with the 22.4% whenever it is quoted.
+
 **The owner's own rule, `crypto_dip`, is the best result of the five rounds, and the closest to passing.** It held 80% SPY plus a 20% crypto sleeve, with the dip rule and no leverage.
 
 | Strategy | OOS CAGR | OOS Sharpe | OOS max drawdown | Deflated Sharpe | Pre-registered pass |
