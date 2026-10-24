@@ -39,7 +39,8 @@ class SourceError(Exception):
 class HttpResponse(Protocol):
     status_code: int
 
-    def json(self) -> Any: ...
+    def json(self) -> Any:
+        """The decoded JSON body."""
 
 
 class HttpSession(Protocol):
@@ -50,7 +51,8 @@ class HttpSession(Protocol):
         params: Mapping[str, str],
         headers: Mapping[str, str],
         timeout: float,
-    ) -> HttpResponse: ...
+    ) -> HttpResponse:
+        """Send a GET request."""
 
 
 class PriceSource(Protocol):
@@ -58,7 +60,6 @@ class PriceSource(Protocol):
 
     def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """Daily bars for `symbol` from `start` to `end`, both inclusive."""
-        ...
 
 
 class UnadjustedCloseSource(Protocol):
@@ -66,7 +67,6 @@ class UnadjustedCloseSource(Protocol):
 
     def fetch_unadjusted_close(self, symbol: str, start: date, end: date) -> pd.Series:
         """Raw (unadjusted) closes from `start` to `end`, indexed by `date`."""
-        ...
 
 
 def _utc_now() -> datetime:
@@ -439,11 +439,13 @@ class TextResponse(Protocol):
     status_code: int
 
     @property
-    def text(self) -> str: ...
+    def text(self) -> str:
+        """The response body as text."""
 
 
 class TextSession(Protocol):
-    def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> TextResponse: ...
+    def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> TextResponse:
+        """Send a GET request."""
 
 
 class FredRateSource:

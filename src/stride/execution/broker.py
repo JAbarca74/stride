@@ -50,10 +50,12 @@ class OrderState:
 
 class Broker(ABC):
     @abstractmethod
-    def get_account(self) -> Account: ...
+    def get_account(self) -> Account:
+        """Equity, cash, buying power and margin requirement."""
 
     @abstractmethod
-    def get_positions(self) -> dict[str, Position]: ...
+    def get_positions(self) -> dict[str, Position]:
+        """Quantity and average price per symbol."""
 
     @abstractmethod
     def submit_order(
@@ -63,13 +65,17 @@ class Broker(ABC):
         notional: float,
         type: OrderType = "market",
         limit_price: float | None = None,
-    ) -> str: ...
+    ) -> str:
+        """Send an order for `notional` dollars; returns its order id."""
 
     @abstractmethod
-    def get_order(self, order_id: str) -> OrderState: ...
+    def get_order(self, order_id: str) -> OrderState:
+        """Status, filled quantity, average price and commission."""
 
     @abstractmethod
-    def cancel_all(self) -> int: ...
+    def cancel_all(self) -> int:
+        """Cancel every pending order; returns how many were cancelled."""
 
     @abstractmethod
-    def is_market_open(self, day: date) -> bool: ...
+    def is_market_open(self, day: date) -> bool:
+        """Whether NYSE is open on `day`."""
