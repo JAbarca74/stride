@@ -83,7 +83,14 @@ from stride.data.sources import (
 from stride.data.update import PlanItem, UpdateResult, series_for, update_all
 from stride.execution import orders
 from stride.execution.broker import Broker, Position
-from stride.execution.kill_switch_file import fire, halt, is_active, is_halted
+from stride.execution.kill_switch_file import (
+    HALT_FILE,
+    KILL_SWITCH_FILE,
+    fire,
+    halt,
+    is_active,
+    is_halted,
+)
 from stride.execution.shadow_broker import ShadowBroker
 from stride.reporting import daily
 from stride.reporting.alerts import Alert, Alerter, AlertError, AlertKind, alerter_from_env
@@ -154,11 +161,30 @@ class Instance:
 
     @property
     def kill_switch(self) -> Path:
-        return self.root / "KILL_SWITCH"
+        """This instance's own KILL_SWITCH file: `KILL_SWITCH_B`, `KILL_SWITCH_DIP`
+        (both paper configs live in the same folder, so a plain `KILL_SWITCH` would
+        stop both), or `KILL_SWITCH` for `config.yaml`."""
+        return self.root / _suffixed(KILL_SWITCH_FILE, self.name)
 
     @property
     def halt(self) -> Path:
-        return self.root / "HALT"
+        return self.root / _suffixed(HALT_FILE, self.name)
+
+    @property
+    def kill_switch_files(self) -> tuple[Path, ...]:
+        """Every file that stops this instance: its own and the shared one, which a
+        person may write by hand to stop every instance at once."""
+        return tuple(dict.fromkeys((self.kill_switch, self.root / KILL_SWITCH_FILE)))
+
+    @property
+    def halt_files(self) -> tuple[Path, ...]:
+        return tuple(dict.fromkeys((self.halt, self.root / HALT_FILE)))
+
+    def killed(self) -> bool:
+        return any(is_active(p) for p in self.kill_switch_files)
+
+    def halted(self) -> bool:
+        return any(is_halted(p) for p in self.halt_files)
 
     @property
     def log_file(self) -> Path:
@@ -177,10 +203,8 @@ def instance_name(config_path: Path) -> str:
     return "STRIDE"
 
 
-def instance_state_files(config_path: Path) -> tuple[Path, Path]:
-    """The KILL_SWITCH and HALT files an instance reads: next to its config."""
-    root = config_path.resolve().parent
-    return root / "KILL_SWITCH", root / "HALT"
+def _suffixed(name: str, instance: str) -> str:
+    return name if instance == "STRIDE" else f"{name}_{instance}"
 
 
 def _git_hash() -> str:
@@ -407,7 +431,7 @@ class DailyJob:
             self.alert("KILL_SWITCH", f"kill switch fired; drawdown {decision.drawdown:.2%}")
         if halt(self.conn, decision, self.inst.halt):
             self.alert("RECONCILIATION", "halted: reconciliation breaks on two consecutive days")
-        killed, halted = is_active(self.inst.kill_switch), is_halted(self.inst.halt)
+        killed, halted = self.inst.killed(), self.inst.halted()
         drawdown = min(max(twr.drawdown, 0.0), 1.0) if math.isfinite(twr.drawdown) else 1.0
         before = store.read_table(self.conn, "risk_decisions")
         before = before[pd.DatetimeIndex(before["date"]) < pd.Timestamp(day)]
@@ -627,7 +651,7 @@ class DailyJob:
     def morning(self, day: date) -> str:
         evening = previous_trading_day(day)
         held = self.positions()
-        if is_active(self.inst.kill_switch):
+        if self.inst.killed():
             self.broker.cancel_all()
             closes = self._stored_closes(evening, held)
             sells = orders.liquidation_orders(held, closes)
@@ -655,7 +679,7 @@ class DailyJob:
             positions_usd={s: p.quantity * closes[s] for s, p in held.items()},
             data_ok=True,
             kill_switch_active=False,
-            halted=is_halted(self.inst.halt),
+            halted=self.inst.halted(),
         )
         proposed = [guard.ProposedOrder(o.symbol, o.side, o.notional, o.switch) for o in planned]
         by_id = {id(d.order): d for d in guard.check_orders(proposed, ctx, self.config)}
@@ -668,7 +692,8 @@ class DailyJob:
     ) -> int:
         out = orders.submit_approved(
             self.broker, planned, decisions, self.conn,
-            kill_switch_path=self.inst.kill_switch, halt_path=self.inst.halt, run_date=run,
+            kill_switch_path=self.inst.kill_switch_files, halt_path=self.inst.halt_files,
+            run_date=run,
         )  # fmt: skip
         for s in out:
             if s.status in {"failed", "unknown"}:

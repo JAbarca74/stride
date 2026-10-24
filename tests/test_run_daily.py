@@ -192,7 +192,12 @@ def test_instance_names_and_files(tmp_path: Path) -> None:
     world = _world(tmp_path)
     assert world.instance.title == "STRIDE TEST"
     assert world.instance.log_file == tmp_path / "data" / "logs" / "test.log"
-    assert world.instance.kill_switch == tmp_path / "KILL_SWITCH"
+    assert world.instance.kill_switch == tmp_path / "KILL_SWITCH_TEST"
+    assert world.instance.halt == tmp_path / "HALT_TEST"
+    assert world.instance.kill_switch_files == (
+        tmp_path / "KILL_SWITCH_TEST",
+        tmp_path / "KILL_SWITCH",
+    )
 
 
 def test_download_plan_is_only_what_the_instance_trades(tmp_path: Path) -> None:
@@ -324,11 +329,13 @@ def test_kill_switch_cancels_and_liquidates_from_broker_positions(tmp_path: Path
     conn.close()
 
 
-def test_halt_sends_nothing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("shared", [False, True])
+def test_halt_sends_nothing(tmp_path: Path, shared: bool) -> None:
     world = _world(tmp_path)
     world.at(DAY1, 18, 0)
     world.run()
-    world.instance.halt.write_text("halted", encoding="utf-8")
+    path = tmp_path / "HALT" if shared else world.instance.halt
+    path.write_text("halted", encoding="utf-8")
     world.at(DAY2, 9, 20)
     assert world.run() == 0
     conn = world.conn()

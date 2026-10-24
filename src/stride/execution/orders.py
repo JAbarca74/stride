@@ -340,12 +340,13 @@ def submit_approved(
     decisions: Sequence[guard.GuardDecision],
     conn: sqlite3.Connection,
     *,
-    kill_switch_path: str | Path,
-    halt_path: str | Path,
+    kill_switch_path: str | Path | Sequence[str | Path],
+    halt_path: str | Path | Sequence[str | Path],
     run_date: date,
 ) -> list[Submission]:
     """Not pure. Send the approved orders, sells first, and record each one.
 
+    `kill_switch_path` and `halt_path` may each be several files (any one counts).
     Orders not yet in `orders` are stored before the call. A kill-switch sell
     (rule `KILL_SWITCH`) goes out only while the kill switch is active, even
     during a halt; any other order only while neither file exists."""
@@ -408,9 +409,19 @@ def submit_approved(
     return out
 
 
-def _blocked(order: Order, kill_switch_path: str | Path, halt_path: str | Path) -> str:
-    """Why `order` must not be sent now ("" if it may): files read at send time."""
-    killed, halted = is_active(kill_switch_path), is_halted(halt_path)
+def _paths(value: str | Path | Sequence[str | Path]) -> tuple[str | Path, ...]:
+    return (value,) if isinstance(value, (str, Path)) else tuple(value)
+
+
+def _blocked(
+    order: Order,
+    kill_switch_path: str | Path | Sequence[str | Path],
+    halt_path: str | Path | Sequence[str | Path],
+) -> str:
+    """Why `order` must not be sent now ("" if it may): files read at send time.
+    Any of several files (the instance's own and a shared one) counts."""
+    killed = any(is_active(p) for p in _paths(kill_switch_path))
+    halted = any(is_halted(p) for p in _paths(halt_path))
     if order.rule == KILL_SWITCH_RULE:
         return "" if killed and order.side == "sell" else guard.KILL_SWITCH
     if killed:

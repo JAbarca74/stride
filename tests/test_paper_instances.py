@@ -100,6 +100,11 @@ def test_instances_never_share_files() -> None:
     dip = run_daily.load_instance(ROOT / "config.paper_dip.yaml")
     assert (b.title, dip.title) == ("STRIDE B", "STRIDE DIP")
     assert b.db != dip.db and b.log_file != dip.log_file
+    assert b.kill_switch != dip.kill_switch and b.halt != dip.halt  # one fires, the other runs
+    assert (
+        ROOT / "KILL_SWITCH" in b.kill_switch_files
+        and ROOT / "KILL_SWITCH" in dip.kill_switch_files
+    )
     assert b.config.execution.alpaca_key_env != dip.config.execution.alpaca_key_env
 
 
