@@ -196,19 +196,21 @@ Block bootstrap (out of sample): Sharpe -0.320 / 0.200 / 0.753; max drawdown 0.2
 | 2025 | 1.5x | off | 1.112 | 0.313 | 0.119 | traded |
 | 2026 | 3x | off | 1.122 | 0.248 | 0.092 | traded |
 
-## 10. Pre-registered strategy search (docs/design/strategy_search.md, strategy_search_round2.md and strategy_search_round3.md)
+## 10. Pre-registered strategy search (docs/design/strategy_search.md, strategy_search_round2.md to strategy_search_round4.md)
 
 Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95, max drawdown <= 40%.
 
 | strategy | oos_sharpe | spy_sharpe | oos_cagr | spy_cagr | oos_max_drawdown | deflated_sharpe | passes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| dual_momentum | 0.431 | 0.825 | 0.072 | 0.149 | 0.375 | 0.108 | FAIL |
-| relative_strength | 0.431 | 0.825 | 0.096 | 0.149 | 0.656 | 0.090 | FAIL |
-| vol_managed | 0.622 | 0.825 | 0.134 | 0.149 | 0.383 | 0.261 | FAIL |
-| sector_momentum | 0.424 | 0.825 | 0.082 | 0.149 | 0.407 | 0.088 | FAIL |
-| momentum_vol | 0.380 | 0.825 | 0.071 | 0.149 | 0.359 | 0.066 | FAIL |
-| risk_parity | 0.554 | 0.825 | 0.098 | 0.149 | 0.288 | 0.208 | FAIL |
-| spy_levered | 0.748 | 0.825 | 0.145 | 0.149 | 0.328 | 0.454 | FAIL |
+| dual_momentum | 0.431 | 0.825 | 0.072 | 0.149 | 0.375 | 0.058 | FAIL |
+| relative_strength | 0.431 | 0.825 | 0.096 | 0.149 | 0.656 | 0.048 | FAIL |
+| vol_managed | 0.622 | 0.825 | 0.134 | 0.149 | 0.383 | 0.164 | FAIL |
+| sector_momentum | 0.424 | 0.825 | 0.082 | 0.149 | 0.407 | 0.045 | FAIL |
+| momentum_vol | 0.380 | 0.825 | 0.071 | 0.149 | 0.359 | 0.032 | FAIL |
+| risk_parity | 0.554 | 0.825 | 0.098 | 0.149 | 0.288 | 0.125 | FAIL |
+| spy_levered | 0.748 | 0.825 | 0.145 | 0.149 | 0.328 | 0.325 | FAIL |
+| spy_levered_12m | 0.765 | 0.825 | 0.158 | 0.149 | 0.328 | 0.339 | FAIL |
+| qqq_levered_12m | 0.823 | 0.825 | 0.210 | 0.149 | 0.317 | 0.395 | FAIL |
 
 ### dual_momentum: leverage chosen in sample
 
@@ -416,6 +418,64 @@ Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95, max dr
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | spy_levered | 1.5x | off | -0.020 | -0.426 | 0.416 | 4676.035 | False |
 | spy_levered | 1.5x | on | 0.074 | 0.443 | 0.329 | 13942.650 | False |
+
+### spy_levered_12m: leverage chosen in sample
+
+| out_of_sample | chosen_leverage | drawdown_scaling | sharpe | cagr | max_drawdown | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2012 | 1.5x | on | 0.220 | 0.020 | 0.133 | traded |
+| 2013 | 1.5x | on | 2.521 | 0.447 | 0.079 | traded |
+| 2014 | 1.5x | off | 1.088 | 0.181 | 0.106 | traded |
+| 2015 | 1.5x | on | 0.122 | 0.007 | 0.149 | traded |
+| 2016 | 1.5x | off | 0.977 | 0.180 | 0.137 | traded |
+| 2017 | 2x | on | 2.774 | 0.304 | 0.042 | traded |
+| 2018 | 2x | off | -0.352 | -0.119 | 0.314 | traded |
+| 2019 | 1.5x | off | 1.991 | 0.457 | 0.103 | traded |
+| 2020 | 1.5x | on | -0.321 | -0.099 | 0.328 | traded |
+| 2021 | 1.5x | off | 1.940 | 0.467 | 0.083 | traded |
+| 2022 | 2x | on | -1.382 | -0.231 | 0.263 | traded |
+| 2023 | 1.5x | off | 1.299 | 0.309 | 0.146 | traded |
+| 2024 | 2x | on | 1.339 | 0.376 | 0.147 | traded |
+| 2025 | 1.5x | off | 0.774 | 0.217 | 0.231 | traded |
+| 2026 | 1.5x | on | 0.729 | 0.165 | 0.130 | traded |
+
+### spy_levered_12m: full period (30% goal)
+
+| strategy | leverage | drawdown_scaling | cagr | sharpe | max_drawdown | final_equity | meets_goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| spy_levered_12m | 1.5x | off | -0.020 | -0.426 | 0.416 | 4676.035 | False |
+| spy_levered_12m | 1.5x | on | 0.059 | 0.329 | 0.385 | 10404.187 | False |
+| spy_levered_12m | 2x | off | -0.025 | -0.390 | 0.450 | 4665.124 | False |
+| spy_levered_12m | 2x | on | -0.020 | -0.457 | 0.400 | 4678.577 | False |
+
+### qqq_levered_12m: leverage chosen in sample
+
+| out_of_sample | chosen_leverage | drawdown_scaling | sharpe | cagr | max_drawdown | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2012 | 1.5x | on | -0.050 | -0.018 | 0.201 | traded |
+| 2013 | 2x | off | 2.561 | 0.640 | 0.096 | traded |
+| 2014 | 2x | off | 1.275 | 0.341 | 0.148 | traded |
+| 2015 | 2x | off | 0.622 | 0.156 | 0.216 | traded |
+| 2016 | 1.5x | off | 0.387 | 0.068 | 0.201 | traded |
+| 2017 | 2x | on | 2.453 | 0.475 | 0.054 | traded |
+| 2018 | 1.5x | off | -0.047 | -0.048 | 0.317 | traded |
+| 2019 | 1.5x | off | 1.910 | 0.592 | 0.169 | traded |
+| 2020 | 1.5x | on | 0.548 | 0.132 | 0.290 | traded |
+| 2021 | 1.5x | off | 1.347 | 0.408 | 0.166 | traded |
+| 2022 | 1.5x | on | -1.680 | -0.257 | 0.272 | traded |
+| 2023 | 2x | on | 1.632 | 0.553 | 0.188 | traded |
+| 2024 | 2x | on | 0.621 | 0.198 | 0.224 | traded |
+| 2025 | 1.5x | on | 0.449 | 0.121 | 0.218 | traded |
+| 2026 | 1.5x | on | 0.599 | 0.173 | 0.153 | traded |
+
+### qqq_levered_12m: full period (30% goal)
+
+| strategy | leverage | drawdown_scaling | cagr | sharpe | max_drawdown | final_equity | meets_goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| qqq_levered_12m | 1.5x | off | -0.018 | -0.468 | 0.404 | 4691.148 | False |
+| qqq_levered_12m | 1.5x | on | 0.097 | 0.498 | 0.397 | 19056.936 | False |
+| qqq_levered_12m | 2x | off | -0.012 | -0.276 | 0.418 | 4722.997 | False |
+| qqq_levered_12m | 2x | on | -0.012 | -0.276 | 0.418 | 4722.997 | False |
 
 ## Notes
 
