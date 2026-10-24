@@ -193,7 +193,13 @@ class AllocationConfig(_Section):
     the weights; above 1x it is reached with the eligible leveraged ETFs."""
 
     mode: Literal[
-        "dual_momentum", "relative_strength", "vol_managed", "momentum_vol", "risk_parity", "hold"
+        "dual_momentum",
+        "relative_strength",
+        "vol_managed",
+        "momentum_vol",
+        "risk_parity",
+        "hold",
+        "sleeve",
     ]
     assets: Annotated[list[Ticker], Field(min_length=1)]
     refuge: Annotated[str, Field(pattern=r"^([A-Z]{1,6}|cash)$")]
@@ -204,6 +210,21 @@ class AllocationConfig(_Section):
     max_weight: Annotated[float, Field(gt=0, le=4)]
     vol_window: Lookback  # days of returns behind the realized volatility
     leverage: Annotated[float, Field(gt=0, le=4)]
+    rebalance: Literal["monthly", "daily"]
+    # sleeve (round 5, docs/design/strategy_search_round5.md): `core` holds
+    # 1 - `sleeve` of equity; `assets` share `sleeve`, each in only while its
+    # `signal` is on, sized by `kelly_fraction` of Kelly (0 = the full share).
+    core: list[Ticker]
+    sleeve: Fraction
+    signal: Literal["hold", "trend", "breakout", "range", "dip"]
+    trend_sma: Lookback  # trend: in while the close is above this average
+    entry: Lookback  # breakout: close above the prior high; range: at the prior low
+    exit: Lookback  # breakout: close below the prior low; range: at the prior high
+    kelly_fraction: Annotated[float, Field(ge=0, le=1)]
+    kelly_window: Lookback  # days of returns behind the Kelly estimate
+    dip_drop: Fraction  # dip: buy once the close is this far below its recent high
+    dip_window: Lookback  # dip: days behind that recent high
+    take_profit: Fraction  # dip: sell once the close is this far above the buy close
 
     @model_validator(mode="after")
     def _skip_shorter(self) -> Self:
@@ -304,7 +325,7 @@ class StrideConfig(_Section):
         ):
             raise ValueError("experiments.rotation.multiple has no leveraged version")
         alloc = self.experiments.allocation
-        if any(a not in universe for a in alloc.assets):
+        if any(a not in universe for a in [*alloc.assets, *alloc.core]):
             raise ValueError("experiments.allocation.assets must be in the universe")
         if alloc.refuge != "cash" and alloc.refuge not in universe:
             raise ValueError("experiments.allocation.refuge must be in the universe or cash")

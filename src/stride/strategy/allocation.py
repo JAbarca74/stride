@@ -18,6 +18,12 @@ missing or too short history never adds a position.
 - risk_parity        Round 2: inverse-volatility weights, the whole portfolio
                      scaled to the target volatility, total weight capped.
 - hold               Round 3: equal weights in the assets, always invested.
+- sleeve             Round 5: `core` holds 1 - `sleeve`; each asset gets an equal
+                     part of `sleeve` while its signal is on (hold, trend above
+                     an average, breakout 55/20, range at 20-day lows/highs, or
+                     dip: bought after a deep fall, held past +30% until the
+                     rise breaks),
+                     sized by a fraction of Kelly; the rest stays in cash.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+import numpy as np
 import pandas as pd
 
 from stride.config import AllocationConfig
@@ -194,10 +201,148 @@ def hold(closes: pd.DataFrame, risk_free: float, *, assets: Sequence[str]) -> di
     return dict.fromkeys(held, 1.0 / len(held)) if held else {}
 
 
-def target_weights(
+def trend_on(close: pd.Series, sma: int) -> bool:
+    """Whether the last close is above its `sma`-day average (False if short)."""
+    clean = close.dropna()
+    if len(clean) < sma:
+        return False
+    return bool(clean.iloc[-1] > clean.iloc[-sma:].mean())
+
+
+def _last_true(flags: pd.Series) -> int:
+    hits = np.flatnonzero(flags.to_numpy(dtype=bool))
+    return int(hits[-1]) if len(hits) else -1
+
+
+def breakout_on(close: pd.Series, entry: int, exit: int) -> bool:
+    """Turtle state from closes: in after a close above the prior `entry`-day high,
+    out after a close below the prior `exit`-day low (rolling windows exclude the
+    day itself); in only if the last entry is more recent than the last exit."""
+    clean = close.dropna()
+    high = clean.shift(1).rolling(entry).max()
+    low = clean.shift(1).rolling(exit).min()
+    last_in, last_out = _last_true(clean > high), _last_true(clean < low)
+    return last_in >= 0 and last_in > last_out
+
+
+def range_on(close: pd.Series, entry: int, exit: int) -> bool:
+    """Range trading from closes: in after a close at or below the prior
+    `entry`-day low, out after a close at or above the prior `exit`-day high."""
+    clean = close.dropna()
+    low = clean.shift(1).rolling(entry).min()
+    high = clean.shift(1).rolling(exit).max()
+    last_in, last_out = _last_true(clean <= low), _last_true(clean >= high)
+    return last_in >= 0 and last_in > last_out
+
+
+def dip_on(close: pd.Series, *, drop: float, window: int, take_profit: float, trail: int) -> bool:
+    """Buy the dip (owner idea, round 5): in once the close is `drop` below the
+    highest close of the prior `window` days. No stop: it waits for the recovery.
+    Once a close is `take_profit` above the buy close the target is reached, but
+    it holds while the rise goes on and sells on the first close below the
+    lowest close of the prior `trail` days."""
+    clean = close.dropna()
+    high = clean.shift(1).rolling(window).max().to_numpy()
+    low = clean.shift(1).rolling(trail).min().to_numpy()
+    values = clean.to_numpy()
+    bought, reached = math.nan, False
+    for price, top, floor in zip(values, high, low, strict=True):
+        if math.isnan(bought):
+            if math.isfinite(top) and price <= top * (1 - drop):
+                bought, reached = float(price), False
+            continue
+        if reached and math.isfinite(floor) and price < floor:
+            bought, reached = math.nan, False
+            continue
+        if price >= bought * (1 + take_profit):
+            reached = True
+    return not math.isnan(bought)
+
+
+def kelly_share(close: pd.Series, risk_free: float, *, fraction: float, window: int) -> float:
+    """`fraction` of the Kelly weight (excess return / variance, annualized) from
+    the last `window` daily returns, clipped to [0, 1]; 1 when `fraction` is 0
+    (no Kelly sizing), 0 with too short a history."""
+    if fraction == 0:
+        return 1.0
+    returns = _daily_returns(close, window)
+    if len(returns) < window:
+        return 0.0
+    variance = float(returns.var(ddof=1)) * TRADING_DAYS_PER_YEAR
+    if not variance > 0:
+        return 0.0
+    excess = float(returns.mean()) * TRADING_DAYS_PER_YEAR - risk_free
+    return min(max(fraction * excess / variance, 0.0), 1.0)
+
+
+def sleeve(
+    closes: pd.DataFrame,
+    risk_free: float,
+    *,
+    core: Sequence[str],
+    assets: Sequence[str],
+    share: float,
+    signal: str,
+    trend_sma: int,
+    entry: int,
+    exit: int,
+    kelly_fraction: float,
+    kelly_window: int,
+    dip_drop: float = 0.25,
+    dip_window: int = 90,
+    take_profit: float = 0.30,
+) -> dict[str, float]:
+    """Core plus a sleeve: `core` assets split 1 - `share`; each sleeve asset may
+    use `share` / len(assets) while its signal is on, times its Kelly share. Only
+    the last `kelly_window` + `trend_sma` days are read, so the signal state is
+    the one those days imply."""
+    tail = closes.iloc[-(kelly_window + trend_sma + 1) :]
+    held = [c for c in core if c in tail.columns and tail[c].notna().any()]
+    weights = dict.fromkeys(held, (1.0 - share) / len(held)) if held else {}
+    part = share / len(assets) if assets else 0.0
+    for asset in assets:
+        if asset not in tail.columns or tail[asset].dropna().empty:
+            continue
+        close = tail[asset]
+        on = {
+            "hold": True,
+            "trend": trend_on(close, trend_sma),
+            "breakout": breakout_on(close, entry, exit),
+            "range": range_on(close, entry, exit),
+            "dip": signal == "dip"
+            and dip_on(
+                close, drop=dip_drop, window=dip_window, take_profit=take_profit, trail=exit
+            ),
+        }[signal]
+        if not on:
+            continue
+        size = part * kelly_share(close, risk_free, fraction=kelly_fraction, window=kelly_window)
+        if size > 0:
+            weights[asset] = weights.get(asset, 0.0) + size
+    return weights
+
+
+def target_weights(  # noqa: PLR0911 - one return per mode
     settings: AllocationConfig, closes: pd.DataFrame, risk_free: float
 ) -> dict[str, float]:
     """Dispatch on `settings.mode` (`experiments.allocation` in config.yaml)."""
+    if settings.mode == "sleeve":
+        return sleeve(
+            closes,
+            risk_free,
+            core=settings.core,
+            assets=settings.assets,
+            share=settings.sleeve,
+            signal=settings.signal,
+            trend_sma=settings.trend_sma,
+            entry=settings.entry,
+            exit=settings.exit,
+            kelly_fraction=settings.kelly_fraction,
+            kelly_window=settings.kelly_window,
+            dip_drop=settings.dip_drop,
+            dip_window=settings.dip_window,
+            take_profit=settings.take_profit,
+        )
     if settings.mode == "hold":
         return hold(closes, risk_free, assets=settings.assets)
     if settings.mode == "dual_momentum":

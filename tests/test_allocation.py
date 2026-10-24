@@ -15,15 +15,21 @@ from stride.backtest.engine import BacktestSettings, MarketData, run_backtest
 from stride.config import ConfigError, StrideConfig, load_config
 from stride.data.calendar import trading_days
 from stride.strategy.allocation import (
+    breakout_on,
+    dip_on,
     dual_momentum,
     hold,
     hurdle,
+    kelly_share,
     lookback_return,
     momentum_vol,
+    range_on,
     realized_vol,
     relative_strength,
     risk_parity,
+    sleeve,
     target_weights,
+    trend_on,
     vol_managed,
 )
 
@@ -158,6 +164,80 @@ def test_hold_is_always_fully_invested_in_equal_weights() -> None:
     assert hold(closes, 0.0, assets=["MISSING"]) == {}
 
 
+def test_trend_breakout_and_range_states_from_closes() -> None:
+    up = pd.Series(np.linspace(100, 200, 300))
+    down = pd.Series(np.linspace(200, 100, 300))
+    assert trend_on(up, 200) and not trend_on(down, 200)
+    assert not trend_on(up.iloc[:50], 200)  # too short
+    assert breakout_on(up, 55, 20) and not breakout_on(down, 55, 20)
+    # Range trading buys falling prices at the lows and sells rising ones.
+    assert range_on(down, 20, 20) and not range_on(up, 20, 20)
+    # Up, then a fall below the 20-day low: the breakout is out.
+    turn = pd.concat([up, pd.Series(np.linspace(199, 150, 30))], ignore_index=True)
+    assert not breakout_on(turn, 55, 20)
+
+
+def test_dip_buys_deep_falls_and_rides_the_rise_past_the_target() -> None:
+    kw: dict[str, Any] = {"drop": 0.25, "window": 90, "take_profit": 0.30, "trail": 3}
+
+    def path(*tail: float) -> pd.Series:
+        return pd.Series([*np.full(100, 100.0), *tail])
+
+    assert not dip_on(path(), **kw)
+    assert dip_on(path(90, 80, 74), **kw)  # 26% below the 90-day high: bought at 74
+    assert dip_on(path(90, 80, 74, 60, 70, 90), **kw)  # 90 < 74 * 1.3 = 96.2: holds
+    # Target reached at 97 and the rise goes on: it holds.
+    assert dip_on(path(90, 80, 74, 85, 97, 105, 112), **kw)
+    # Then a close below the prior 3-day low (97, 105, 112 -> 97): sold.
+    assert not dip_on(path(90, 80, 74, 85, 97, 105, 112, 96), **kw)
+    # Before the target, a fall below the 3-day low does not sell (no stop).
+    assert dip_on(path(90, 80, 74, 85, 90, 70), **kw)
+
+
+def test_kelly_share_is_a_clipped_fraction_of_excess_return_over_variance() -> None:
+    rng = np.random.default_rng(4)
+    returns = rng.normal(0.002, 0.03, 600)
+    close = pd.Series(100 * np.cumprod(1 + returns))
+    observed = pd.Series(returns[-504:])
+    full = (observed.mean() * 252 - 0.02) / (observed.var(ddof=1) * 252)
+    expected = min(max(0.5 * full, 0.0), 1.0)
+    assert kelly_share(close, 0.02, fraction=0.5, window=504) == pytest.approx(expected)
+    assert kelly_share(close, 0.02, fraction=0.0, window=504) == 1.0  # no Kelly
+    assert kelly_share(close.iloc[:100], 0.02, fraction=0.5, window=504) == 0.0  # short
+    falling = pd.Series(100 * np.cumprod(1 + rng.normal(-0.002, 0.03, 600)))
+    assert kelly_share(falling, 0.02, fraction=0.5, window=504) == 0.0
+
+
+def test_sleeve_keeps_the_core_and_sizes_crypto_only_while_on() -> None:
+    days = pd.bdate_range("2018-01-01", periods=800)
+    closes = pd.DataFrame(
+        {
+            "SPY": np.linspace(100, 150, 800),
+            "IBIT": np.linspace(100, 400, 800),  # rising: trend on
+            "ETHA": np.linspace(400, 100, 800),  # falling: trend off
+        },
+        index=days,
+    )
+    kw: dict[str, Any] = {
+        "core": ["SPY"],
+        "assets": ["IBIT", "ETHA"],
+        "share": 0.2,
+        "signal": "trend",
+        "trend_sma": 200,
+        "entry": 55,
+        "exit": 20,
+        "kelly_fraction": 0.0,
+        "kelly_window": 504,
+    }
+    assert sleeve(closes, 0.0, **kw) == pytest.approx({"SPY": 0.8, "IBIT": 0.1})
+    held = sleeve(closes, 0.0, **(kw | {"signal": "hold"}))
+    assert held == pytest.approx({"SPY": 0.8, "IBIT": 0.1, "ETHA": 0.1})
+    halved = sleeve(closes, 0.0, **(kw | {"kelly_fraction": 0.5}))
+    assert halved["SPY"] == pytest.approx(0.8)
+    assert 0 < halved["IBIT"] <= 0.1
+    assert sum(sleeve(closes, 0.0, **kw).values()) <= 1.0
+
+
 def test_target_weights_dispatch_on_the_config_mode() -> None:
     closes = _closes(SPY=0.15, EFA=0.05, IEF=0.0)
     settings = CONFIG.experiments.allocation
@@ -205,12 +285,40 @@ def test_allocation_rebalances_once_a_month() -> None:
     assert result.risk_decisions["binding_limit"].isin(["ALLOCATION", "KILL_SWITCH"]).all()
 
 
+def test_daily_sleeve_trades_crypto_and_keeps_the_core() -> None:
+    days = trading_days(date(2016, 1, 4), date(2020, 12, 31))
+    rng = np.random.default_rng(8)
+
+    def bars(drift: float, vol: float) -> pd.DataFrame:
+        close = 100 * np.cumprod(1 + rng.normal(drift, vol, len(days)))
+        return pd.DataFrame(
+            {"open": close, "high": close * 1.003, "low": close * 0.997, "close": close},
+            index=days,
+        )
+
+    data = MarketData(
+        {"SPY": bars(0.0005, 0.01), "IBIT": bars(0.002, 0.04), "ETHA": bars(0.002, 0.05)},
+        pd.Series(0.01, index=pd.date_range("2015-12-01", "2021-01-31")),
+    )
+    config = _allocation_config(
+        mode="sleeve", assets=["IBIT", "ETHA"], refuge="cash", signal="breakout",
+        rebalance="daily", kelly_fraction=0.5,
+    )  # fmt: skip
+    result = run_backtest(
+        data, config, BacktestSettings(date(2018, 6, 1), date(2020, 12, 31), 10_000.0)
+    )
+    symbols = set(result.orders["symbol"])
+    assert "SPY" in symbols
+    assert symbols <= {"SPY", "IBIT", "ETHA", "SSO", "UPRO", "BITX", "ETHU"}
+
+
 @pytest.mark.parametrize(
     ("values", "match"),
     [
         ({"assets": ["QQQ"]}, "assets must be in the universe"),
         ({"refuge": "BIL"}, "refuge must be in the universe or cash"),
         ({"skip": 300}, "skip must be shorter"),
+        ({"core": ["QQQ"]}, "assets must be in the universe"),
     ],
 )
 def test_allocation_config_is_validated(values: dict[str, object], match: str) -> None:
