@@ -1,0 +1,13 @@
+# Flagged price events: reviewed exceptions to validation 2 (SPEC section 5).
+#
+# A daily change above data.quality.max_daily_change stops the run unless its day
+# is listed here for that symbol. Each entry is confirmed by a person.
+#
+# kind: split | provider_error | market_move
+# Closes are the stored adjusted closes (Tiingo).
+
+SLV:
+  - date: 2026-01-30
+    kind: market_move
+    detail: "Genuine silver crash: close 105.57 -> 75.44 (-28.5%); AGQ -59.9% the same day"
+    confirmed_by: owner (2026-10-22)

@@ -142,6 +142,22 @@ python -m stride.data.update t21           # synthetic vs real leveraged ETFs
 </details>
 
 <details>
+<summary><b>Running the backtest</b></summary>
+
+<br>
+
+Needs `data/stride.db` (above) and network access to FRED for the 3-month T-bill rate (no key). Results go to a separate database, never to `data/stride.db`, whose equity and risk-state tables belong to the paper or live account.
+
+```bash
+python -m stride.backtest.run                              # 2007 to the last stored day, $100 start
+python -m stride.backtest.run --fixed-leverage 2           # leverage comparison (SPEC 9)
+python -m stride.backtest.run --report reports/backtest.html
+python -m stride.backtest.validation                       # SPEC 9 protocol -> docs/results/
+```
+
+</details>
+
+<details>
 <summary><b>Development checks</b></summary>
 
 <br>
@@ -168,7 +184,7 @@ mypy src tests
 | `src/stride/strategy/` | Indicators and trading rules (pure) |
 | `src/stride/risk/` | Sizing, leverage, risk veto, kill switch (pure) |
 | `src/stride/execution/` | Brokers: simulated and Alpaca paper |
-| `src/stride/backtest/` | Costs and performance metrics |
+| `src/stride/backtest/` | Backtest engine, costs and performance metrics |
 | `src/stride/reporting/` | Reports, correlations, alerts |
 | `tests/` | Test suite |
 | `CLAUDE.md`, `AGENTS.md` | Rules for coding agents |

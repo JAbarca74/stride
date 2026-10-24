@@ -16,6 +16,7 @@ import pandas as pd
 
 TRADING_DAYS_PER_YEAR = 252
 _ZERO = 1e-12  # below this a standard deviation is treated as zero
+_FLAT = 1e-9  # daily returns this steady are a flat (cash-only) series: no Sharpe
 
 
 def _excess(returns: pd.Series, risk_free: float | pd.Series) -> pd.Series:
@@ -66,8 +67,16 @@ def volatility(returns: pd.Series) -> float:
     return float(returns.std(ddof=1) * math.sqrt(TRADING_DAYS_PER_YEAR))
 
 
+def _flat(returns: pd.Series) -> bool:
+    """A series that never moves (e.g. a stopped system in cash with no interest):
+    its excess return is only the risk-free rate, so a Sharpe would be noise."""
+    return len(returns) > 1 and float(returns.std(ddof=1)) < _FLAT
+
+
 def sharpe(returns: pd.Series, risk_free: float | pd.Series = 0.0) -> float:
     """(Return - risk-free) / volatility, annualized from daily excess returns."""
+    if _flat(returns):
+        return math.nan
     excess = _excess(returns, risk_free)
     std = float(excess.std(ddof=1)) if len(excess) > 1 else math.nan
     if math.isnan(std) or std < _ZERO:
@@ -77,6 +86,8 @@ def sharpe(returns: pd.Series, risk_free: float | pd.Series = 0.0) -> float:
 
 def sortino(returns: pd.Series, risk_free: float | pd.Series = 0.0) -> float:
     """Like Sharpe, with downside deviation (root mean square of negative excess)."""
+    if _flat(returns):
+        return math.nan
     excess = _excess(returns, risk_free)
     if excess.empty:
         return math.nan

@@ -104,14 +104,74 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 
+_SIGNALS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS signals (
+    date          TEXT    NOT NULL,
+    symbol        TEXT    NOT NULL,
+    close         REAL    NOT NULL,
+    sma200        REAL,
+    hh55          REAL,
+    ll20          REAL,
+    n             REAL,
+    rule          TEXT    NOT NULL,
+    current_units INTEGER NOT NULL CHECK (current_units >= 0),
+    target_units  INTEGER NOT NULL CHECK (target_units >= 0),
+    last_entry    REAL,
+    capped        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (date, symbol)
+)
+"""
+SIGNAL_TABLE_COLUMNS = (
+    "close",
+    "sma200",
+    "hh55",
+    "ll20",
+    "n",
+    "rule",
+    "current_units",
+    "target_units",
+    "last_entry",
+    "capped",
+)
+
+_RISK_DECISIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS risk_decisions (
+    date           TEXT PRIMARY KEY,
+    l_star         REAL,
+    kelly_days     INTEGER NOT NULL,
+    sigma_60       REAL    NOT NULL,
+    leverage       REAL    NOT NULL CHECK (leverage >= 0),
+    binding_limit  TEXT    NOT NULL,
+    drawdown       REAL    NOT NULL,
+    delever_active INTEGER NOT NULL,
+    k              REAL    NOT NULL,
+    vetoes         TEXT    NOT NULL
+)
+"""
+RISK_DECISION_COLUMNS = (
+    "l_star",
+    "kelly_days",
+    "sigma_60",
+    "leverage",
+    "binding_limit",
+    "drawdown",
+    "delever_active",
+    "k",
+    "vetoes",
+)
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create every table (prices, cash_flows, equity, risk_state, events) if missing."""
+    """Create every table (prices, cash_flows, equity, risk_state, events, signals,
+    risk_decisions) if missing."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
         conn.execute(_EQUITY_SCHEMA)
         conn.execute(_RISK_STATE_SCHEMA)
         conn.execute(_EVENTS_SCHEMA)
+        conn.execute(_SIGNALS_SCHEMA)
+        conn.execute(_RISK_DECISIONS_SCHEMA)
 
 
 def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
@@ -315,3 +375,52 @@ def reset_twr_peak(conn: sqlite3.Connection, by: str, reason: str) -> None:
             (TWR_PEAK, index, stamp),
         )
     record_event(conn, "PEAK_RESET", f"by {by}: {reason} (peak {peak:.6f} -> {index:.6f})", stamp)
+
+
+def _none_if_nan(value: object) -> object:
+    return None if isinstance(value, float) and math.isnan(value) else value
+
+
+def _upsert_frame(
+    conn: sqlite3.Connection, table: str, keys: tuple[str, ...], frame: pd.DataFrame,
+    columns: tuple[str, ...],
+) -> int:  # fmt: skip
+    missing = [c for c in columns if c not in frame.columns]
+    if missing:
+        raise ValueError(f"missing {table} columns: {missing}")
+    flat = frame.reset_index()
+    flat["date"] = pd.to_datetime(flat["date"]).dt.strftime("%Y-%m-%d")
+    names = (*keys, *columns)
+    rows = [
+        tuple(_none_if_nan(v.item() if hasattr(v, "item") else v) for v in row)
+        for row in flat[list(names)].itertuples(index=False, name=None)
+    ]
+    updates = ", ".join(f"{c} = excluded.{c}" for c in columns)
+    with conn:
+        conn.executemany(
+            f"INSERT INTO {table} ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})"
+            f" ON CONFLICT ({', '.join(keys)}) DO UPDATE SET {updates}",
+            rows,
+        )
+    return len(rows)
+
+
+def upsert_signals(conn: sqlite3.Connection, signals: pd.DataFrame) -> int:
+    """One row per asset and day (SPEC section 10): indicators, rule fired, current
+    and target units. `signals` has `date` and `symbol` as columns or index levels."""
+    return _upsert_frame(conn, "signals", ("date", "symbol"), signals, SIGNAL_TABLE_COLUMNS)
+
+
+def upsert_risk_decisions(conn: sqlite3.Connection, decisions: pd.DataFrame) -> int:
+    """One row per day (SPEC section 10): L*, effective L, binding limit, drawdown and
+    the vetoes applied (a JSON list). Indexed by date."""
+    return _upsert_frame(conn, "risk_decisions", ("date",), decisions, RISK_DECISION_COLUMNS)
+
+
+def read_table(conn: sqlite3.Connection, table: str) -> pd.DataFrame:
+    """Every row of `signals` or `risk_decisions`, oldest first."""
+    if table not in {"signals", "risk_decisions"}:
+        raise ValueError(f"unknown table {table!r}")
+    frame = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY date", conn)
+    frame["date"] = pd.to_datetime(frame["date"])
+    return frame

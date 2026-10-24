@@ -61,17 +61,26 @@ execution:
   limit_offset: 0.005
   max_orders_per_day: 12
   max_order_pct_equity: 0.60
+  max_resize_cost_pct: 0.005       # skip HOLD top-up buys costing more (added 2026-10-23, owner request)
 
 cash_flows:
+  initial_deposit_usd: 100         # SPEC 2: starting capital (added 2026-10-23, owner decision)
   monthly_deposit_usd: 20
   deposit_day: first_trading_day
 
 costs:
   spread_bps: 5
   spread_bps_crypto: 10
+  pricing: tiered                  # fixed | tiered (owner decision 2026-10-23; choose Tiered at IBKR)
   commission_per_share: 0.005      # IBKR Pro Fixed
   commission_min_per_order: 1.00
   commission_max_pct_of_value: 0.01
+  tiered_per_share: 0.0035         # IBKR Pro Tiered, lowest-volume tier
+  tiered_min_per_order: 0.35
+  tiered_max_pct_of_value: 0.01    # to verify on IBKR's schedule
+  tiered_third_party_per_share: 0.003  # exchange, clearing and regulatory fees (conservative)
+  cash_interest_free_usd: 10000    # IBKR pays no interest on the first $10,000 of cash
+  cash_interest_full_rate_nav: 100000  # full rate only from this NAV; pro rata below
   leveraged_etf_fee: 0.0095        # approximate annual fee
   margin_spread: 0.015
 
@@ -84,3 +93,37 @@ data:
     max_daily_change: 0.25         # unflagged close-to-close move (validation 2)
     source_close_tolerance: 0.005  # historical sample, alert only (validation 4)
     latest_bar_max_diff: 0.02      # latest bar; blocks that symbol for the day (validation 4)
+
+experiments:                       # owner request 2026-10-23; measured in validation section 6
+  enabled: []                      # an experiment enters only after it wins out of sample (SPEC 9)
+  extra_universe: [EEM, VNQ, BWX, USO, CPER, DBA, FXY]
+  extra_groups:                    # correlated families share a unit cap
+    equities: [EEM, VNQ]
+    bonds: [BWX]
+    commodities: [DBC, USO, CPER, DBA]
+  search_universe: [QQQ, IWM, XLK, XLV, XLF, XLE, XLI]   # strategy search only (round 2)
+  search_leveraged_etfs:
+    QQQ: {2: QLD, 3: TQQQ}
+  breakout_systems: [[20, 10], [55, 20], [100, 40]]   # Turtle S1, S2 and a slower one
+  dd_scale_start: 0.05             # drawdown_scaling: full leverage up to -5%,
+  dd_scale_full: 0.20              # shrinking linearly to dd_scale_floor at -20%
+  dd_scale_floor: 0.25             # (keeps large drawdowns out; owner goal 2026-10-23)
+  dd_scale_window: 0               # drawdown from the peak of the last N days; 0 = all-time peak
+  rotation:                        # leverage_rotation (Gayed & Bilello 2016; owner goal 30%/yr)
+    underlying: SPY                # hold its leveraged version above its moving average
+    sma: 200
+    band: 0.0                      # hysteresis around the average (0 = none)
+    multiple: 3                    # UPRO; 2 = SSO
+    refuge: IEF                    # below the average: IEF, or cash
+  allocation:                      # pre-registered search: docs/design/strategy_search.md
+    mode: dual_momentum            # dual_momentum | relative_strength | vol_managed |
+                                   # momentum_vol | risk_parity | hold
+    assets: [SPY, EFA]             # dual momentum: US vs international equities
+    refuge: IEF
+    lookback: 252                  # 12 months
+    skip: 0
+    top: 3                         # relative_strength: number of assets held
+    target_vol: 0.20               # vol_managed: annual volatility aimed at
+    max_weight: 3.0                # vol_managed: weight cap
+    vol_window: 21                 # days behind the realized volatility (Moreira and Muir: 21)
+    leverage: 1.0                  # multiplies the weights (leveraged ETFs above 1x)

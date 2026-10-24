@@ -9,90 +9,121 @@
 #     prospectus, or the management fee from the 10-K for commodity pools (UGL, AGQ);
 #   - aum_usd: net assets from the latest N-PORT-P, or shareholders' equity from
 #     the latest 10-Q for commodity pools.
-# median_spread_30d is left for the owner to collect from the issuer pages
-# (SEC rule 6c-11). Volatility Shares funds (BITX, ETHU) are left entirely to
-# the owner. A null value fails the filters until it is filled in.
+# median_spread_30d was read on 2026-10-22 from each issuer's fund page (SEC rule
+# 6c-11 disclosure, 30 days to 2026-10-21); no terms or disclaimers were accepted.
+# Volatility Shares funds (BITX, ETHU) were filled entirely from their fund pages
+# the same day. A null value fails the filters.
 
 SSO:
   underlying: SPY
   multiple: 2
   expense_ratio: 0.0084        # 0.88% before a 0.04% fee waiver
   aum_usd: 8377250150
-  median_spread_30d: null
+  median_spread_30d: 0.0001      # issuer page, 30 days to 2026-10-21
   as_of: 2026-05-31
   source:
     - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001012/f46053d1.htm
     - https://www.sec.gov/Archives/edgar/data/1174610/000207169126017379/primary_doc.xml
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/sso
 
 UPRO:
   underlying: SPY
   multiple: 3
   expense_ratio: 0.0088        # no waiver
   aum_usd: 5545344561
-  median_spread_30d: null
+  median_spread_30d: 0.0002      # issuer page, 30 days to 2026-10-21
   as_of: 2026-05-31
   source:
     - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001031/f46114d1.htm
     - https://www.sec.gov/Archives/edgar/data/1174610/000207169126017443/primary_doc.xml
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/upro
 
 UBT:
   underlying: TLT
   multiple: 2
   expense_ratio: 0.0095        # 0.98% before a 0.03% fee waiver
   aum_usd: 63952544
-  median_spread_30d: null
+  median_spread_30d: 0.0035      # issuer page, 30 days to 2026-10-21
   as_of: 2026-05-31
   source:
     - https://www.sec.gov/Archives/edgar/data/1174610/000117461026000994/f46025d1.htm
     - https://www.sec.gov/Archives/edgar/data/1174610/000207169126017442/primary_doc.xml
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/ubt
 
 TMF:
   underlying: TLT
   multiple: 3
   expense_ratio: 0.0090        # 1.01% before the expense cap
   aum_usd: 2199432117
-  median_spread_30d: null
+  median_spread_30d: 0.0004      # issuer page, 30 days to 2026-10-21
   as_of: 2026-07-31
   source:
     - https://www.sec.gov/Archives/edgar/data/1424958/000119312526078552/d64996d497k.htm
     - https://www.sec.gov/Archives/edgar/data/1424958/000119312526404458/primary_doc.xml
+    - https://www.direxion.com/product/daily-20-year-treasury-bull-bear-3x-etfs
 
 UGL:
   underlying: GLD
   multiple: 2
   expense_ratio: 0.0095        # management fee of each geared fund (10-K)
   aum_usd: 640891713           # shareholders' equity (10-Q)
-  median_spread_30d: null
+  median_spread_30d: 0.0002      # issuer page, 30 days to 2026-10-21
   as_of: 2026-06-30
   source:
     - https://www.sec.gov/Archives/edgar/data/1415311/000119312526077441/d785470d10k.htm
     - https://www.sec.gov/Archives/edgar/data/1415311/000119312526340159/d138511d10q.htm
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/ugl
 
 AGQ:
   underlying: SLV
   multiple: 2
   expense_ratio: 0.0095        # management fee of each geared fund (10-K)
   aum_usd: 1269873944          # shareholders' equity (10-Q)
-  median_spread_30d: null
+  median_spread_30d: 0.0005      # issuer page, 30 days to 2026-10-21
   as_of: 2026-06-30
   source:
     - https://www.sec.gov/Archives/edgar/data/1415311/000119312526077441/d785470d10k.htm
     - https://www.sec.gov/Archives/edgar/data/1415311/000119312526340159/d138511d10q.htm
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/agq
 
-BITX:                          # owner to fill (Volatility Shares)
+BITX:
   underlying: IBIT
   multiple: 2
-  expense_ratio: null
-  aum_usd: null
-  median_spread_30d: null
-  as_of: null
-  source: []
+  expense_ratio: 0.0275        # total expense ratio; management fee 1.85%
+  aum_usd: 1275327766
+  median_spread_30d: 0.0005      # issuer page, 30 days to 2026-10-21
+  as_of: 2026-10-21
+  source:
+    - https://www.volatilityshares.com/bitx
 
-ETHU:                          # owner to fill (Volatility Shares)
+ETHU:
   underlying: ETHA
   multiple: 2
-  expense_ratio: null
-  aum_usd: null
-  median_spread_30d: null
-  as_of: null
-  source: []
+  expense_ratio: 0.0297        # total expense ratio; management fee 1.85%
+  aum_usd: 1070744120
+  median_spread_30d: 0.0004      # issuer page, 30 days to 2026-10-21
+  as_of: 2026-10-21
+  source:
+    - https://www.volatilityshares.com/ethu
+
+QLD:
+  underlying: QQQ
+  multiple: 2
+  expense_ratio: 0.0089        # 0.96% before a 0.07% fee waiver
+  aum_usd: 13672685776
+  median_spread_30d: 0.0001      # issuer page, 30 days to 2026-10-22
+  as_of: 2026-10-22
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001007/f46054d1.htm
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/qld
+
+TQQQ:
+  underlying: QQQ
+  multiple: 3
+  expense_ratio: 0.0078        # 0.94% before a 0.16% fee waiver
+  aum_usd: 33819253534
+  median_spread_30d: 0.0001      # issuer page, 30 days to 2026-10-22
+  as_of: 2026-10-22
+  source:
+    - https://www.sec.gov/Archives/edgar/data/1174610/000117461026001035/f46111d1.htm
+    - https://www.proshares.com/our-etfs/leveraged-and-inverse/tqqq
