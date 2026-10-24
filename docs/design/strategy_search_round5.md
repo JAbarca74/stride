@@ -58,3 +58,34 @@ The results should also be compared with `crypto_hold`, though that comparison i
   - in 2018 and 2022 it buys at −25% and then holds through falls of −70% to −80% for a year or more before a +30% exit, because it has no stop;
   - expected to fail on Sharpe.
 - Before about 2017 the sleeve stays mostly in cash, waiting for the 504 days of history Kelly needs (crypto data starts in 2015 and 2016). This costs some return in the early out-of-sample years.
+
+## Result (prices to 2026-10-23, commit 4c7eaeb)
+
+**The owner's own rule, `crypto_dip`, is the best result of the five rounds, and the closest to passing.** It held 80% SPY plus a 20% crypto sleeve, with the dip rule and no leverage.
+
+| Strategy | OOS CAGR | OOS Sharpe | OOS max drawdown | Deflated Sharpe | Pre-registered pass |
+| --- | --- | --- | --- | --- | --- |
+| SPY | 14.9% | 0.825 | — | — | — |
+| `crypto_hold` | 18.6% | 0.961 | 34.9% | 0.472 | FAIL |
+| `crypto_trend` | 13.0% | 0.888 | 26.0% | 0.419 | FAIL |
+| `crypto_breakout` | 14.2% | 0.992 | 25.9% | 0.578 | FAIL |
+| `crypto_range` | 6.5% | 0.436 | 27.6% | 0.029 | FAIL |
+| `crypto_dip` | **22.4%** | **1.304** | **28.8%** | **0.905** | FAIL (deflated Sharpe only) |
+
+`crypto_dip` met three of the four pass criteria:
+
+- its Sharpe ratio was above SPY's (1.304 against 0.825);
+- its CAGR was above SPY's (22.4% against 14.9%);
+- its maximum drawdown was 28.8%, within the 40% limit.
+
+It missed only the deflated Sharpe ratio: 0.905 against 0.95, after 14 candidates and every configuration of sections 7 to 10. Over the full period from 2007, with drawdown scaling on, it returned 13.7% a year with a Sharpe of 0.935 and a 28.4% maximum drawdown. That is the best continuous-account result of all rounds. Without scaling, every round 5 run tripped the −40% kill switch in 2008, before crypto data exists, because the 80% SPY core fell that far on its own.
+
+The pre-registered expectation ("expected to fail on Sharpe") was wrong for `crypto_dip`. Range trading failed, as expected.
+
+Caveats the owner should keep in view:
+
+- **Bubble years drive much of the gain.** 2017 alone returned +194% out of sample (Ethereum went from about $8 to about $750), and 2020–2021 added more. Without another crypto bubble the edge may be much smaller.
+- **Hindsight:** crypto was chosen knowing it rose a lot. Early Ethereum prices from 2016 to 2017 come from a small, young market.
+- **The dip rule's parameters were set by the owner's intuition,** and changed twice before the run (a 5% target, then 30%, then holding past the target). No one has yet checked whether nearby values work as well, or whether 25%/90/30% is a lucky peak.
+
+Proposed next step (needs the owner's OK): a pre-registered robustness check of `crypto_dip` alone. It would vary each parameter by ±20%, run the sleeve with 2017 excluded, and try other start years. Only if the result holds across these would the rule go to paper trading.
