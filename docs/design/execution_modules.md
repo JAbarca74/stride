@@ -180,3 +180,20 @@ All without network or gateway: a fake `IbClient` records calls and returns cann
 | Q6 | Where do the IB Gateway host/port/client id/account id live? | `.env` (not secrets, but machine-specific), validated by `settings.py`; paper and live ports configured separately. |
 | Q7 | Unfilled limit orders are cancelled at 16:05 and "re-evaluated next day". Should a cancelled *exit* be resent as market-on-open next day instead of a new limit? | Yes for exits (target 0) and kill-switch sells; entries and pyramids stay limits. |
 | Q8 | Does `orders.py` own the `orders`/`fills` tables, or does `data/store.py`? | `data/store.py`, like the other tables; `orders.py` only calls it. |
+
+## Owner decisions (2026-10-24)
+
+The owner approved the creation of `execution/orders.py` following section 1 of this document, with these answers to the open questions:
+
+| # | Decision |
+| --- | --- |
+| Q1 | Full exits (target 0) and both legs of an instrument switch always pass the rebalance band; the $1 minimum still applies. |
+| Q2 | IBKR only; out of scope for the Alpaca paper work. |
+| Q3 | IBKR only; out of scope for the Alpaca paper work. |
+| Q4 | Yes: add `find_order(client_order_id)` to the `Broker` interface, `SimBroker` and `AlpacaBroker`, in its own PR before `orders.py`. |
+| Q5 | Yes: a kill-switch liquidation is recomputed from the broker's positions at the morning phase. |
+| Q6 | IBKR only; out of scope for the Alpaca paper work. |
+| Q7 | Yes: an unfilled exit or kill-switch sell is resent the next day as a market order; entries and adds are re-planned normally. |
+| Q8 | The `orders`, `fills` and `runs` tables live in `data/store.py`. |
+
+`execution/ibkr_broker.py` (section 2) is not approved and stays a proposal.
