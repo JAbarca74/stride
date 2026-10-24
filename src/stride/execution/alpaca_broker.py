@@ -4,10 +4,12 @@ It refuses to start unless `config.mode` is `paper` and the key is a paper key
 (Alpaca paper key IDs start with "PK"), and it always talks to the paper endpoint
 (`TradingClient(paper=True)`). Live trading goes through IBKR, never through here.
 
-Orders are day orders for `notional` dollars (fractional shares), or for whole
-shares (`qty`) when the caller converts them. Each order carries the caller's
-`client_order_id` (a random one if none is given), so a resend can be detected
-with `find_order`. Alpaca charges no commission, so it is 0.
+Orders are day orders for `notional` dollars (fractional shares), or for a
+quantity of shares (`qty`): whole shares for an asset that is not fractionable,
+and every share held for a full exit, so a gap at the open leaves no remainder.
+Each order carries the caller's `client_order_id` (a random one if none is
+given), so a resend can be detected with `find_order`. Alpaca charges no
+commission, so it is 0.
 
 Retries (SPEC 8): every call except `submit_order` is retried up to `MAX_RETRIES`
 times with exponential backoff on network errors and HTTP 429/5xx. A failed or
@@ -171,8 +173,9 @@ class AlpacaBroker(Broker):
         client_order_id: str | None = None,
         quantity: float | None = None,
     ) -> str:
-        """Send one order, once. With `quantity` (whole shares, for assets that are
-        not fractionable) the order is for that many shares instead of `notional`.
+        """Send one order, once. With `quantity` (whole shares for an asset that is
+        not fractionable, or every share held for a full exit) the order is for
+        that many shares instead of `notional`.
         On any failure raise `BrokerError`; the caller must call
         `find_order(client_order_id)` before sending it again."""
         if notional <= 0:
@@ -183,10 +186,10 @@ class AlpacaBroker(Broker):
             MarketOrderRequest,
         )
 
-        if quantity is not None and (quantity <= 0 or quantity != int(quantity)):
-            raise ValueError("quantity must be a positive whole number of shares")
+        if quantity is not None and not quantity > 0:
+            raise ValueError("quantity must be positive")
         size: dict[str, Any] = (
-            {"qty": int(quantity)} if quantity is not None else {"notional": round(notional, 2)}
+            {"qty": quantity} if quantity is not None else {"notional": round(notional, 2)}
         )
         common = {
             "symbol": symbol,

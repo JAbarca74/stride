@@ -12,10 +12,13 @@ otherwise at the limit if the day's low reaches it; sells mirror this with the
 high. Spread is applied to the fill price in both cases.
 
 A sell that, with the other sells of the symbol sent the same day, covers the
-whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`) is a full
-exit: it fills after them and sells every share left, so a gap up at the open
-leaves no remainder (an exit split into several orders included). Deposits and interest
-on idle cash are credited by the backtest engine (`deposit`, `credit_interest`).
+whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`), or whose
+`quantity` covers every share held, is a full exit: it fills after them and
+sells every share left, so a gap up at the open leaves no remainder (an exit
+split into several orders included). Otherwise orders fill by `notional`: the
+simulation is always fractionable, so a given `quantity` only marks a full exit.
+Deposits and interest on idle cash are credited by the backtest engine
+(`deposit`, `credit_interest`).
 """
 
 from __future__ import annotations
@@ -86,8 +89,8 @@ class SimBroker(Broker):
         client_order_id: str | None = None,
         quantity: float | None = None,
     ) -> str:
-        if quantity is not None:
-            raise ValueError("SimBroker is always fractionable: send a notional order")
+        if quantity is not None and not quantity > 0:
+            raise ValueError("quantity must be positive")
         if client_order_id is not None and client_order_id in self._client_ids:
             raise ValueError("duplicate client_order_id")
         if notional <= 0:
@@ -112,7 +115,8 @@ class SimBroker(Broker):
                 if o.symbol == symbol and o.side == "sell" and o.status == "pending"
                 and o.submitted == self._today and o.order_id != order_id
             )  # fmt: skip
-            if already + notional >= value - FULL_SELL_TOLERANCE_USD:
+            covers = quantity is not None and quantity >= held.quantity - _DUST
+            if covers or already + notional >= value - FULL_SELL_TOLERANCE_USD:
                 self._full_sells.add(order_id)
         return order_id
 

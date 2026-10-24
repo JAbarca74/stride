@@ -69,6 +69,15 @@ VETOES = {
     "HALTED": "sistema detenido (halt)",
     "UNKNOWN_SYMBOL": "símbolo desconocido",
     "INVALID_ORDER": "orden inválida",
+    "ORDER_TOO_SMALL": "menos de una acción entera al cierre anterior",
+    "SEND_FAILED": "el envío falló y el broker no tiene la orden",
+    "SEND_UNKNOWN": "el envío falló y no se pudo confirmar con el broker",
+}
+# Order statuses that mean the order did not reach the broker (execution/orders.py).
+NOT_SENT = {
+    "skipped": "No enviada",
+    "failed": "Envío fallido",
+    "unknown": "Envío sin confirmar",
 }
 EVENTS = {
     "ORDER_REJECTED": "Orden rechazada por el broker",
@@ -80,10 +89,13 @@ EVENTS = {
     "KILL_SWITCH_STILL_ACTIVE": "Kill switch sigue activo",
     "HALT": "Sistema detenido (halt)",
     "HALT_STILL_ACTIVE": "El halt sigue activo",
+    "ORDER_TOO_SMALL": "Orden menor a una acción",
 }
 
 # Events that mean something did not happen as planned.
-_PROBLEM_EVENTS = {"ORDER_REJECTED", "ORDER_CANCELLED", "ERROR", "DATA_FAILED", "RUN_FAILED"}
+_PROBLEM_EVENTS = {
+    "ORDER_REJECTED", "ORDER_CANCELLED", "ERROR", "DATA_FAILED", "RUN_FAILED", "ORDER_TOO_SMALL",
+}  # fmt: skip
 _STATE_EVENTS = {"KILL_SWITCH", "KILL_SWITCH_STILL_ACTIVE", "HALT", "HALT_STILL_ACTIVE"}
 
 
@@ -143,6 +155,10 @@ def _done(day: date, conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
         )
         if o["status"] == "vetoed":
             not_done.append(f"Vetada: {what}. Motivo: {_reasons(str(o['reasons']))}")
+        elif o["status"] in NOT_SENT:
+            not_done.append(
+                f"{NOT_SENT[o['status']]}: {what}. Motivo: {_reasons(str(o['reasons']))}"
+            )
         else:  # its fate shows in the next day's report (fill, rejection, cancel)
             done.append(f"Orden enviada para la apertura siguiente: {what}")
     return done, not_done

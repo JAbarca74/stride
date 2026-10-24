@@ -203,3 +203,22 @@ def test_orders_table_rejects_unknown_status(tmp_path: Path) -> None:
         record_orders(conn, bad)
     assert read_table(conn, "orders").empty and read_table(conn, "fills").empty
     conn.close()
+
+
+def test_orders_not_sent_are_listed_as_not_done(tmp_path: Path) -> None:
+    conn = _db(tmp_path / "x.db")
+    record_orders(
+        conn,
+        pd.DataFrame(
+            [{"date": T2, "client_id": "c", "broker_id": None, "symbol": "UUP", "side": "buy",
+              "notional": 20.0, "type": "market", "limit_price": None, "rule": "HOLD",
+              "switch": 0, "reasons": "HALTED", "status": "skipped"},
+             {"date": T2, "client_id": "d", "broker_id": None, "symbol": "TLT", "side": "buy",
+              "notional": 30.0, "type": "market", "limit_price": None, "rule": "HOLD",
+              "switch": 0, "reasons": "SEND_FAILED", "status": "failed"}]
+        ),
+    )  # fmt: skip
+    s = daily.build_daily(conn, T2, "paper")
+    assert any(x.startswith("No enviada: compra de $20.00 en UUP") for x in s.not_done)
+    assert any("el broker no tiene la orden (SEND_FAILED)" in x for x in s.not_done)
+    assert not any("UUP" in x for x in s.done)

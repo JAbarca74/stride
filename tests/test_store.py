@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from stride.data import store
 from stride.data.store import PRICE_COLUMNS, connect, read_prices, upsert_prices
 
 FETCHED = pd.Timestamp("2026-10-19 20:30", tz="UTC")
@@ -144,3 +145,54 @@ def test_empty_values_are_rejected(conn: sqlite3.Connection, column: str, value:
     with pytest.raises(ValueError, match=column):
         upsert_prices(conn, pd.DataFrame([_row(**{column: value})]))
     assert _count(conn) == 0
+
+
+def test_runs_table_and_done_phases() -> None:
+    conn = connect(":memory:")
+    day = date(2026, 10, 23)
+    assert not store.run_done(conn, day, "evening")
+    store.record_run(conn, day, "evening", "paper", "error", "t0", "t1", "abc123", "boom")
+    assert not store.run_done(conn, day, "evening")  # an error is retried
+    store.record_run(conn, day, "evening", "paper", "ok", "t2", "t3", "abc123")
+    assert store.run_done(conn, day, "evening")
+    assert not store.run_done(conn, day, "morning")
+    runs = store.read_runs(conn)
+    assert list(runs["status"]) == ["error", "ok"]
+    with pytest.raises(ValueError, match="run status"):
+        store.record_run(conn, day, "evening", "paper", "maybe", "t", "t", "h")
+
+
+def test_orders_columns_added_to_an_old_table(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,"
+        " client_id TEXT NOT NULL UNIQUE, broker_id TEXT, symbol TEXT NOT NULL,"
+        " side TEXT NOT NULL, notional REAL NOT NULL, type TEXT NOT NULL, limit_price REAL,"
+        " rule TEXT NOT NULL, switch INTEGER NOT NULL DEFAULT 0,"
+        " reasons TEXT NOT NULL DEFAULT '', status TEXT NOT NULL)"
+    )
+    old.commit()
+    old.close()
+    conn = connect(path)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
+    assert {"quantity", "full_exit"} <= columns
+    connect(path).close()  # idempotent
+
+
+def test_update_and_read_orders() -> None:
+    conn = connect(":memory:")
+    row = {"date": pd.Timestamp("2026-10-23"), "client_id": "c1", "broker_id": None,
+           "symbol": "SPY", "side": "buy", "notional": 10.0, "type": "market",
+           "limit_price": None, "rule": "HOLD", "switch": 0, "reasons": "",
+           "status": "planned"}  # fmt: skip
+    store.record_orders(conn, pd.DataFrame([row]))
+    store.update_order(conn, "c1", "pending", broker_id="b1")
+    [stored] = store.read_orders(conn, statuses=("pending",)).to_dict("records")
+    assert (stored["broker_id"], stored["status"], stored["full_exit"]) == ("b1", "pending", 0)
+    assert store.read_orders(conn, day=date(2026, 10, 22)).empty
+    with pytest.raises(ValueError, match="no order"):
+        store.update_order(conn, "missing", "pending")
+    with pytest.raises(ValueError, match="unknown order status"):
+        store.update_order(conn, "c1", "lost")
+    assert store.delete_unsent_orders(conn, date(2026, 10, 23)) == 0  # pending stays

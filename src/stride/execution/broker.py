@@ -78,8 +78,9 @@ class Broker(ABC):
         client_order_id: str | None = None,
         quantity: float | None = None,
     ) -> str:
-        """Send one order and return the broker's order id. `quantity` (whole
-        shares) replaces `notional` for an asset that is not fractionable."""
+        """Send one order and return the broker's order id. `quantity` replaces
+        `notional` for an asset that is not fractionable (whole shares) and for a
+        full exit (every share held)."""
 
     @abstractmethod
     def get_order(self, order_id: str) -> OrderState: ...

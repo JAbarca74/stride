@@ -22,11 +22,10 @@ the risk-free rate known at t-1, in the order of the live daily run:
    (`risk/leverage.choose_instruments`).
 7. Orders -> `risk/guard.check_orders` -> `SimBroker`, filled at the open of t+1.
 
-PROVISIONAL: `plan_orders` below stands in for `execution/orders.py`, which is a
-human-reviewed module not written yet. It follows the proposal in
-`docs/design/execution_modules.md` (PR #45: band, exits and switch legs,
-sells first) and must be replaced by `orders.plan_orders` once that module is
-approved, so that backtest and live share it.
+Order planning (`plan_orders`, `skip_costly_resizes`, `split_orders`,
+`fit_buys`, `approve_batch`) is pure and shared with the paper and live run:
+`execution/orders.py` calls these same functions, so backtest and paper follow
+one set of rules (docs/design/execution_modules.md, section 1).
 
 Indicators are computed once on each full series: every indicator only reads
 data up to its own day (tests/test_lookahead.py), and the engine only looks up
@@ -292,6 +291,27 @@ def fit_buys(
         scale = available / needed
         buys = [replace(o, notional=o.notional * scale) for o in buys]
     return sells + [o for o in buys if o.notional >= config.execution.min_order_usd]
+
+
+def guard_planned(
+    planned: Sequence[PlannedOrder], ctx: guard.GuardContext, config: StrideConfig
+) -> list[tuple[PlannedOrder, guard.GuardDecision]]:
+    """Each planned order with its guard decision, in the order given."""
+    proposed = [guard.ProposedOrder(p.symbol, p.side, p.notional, p.switch) for p in planned]
+    decisions = {id(d.order): d for d in guard.check_orders(proposed, ctx, config)}
+    return [(p, decisions[id(o)]) for p, o in zip(planned, proposed, strict=True)]
+
+
+def approve_batch(
+    planned: Sequence[PlannedOrder], ctx: guard.GuardContext, cash: float, config: StrideConfig
+) -> list[tuple[PlannedOrder, guard.GuardDecision]]:
+    """Guard the planned orders, fit the approved buys to the cash the approved
+    sells free, and guard the result again (the batch changed). Returns the
+    rejected orders of the first pass, then the final batch, with decisions."""
+    first = guard_planned(planned, ctx, config)
+    rejected = [(p, d) for p, d in first if not d.approved]
+    fitted = fit_buys([p for p, d in first if d.approved], cash, config)
+    return rejected + guard_planned(fitted, ctx, config)
 
 
 # Engine.
@@ -989,23 +1009,12 @@ class Engine:
             blocked=frozenset(blocked),
         )
         vetoes: list[str] = []
-        first = self._guard(planned, ctx)
-        rejected = [(p, d) for p, d in first if not d.approved]
-        fitted = fit_buys([p for p, d in first if d.approved], cash, self.config)
-        final = self._guard(fitted, ctx)
-        for plan, check in rejected + final:
+        for plan, check in approve_batch(planned, ctx, cash, self.config):
             self._submit(day, plan, check, self.settings.order_type)
             if not check.approved:
                 vetoes.append(f"{plan.symbol}:{plan.side}:{'+'.join(check.reasons)}")
                 self.rec.event(day, "VETO", vetoes[-1])
         return vetoes
-
-    def _guard(
-        self, planned: Sequence[PlannedOrder], ctx: guard.GuardContext
-    ) -> list[tuple[PlannedOrder, guard.GuardDecision]]:
-        proposed = [guard.ProposedOrder(p.symbol, p.side, p.notional, p.switch) for p in planned]
-        decisions = {id(d.order): d for d in guard.check_orders(proposed, ctx, self.config)}
-        return [(p, decisions[id(o)]) for p, o in zip(planned, proposed, strict=True)]
 
     def _submit(
         self, day: pd.Timestamp, plan: PlannedOrder, check: guard.GuardDecision, kind: OrderType
@@ -1178,10 +1187,12 @@ __all__ = [
     "BacktestSettings",
     "MarketData",
     "PlannedOrder",
+    "approve_batch",
     "combine_systems",
     "drawdown_scale",
     "eligible_instruments",
     "fit_buys",
+    "guard_planned",
     "plan_orders",
     "run_backtest",
     "skip_costly_resizes",

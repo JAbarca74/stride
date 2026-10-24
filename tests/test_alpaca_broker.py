@@ -319,11 +319,13 @@ def test_is_fractionable_uses_the_asset_flag_once(tmp_path: Path) -> None:
     assert client.asset_calls == 2
 
 
-def test_whole_share_orders(tmp_path: Path) -> None:
+def test_quantity_orders(tmp_path: Path) -> None:
     client = FakeClient()
     broker = _broker(tmp_path, client)
     broker.submit_order("UUP", "buy", 56.0, quantity=2)
-    [request] = client.submitted
-    assert (request.qty, request.notional) == (2, None)
-    with pytest.raises(ValueError, match="whole number"):
-        broker.submit_order("UUP", "buy", 56.0, quantity=1.5)
+    broker.submit_order("SPY", "sell", 20.0, quantity=0.0345)
+    whole, full_exit = client.submitted
+    assert (whole.qty, whole.notional) == (2, None)
+    assert (full_exit.qty, full_exit.notional) == (0.0345, None)
+    with pytest.raises(ValueError, match="quantity"):
+        broker.submit_order("UUP", "buy", 56.0, quantity=0)

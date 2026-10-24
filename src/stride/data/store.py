@@ -177,9 +177,15 @@ CREATE TABLE IF NOT EXISTS orders (
     rule        TEXT    NOT NULL,
     switch      INTEGER NOT NULL DEFAULT 0,
     reasons     TEXT    NOT NULL DEFAULT '',
-    status      TEXT    NOT NULL
+    status      TEXT    NOT NULL,
+    quantity    REAL,
+    full_exit   INTEGER NOT NULL DEFAULT 0
 )
 """
+# Columns added after the first schema, with their definition; `init_schema` adds
+# them to an existing table (`quantity`: shares for a whole-share or full-exit
+# order; `full_exit`: the order closes the position, for the next-day resend).
+_ORDER_EXTRA_COLUMNS = {"quantity": "REAL", "full_exit": "INTEGER NOT NULL DEFAULT 0"}
 ORDER_COLUMNS = (
     "date",
     "client_id",
@@ -194,7 +200,24 @@ ORDER_COLUMNS = (
     "reasons",
     "status",
 )
-ORDER_STATUSES = ("vetoed", "pending", "filled", "cancelled", "rejected")
+# planned: approved at the evening run, waiting for the morning; sending: stored
+# right before the broker call; pending: accepted by the broker; unknown: the
+# send failed and the lookup failed too (resolved by `find_order` on the next
+# run); failed: the send failed and the broker has no such order; skipped: not
+# sent (kill switch, halt, too small); resend: an unfilled exit to resend.
+ORDER_STATUSES = (
+    "planned",
+    "vetoed",
+    "sending",
+    "pending",
+    "unknown",
+    "failed",
+    "skipped",
+    "filled",
+    "cancelled",
+    "rejected",
+    "resend",
+)
 
 _FILLS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS fills (
@@ -221,9 +244,28 @@ FILL_COLUMNS = (
 )
 
 
+_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    date     TEXT NOT NULL,
+    phase    TEXT NOT NULL,
+    mode     TEXT NOT NULL,
+    status   TEXT NOT NULL CHECK (status IN ('ok', 'error', 'no_data', 'skipped')),
+    started  TEXT NOT NULL,
+    finished TEXT NOT NULL,
+    git_hash TEXT NOT NULL,
+    detail   TEXT NOT NULL DEFAULT ''
+)
+"""
+RUN_STATUSES = ("ok", "error", "no_data", "skipped")
+# A (date, phase) with one of these is done: `run_daily --phase auto` skips it.
+DONE_RUN_STATUSES = ("ok", "no_data", "skipped")
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create every table (prices, cash_flows, equity, risk_state, events, signals,
-    risk_decisions, orders, fills) if missing."""
+    risk_decisions, orders, fills, runs) if missing, and add the newer `orders`
+    columns to a table created before them."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
@@ -234,6 +276,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(_RISK_DECISIONS_SCHEMA)
         conn.execute(_ORDERS_SCHEMA)
         conn.execute(_FILLS_SCHEMA)
+        conn.execute(_RUNS_SCHEMA)
+        have = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
+        for name, definition in _ORDER_EXTRA_COLUMNS.items():
+            if name not in have:
+                conn.execute(f"ALTER TABLE orders ADD COLUMN {name} {definition}")
 
 
 def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
@@ -502,11 +549,110 @@ def _insert_rows(
 
 def record_orders(conn: sqlite3.Connection, orders: pd.DataFrame) -> int:
     """Append orders (SPEC 10): one row per order planned, vetoed ones included,
-    with the guard reasons and the status. `client_id` is unique."""
+    with the guard reasons and the status. `client_id` is unique. The optional
+    `quantity` and `full_exit` columns are stored when present."""
     bad = set(orders["status"]) - set(ORDER_STATUSES) if not orders.empty else set()
     if bad:
         raise ValueError(f"unknown order status: {sorted(bad)}")
-    return _insert_rows(conn, "orders", orders, ORDER_COLUMNS)
+    extra = tuple(c for c in _ORDER_EXTRA_COLUMNS if c in orders.columns)
+    return _insert_rows(conn, "orders", orders, ORDER_COLUMNS + extra)
+
+
+def update_order(
+    conn: sqlite3.Connection,
+    client_id: str,
+    status: str,
+    *,
+    broker_id: str | None = None,
+    reasons: str | None = None,
+) -> None:
+    """Set an order's status (and its broker id or reasons when given)."""
+    if status not in ORDER_STATUSES:
+        raise ValueError(f"unknown order status: {status!r}")
+    sets, params = ["status = ?"], [status]
+    if broker_id is not None:
+        sets.append("broker_id = ?")
+        params.append(broker_id)
+    if reasons is not None:
+        sets.append("reasons = ?")
+        params.append(reasons)
+    with conn:
+        changed = conn.execute(
+            f"UPDATE orders SET {', '.join(sets)} WHERE client_id = ?", (*params, client_id)
+        ).rowcount
+    if changed != 1:
+        raise ValueError(f"no order with client id {client_id!r}")
+
+
+def read_orders(
+    conn: sqlite3.Connection,
+    statuses: tuple[str, ...] | None = None,
+    day: date | None = None,
+) -> pd.DataFrame:
+    """Orders, oldest first, optionally only some statuses or one run date."""
+    query, params = "SELECT * FROM orders WHERE 1 = 1", []
+    if statuses is not None:
+        query += f" AND status IN ({', '.join('?' for _ in statuses)})"
+        params += list(statuses)
+    if day is not None:
+        query += " AND date = ?"
+        params.append(day.isoformat())
+    frame = pd.read_sql_query(query + " ORDER BY date, id", conn, params=params)
+    frame["date"] = pd.to_datetime(frame["date"])
+    return frame
+
+
+def delete_unsent_orders(conn: sqlite3.Connection, day: date) -> int:
+    """Remove the planned and vetoed orders of run date `day` (never sent), so a
+    rerun of that day's planning replaces them."""
+    with conn:
+        return conn.execute(
+            "DELETE FROM orders WHERE date = ? AND status IN ('planned', 'vetoed')",
+            (day.isoformat(),),
+        ).rowcount
+
+
+def has_fill(conn: sqlite3.Connection, broker_id: str) -> bool:
+    row = conn.execute("SELECT 1 FROM fills WHERE broker_id = ? LIMIT 1", (broker_id,)).fetchone()
+    return row is not None
+
+
+def record_run(  # noqa: PLR0917 - one value per runs column
+    conn: sqlite3.Connection,
+    day: date,
+    phase: str,
+    mode: str,
+    status: str,
+    started: str,
+    finished: str,
+    git_hash: str,
+    detail: str = "",
+) -> None:
+    """Append one row to `runs` (SPEC 10): a phase of the daily job and its outcome."""
+    if status not in RUN_STATUSES:
+        raise ValueError(f"run status must be one of {RUN_STATUSES}")
+    with conn:
+        conn.execute(
+            "INSERT INTO runs (date, phase, mode, status, started, finished, git_hash, detail)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (day.isoformat(), phase, mode, status, started, finished, git_hash, detail),
+        )
+
+
+def run_done(conn: sqlite3.Connection, day: date, phase: str) -> bool:
+    """Whether the phase already finished for `day` (ok, no data or skipped)."""
+    row = conn.execute(
+        f"SELECT 1 FROM runs WHERE date = ? AND phase = ? AND status IN"
+        f" ({', '.join('?' for _ in DONE_RUN_STATUSES)}) LIMIT 1",
+        (day.isoformat(), phase, *DONE_RUN_STATUSES),
+    ).fetchone()
+    return row is not None
+
+
+def read_runs(conn: sqlite3.Connection) -> pd.DataFrame:
+    frame = pd.read_sql_query("SELECT * FROM runs ORDER BY id", conn)
+    frame["date"] = pd.to_datetime(frame["date"])
+    return frame
 
 
 def record_fills(conn: sqlite3.Connection, fills: pd.DataFrame) -> int:

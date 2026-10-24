@@ -239,8 +239,19 @@ def test_duplicate_client_id_is_refused() -> None:
     assert len([broker.find_order("dup")]) == 1
 
 
-def test_always_fractionable_and_notional_only() -> None:
+def test_always_fractionable() -> None:
+    assert _broker().is_fractionable("SPY")
+
+
+def test_a_quantity_covering_the_position_is_a_full_exit() -> None:
     broker = _broker()
-    assert broker.is_fractionable("SPY")
-    with pytest.raises(ValueError, match="fractionable"):
-        broker.submit_order("SPY", "buy", 100.0, quantity=1)
+    broker.submit_order("SPY", "buy", 1_000.0)
+    broker.step(T1)
+    held = broker.get_positions()["SPY"].quantity
+    # A notional below the value at the close, but the quantity covers every share.
+    order_id = broker.submit_order("SPY", "sell", 500.0, quantity=held)
+    broker.step(T2)
+    assert broker.get_order(order_id).filled_quantity == pytest.approx(held)
+    assert "SPY" not in broker.get_positions()
+    with pytest.raises(ValueError, match="quantity"):
+        broker.submit_order("IBIT", "buy", 10.0, quantity=0)
