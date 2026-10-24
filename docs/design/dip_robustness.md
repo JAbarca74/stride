@@ -44,3 +44,17 @@ If the rule is ROBUST, it goes to paper trading (T17, plus `execution/orders.py`
 - **Start years:**
   - 2018 starts with a crypto crash, so it is the hardest;
   - 2012 and 2015 likely beat SPY.
+
+## Result (prices to 2026-10-23, commit 1745078): NOT ROBUST
+
+| Test | Outcome |
+| --- | --- |
+| Parameters ±20% | **All 7 runs beat SPY** on Sharpe and CAGR (Sharpe 1.04–1.33, CAGR 16.6–23.0%). The rule is not a lucky choice of its parameters. |
+| Without the best (2017) and the worst (2022) year | Beats SPY (Sharpe 1.12 against 0.97, CAGR 18.2% against 17.5%). |
+| Without the crypto bubbles (2017, 2021) | Fails: CAGR 11.6% against 13.4%. The Sharpe is still slightly above (0.72 against 0.71). |
+| Without the crashes (2018, 2020, 2022) | Beats SPY (CAGR 30.0% against 19.9%). |
+| Without all five years | Fails: Sharpe 1.14 against 1.19, CAGR 16.6% against 18.8%. |
+| Continuous from 2012 / 2015 | Beats SPY: 20.3% against 14.8%, and 20.9% against 13.6%. |
+| Continuous from 2018 | **Fails: 7.5% against 14.3%.** The account starts in a crypto crash and waits through it. |
+
+The rule is not fragile in its parameters. Its edge over SPY, however, depends on the crypto bubble years and on the start date. Without 2017 and 2021, or starting in 2018, it does not beat SPY. As pre-registered, the parameters are not retuned.
