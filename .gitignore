@@ -47,3 +47,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Internal marketing and launch docs
+docs/growth/
