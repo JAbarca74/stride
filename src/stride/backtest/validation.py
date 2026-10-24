@@ -890,14 +890,20 @@ def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
         return []
     lines = [
         "",
-        "## 10. Pre-registered strategy search (docs/design/strategy_search.md,"
-        " strategy_search_round2.md to strategy_search_round6.md)",
+        (
+            "## 10. Pre-registered strategy search (docs/design/strategy_search.md,"
+            + " strategy_search_round2.md to strategy_search_round6.md)"
+        ),
         "",
-        "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
-        " max drawdown <= 40%.",
+        (
+            "Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95,"
+            + " max drawdown <= 40%."
+        ),
         "",
-        "| strategy | oos_sharpe | spy_sharpe | oos_cagr | spy_cagr | oos_max_drawdown"
-        " | deflated_sharpe | passes |",
+        (
+            "| strategy | oos_sharpe | spy_sharpe | oos_cagr | spy_cagr | oos_max_drawdown"
+            + " | deflated_sharpe | passes |"
+        ),
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for r in results:

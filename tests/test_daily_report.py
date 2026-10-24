@@ -96,13 +96,17 @@ def test_summary_lists_what_was_done_and_not_done(tmp_path: Path) -> None:
     assert s.done == [
         "SPY: 0 → 1 unidades (entrada por máximo de 55 días, ENTRY_HH55)",
         "Ejecutada: venta de 0.5000 IEF a $95.00 (comisión $0.48)",
-        "Orden enviada para la apertura siguiente: compra de $81.00 en SPY"
-        " (entrada por máximo de 55 días, ENTRY_HH55)",
+        (
+            "Orden enviada para la apertura siguiente: compra de $81.00 en SPY"
+            + " (entrada por máximo de 55 días, ENTRY_HH55)"
+        ),
         "Depósito recibido: $20.00",
     ]
     assert s.not_done == [
-        "Vetada: venta de $70.00 en GLD (salida por mínimo de 20 días, EXIT_LL20)."
-        " Motivo: orden mayor al límite por orden (ORDER_TOO_LARGE)",
+        (
+            "Vetada: venta de $70.00 en GLD (salida por mínimo de 20 días, EXIT_LL20)."
+            + " Motivo: orden mayor al límite por orden (ORDER_TOO_LARGE)"
+        ),
         "GLD: la unidad nueva quedó recortada por los topes de exposición (piramidación, PYRAMID)",
         "Orden rechazada por el broker: sim-0b DBC buy: not enough cash",
     ]  # the VETO event and the older rejection are not repeated
