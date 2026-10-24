@@ -109,3 +109,46 @@ def test_cli_sends_with_configuration(
     assert session.calls[0][1]["text"].endswith("test message, alerts are working")
     session.outcome = 500
     assert main(["test"]) == 1
+
+
+class FakeUpload:
+    def __init__(self, outcome: int | Exception = 200) -> None:
+        self.outcome = outcome
+        self.calls: list[tuple[str, Mapping[str, str], Mapping[str, tuple[str, bytes, str]]]] = []
+
+    def post(
+        self,
+        url: str,
+        *,
+        data: Mapping[str, str],
+        files: Mapping[str, tuple[str, bytes, str]],
+        timeout: float,
+    ) -> FakeResponse:
+        self.calls.append((url, data, files))
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return FakeResponse(self.outcome)
+
+
+def test_sends_the_daily_report_as_a_document() -> None:
+    upload = FakeUpload()
+    alerter = TelegramAlerter(FAKE_TOKEN, FAKE_CHAT, FakeSession())
+    alerter.send_document("2026-10-22.html", b"<html></html>", "x" * 2000, session=upload)
+    [(url, data, files)] = upload.calls
+    assert url == f"https://api.telegram.org/bot{FAKE_TOKEN}/sendDocument"
+    assert data["chat_id"] == FAKE_CHAT and len(data["caption"]) == 1024
+    assert files == {"document": ("2026-10-22.html", b"<html></html>", "text/html")}
+
+
+@pytest.mark.parametrize("outcome", [500, requests.ConnectionError(f"boom {FAKE_TOKEN}")])
+def test_document_errors_never_leak_the_token(outcome: int | Exception) -> None:
+    alerter = TelegramAlerter(FAKE_TOKEN, FAKE_CHAT, FakeSession())
+    with pytest.raises(AlertError) as info:
+        alerter.send_document("r.html", b"", "c", session=FakeUpload(outcome))
+    assert FAKE_TOKEN not in str(info.value)
+
+
+def test_log_alerter_logs_the_document(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        LogAlerter().send_document("r.html", b"", "STRIDE daily")
+    assert "STRIDE daily" in caplog.text and "not sent" in caplog.text

@@ -161,9 +161,69 @@ RISK_DECISION_COLUMNS = (
 )
 
 
+# Orders and fills (SPEC 10), with the columns proposed for execution/orders.py
+# in docs/design/execution_modules.md (PR #45, section 1e).
+_ORDERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS orders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT    NOT NULL,
+    client_id   TEXT    NOT NULL UNIQUE,
+    broker_id   TEXT,
+    symbol      TEXT    NOT NULL,
+    side        TEXT    NOT NULL CHECK (side IN ('buy', 'sell')),
+    notional    REAL    NOT NULL CHECK (notional > 0),
+    type        TEXT    NOT NULL,
+    limit_price REAL,
+    rule        TEXT    NOT NULL,
+    switch      INTEGER NOT NULL DEFAULT 0,
+    reasons     TEXT    NOT NULL DEFAULT '',
+    status      TEXT    NOT NULL
+)
+"""
+ORDER_COLUMNS = (
+    "date",
+    "client_id",
+    "broker_id",
+    "symbol",
+    "side",
+    "notional",
+    "type",
+    "limit_price",
+    "rule",
+    "switch",
+    "reasons",
+    "status",
+)
+ORDER_STATUSES = ("vetoed", "pending", "filled", "cancelled", "rejected")
+
+_FILLS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS fills (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    date              TEXT NOT NULL,
+    broker_id         TEXT NOT NULL,
+    symbol            TEXT NOT NULL,
+    side              TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+    quantity          REAL NOT NULL CHECK (quantity > 0),
+    price             REAL NOT NULL CHECK (price > 0),
+    commission        REAL NOT NULL CHECK (commission >= 0),
+    slippage_vs_close REAL
+)
+"""
+FILL_COLUMNS = (
+    "date",
+    "broker_id",
+    "symbol",
+    "side",
+    "quantity",
+    "price",
+    "commission",
+    "slippage_vs_close",
+)
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create every table (prices, cash_flows, equity, risk_state, events, signals,
-    risk_decisions) if missing."""
+    risk_decisions, orders, fills) if missing."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
@@ -172,6 +232,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(_EVENTS_SCHEMA)
         conn.execute(_SIGNALS_SCHEMA)
         conn.execute(_RISK_DECISIONS_SCHEMA)
+        conn.execute(_ORDERS_SCHEMA)
+        conn.execute(_FILLS_SCHEMA)
 
 
 def upsert_prices(conn: sqlite3.Connection, prices: pd.DataFrame) -> int:
@@ -417,10 +479,49 @@ def upsert_risk_decisions(conn: sqlite3.Connection, decisions: pd.DataFrame) -> 
     return _upsert_frame(conn, "risk_decisions", ("date",), decisions, RISK_DECISION_COLUMNS)
 
 
+def _insert_rows(
+    conn: sqlite3.Connection, table: str, frame: pd.DataFrame, columns: tuple[str, ...]
+) -> int:
+    missing = [c for c in columns if c not in frame.columns]
+    if missing:
+        raise ValueError(f"missing {table} columns: {missing}")
+    flat = frame.copy()
+    flat["date"] = pd.to_datetime(flat["date"]).dt.strftime("%Y-%m-%d")
+    rows = [
+        tuple(_none_if_nan(v.item() if hasattr(v, "item") else v) for v in row)
+        for row in flat[list(columns)].itertuples(index=False, name=None)
+    ]
+    with conn:
+        conn.executemany(
+            f"INSERT INTO {table} ({', '.join(columns)})"
+            f" VALUES ({', '.join('?' for _ in columns)})",
+            rows,
+        )
+    return len(rows)
+
+
+def record_orders(conn: sqlite3.Connection, orders: pd.DataFrame) -> int:
+    """Append orders (SPEC 10): one row per order planned, vetoed ones included,
+    with the guard reasons and the status. `client_id` is unique."""
+    bad = set(orders["status"]) - set(ORDER_STATUSES) if not orders.empty else set()
+    if bad:
+        raise ValueError(f"unknown order status: {sorted(bad)}")
+    return _insert_rows(conn, "orders", orders, ORDER_COLUMNS)
+
+
+def record_fills(conn: sqlite3.Connection, fills: pd.DataFrame) -> int:
+    """Append executions (SPEC 10): price, quantity, commission and slippage
+    against the previous close."""
+    return _insert_rows(conn, "fills", fills, FILL_COLUMNS)
+
+
 def read_table(conn: sqlite3.Connection, table: str) -> pd.DataFrame:
-    """Every row of `signals` or `risk_decisions`, oldest first."""
-    if table not in {"signals", "risk_decisions"}:
+    """Every row of `signals`, `risk_decisions`, `orders` or `fills`, oldest first."""
+    if table not in {"signals", "risk_decisions", "orders", "fills"}:
         raise ValueError(f"unknown table {table!r}")
-    frame = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY date", conn)
+    order = {"orders": "date, id", "fills": "date, id", "signals": "date, symbol"}.get(
+        table, "date"
+    )
+    frame = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY {order}", conn)
     frame["date"] = pd.to_datetime(frame["date"])
     return frame
