@@ -8,6 +8,7 @@
 *.pfx
 data/
 !src/stride/data/
+!tests/data/
 KILL_SWITCH
 HALT
 *.db
