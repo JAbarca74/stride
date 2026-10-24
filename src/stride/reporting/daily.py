@@ -34,12 +34,28 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from jinja2 import Environment, select_autoescape
 
+from stride.backtest.metrics import (
+    buy_and_hold_returns,
+    max_drawdown,
+    time_weighted_returns,
+)
+from stride.backtest.metrics import (
+    sharpe as sharpe_ratio,
+)
 from stride.config import load_config
-from stride.data.store import connect, net_cash_flows, read_equity, read_events, read_table
-from stride.reporting.alerts import AlertError, LogAlerter, alerter_from_env
+from stride.data.store import (
+    connect,
+    net_cash_flows,
+    read_equity,
+    read_events,
+    read_prices,
+    read_table,
+)
+from stride.reporting.alerts import Alert, AlertError, LogAlerter, alerter_from_env
 
 OK = "OK"
 ATTENTION = "ATENCIÓN"
@@ -335,15 +351,145 @@ def write_daily(conn: sqlite3.Connection, day: date, mode: str, path: str | Path
     return summary
 
 
+PHASE4_TRADING_DAYS = 40
+PHASE4_VERDICT_EVENT = "PHASE4_VERDICT"
+PHASE4_MAX_DRAWDOWN = 0.40
+
+
+@dataclass(frozen=True)
+class Phase4Verdict:
+    ready: bool
+    passed: bool
+    days: int
+    strategy_return: float
+    spy_return: float
+    strategy_sharpe: float
+    spy_sharpe: float
+    max_drawdown: float
+    clean_operations: bool
+    message: str
+
+
+def evaluate_phase4(
+    conn: sqlite3.Connection,
+    title: str = "STRIDE",
+    min_days: int = PHASE4_TRADING_DAYS,
+) -> Phase4Verdict:
+    equity = read_equity(conn)
+    if len(equity) < min_days:
+        msg = f"{title}: prueba en curso ({len(equity)}/{min_days} días hábiles completados)."
+        return Phase4Verdict(
+            ready=False,
+            passed=False,
+            days=len(equity),
+            strategy_return=math.nan,
+            spy_return=math.nan,
+            strategy_sharpe=math.nan,
+            spy_sharpe=math.nan,
+            max_drawdown=math.nan,
+            clean_operations=False,
+            message=msg,
+        )
+
+    window = equity.iloc[-min_days:]
+    start = window.index[0].date()
+    end = window.index[-1].date()
+
+    twr = time_weighted_returns(window["equity"], net_cash_flows(conn))
+    spy = read_prices(conn, "SPY", start, end)
+    spy_ret = (
+        buy_and_hold_returns(spy["close"]).reindex(twr.index)
+        if not spy.empty and "close" in spy.columns
+        else pd.Series(dtype=float, index=twr.index)
+    )
+
+    strategy_return = (
+        float(np.prod(1.0 + twr.to_numpy(dtype=float))) - 1.0 if not twr.empty else math.nan
+    )
+    spy_clean = spy_ret.dropna()
+    spy_return = (
+        float(np.prod(1.0 + spy_clean.to_numpy(dtype=float))) - 1.0 if len(spy_clean) else math.nan
+    )
+
+    strategy_sharpe = sharpe_ratio(twr)
+    spy_sharpe = sharpe_ratio(spy_clean) if len(spy_clean) else math.nan
+    max_dd = max_drawdown(twr)
+
+    dirty_kinds = {"KILL_SWITCH", "HALT", "RECONCILIATION_BREAK"}
+    has_problem_event = any(
+        kind in dirty_kinds and at >= start.isoformat() for at, kind, _ in read_events(conn)
+    )
+    clean_operations = bool(not has_problem_event and max_dd < PHASE4_MAX_DRAWDOWN)
+
+    passed = bool(
+        clean_operations
+        and math.isfinite(strategy_return)
+        and math.isfinite(spy_return)
+        and strategy_return > spy_return
+        and (math.isnan(strategy_sharpe) or math.isnan(spy_sharpe) or strategy_sharpe >= spy_sharpe)
+    )
+
+    lead = (
+        "EN HORABUENA YA ESTA LISTO Y EL RESULTADO ES POSITIVO"
+        if passed
+        else "Buena prueba amigo, pero el syp500 es mejor"
+    )
+    message = (
+        f"{lead} ({title}, {len(window)} días hábiles): "
+        f"TWR {strategy_return:+.2%} vs SPY {spy_return:+.2%}; "
+        f"Sharpe {_num(strategy_sharpe)} vs SPY {_num(spy_sharpe)}; "
+        f"drawdown máx {max_dd:.2%}."
+    )
+
+    return Phase4Verdict(
+        ready=True,
+        passed=passed,
+        days=len(window),
+        strategy_return=strategy_return,
+        spy_return=spy_return,
+        strategy_sharpe=strategy_sharpe,
+        spy_sharpe=spy_sharpe,
+        max_drawdown=max_dd,
+        clean_operations=clean_operations,
+        message=message,
+    )
+
+
+def _instance_title(config_path: Path) -> str:
+    stem = config_path.name.removesuffix(".yaml")
+    if stem.startswith("config.paper_"):
+        name = stem.removeprefix("config.paper_").upper()
+        return f"STRIDE {name}"
+    return "STRIDE"
+
+
+def _send_verdict(verdict: Phase4Verdict, mode: str, env_file: str) -> int:
+    alerter = alerter_from_env(env_file)
+    if isinstance(alerter, LogAlerter):
+        sys.stdout.write("Telegram is not configured in .env; not sent\n")
+        return 2
+    try:
+        alerter.send(Alert(kind="PHASE4_VERDICT", message=verdict.message, mode=mode))
+    except AlertError as exc:
+        sys.stdout.write(f"error: {exc}\n")
+        return 1
+    sys.stdout.write("sent\n")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m stride.reporting.daily")
-    parser.add_argument("--date", type=date.fromisoformat, required=True)
+    parser.add_argument("--date", type=date.fromisoformat, required=False, default=None)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--db", help="default: data.db_path next to the config")
     parser.add_argument("--out", help="default: reports/daily/<date>.html next to the config")
     parser.add_argument("--send", action="store_true", help="send it with the Telegram bot")
+    parser.add_argument("--verdict", action="store_true", help="evaluate Phase 4 40-day verdict")
     parser.add_argument("--env-file", default=".env")
     args = parser.parse_args(argv)
+
+    if not args.verdict and args.date is None:
+        parser.error("the following arguments are required: --date (or --verdict)")
 
     config_path = Path(args.config).resolve()
     root = config_path.parent
@@ -352,6 +498,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not db.exists():
         sys.stdout.write(f"error: no database at {db}\n")
         return 2
+
+    if args.verdict:
+        conn = connect(db)
+        try:
+            verdict = evaluate_phase4(conn, title=_instance_title(config_path))
+        finally:
+            conn.close()
+        sys.stdout.write(f"{verdict.message}\n")
+        return _send_verdict(verdict, config.mode, args.env_file) if args.send else 0
+
+    assert args.date is not None
     out = Path(args.out) if args.out else root / "reports" / "daily" / f"{args.date}.html"
     conn = connect(db)
     try:

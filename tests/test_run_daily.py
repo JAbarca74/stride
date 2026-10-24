@@ -19,6 +19,7 @@ from stride.data.calendar import next_trading_day, trading_days
 from stride.data.update import UpdateResult
 from stride.execution.broker import Broker
 from stride.execution.sim_broker import SimBroker
+from stride.reporting import daily
 from stride.reporting.alerts import Alert
 from stride.settings import Secrets
 
@@ -445,3 +446,60 @@ def test_main_needs_a_phase_or_the_backtest_mode(tmp_path: Path) -> None:
 
 def test_next_trading_day_helper_is_consistent() -> None:
     assert next_trading_day(DAY2) == DAY3
+
+
+def test_runner_alias_exists() -> None:
+    assert run_daily.Runner is run_daily.DailyJob
+
+
+def test_phase4_verdict_not_emitted_under_40_days(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    world.at(DAY1, 18, 0)
+    assert world.run("evening") == 0
+    conn = world.conn()
+    assert not store.read_events(conn, daily.PHASE4_VERDICT_EVENT)
+    assert not any(a.kind == "PHASE4_VERDICT" for a in world.recorder.alerts)
+    conn.close()
+
+
+def test_phase4_verdict_emitted_at_40_days_and_idempotent(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    conn = world.conn()
+    all_prior = list(trading_days(date(2026, 1, 1), DAY1 - timedelta(days=1)))
+    prior_39 = all_prior[-39:]
+
+    eq_rows = [
+        {
+            "date": pd.Timestamp(d),
+            "equity": 10_000.0 * (1.005**i),
+            "cash": 10_000.0,
+            "gross_exposure": 0.0,
+            "leverage": 0.0,
+        }
+        for i, d in enumerate(prior_39)
+    ]
+    store.upsert_equity(conn, pd.DataFrame(eq_rows).set_index("date"))
+    conn.close()
+
+    # Day 40 evening (DAY1)
+    world.at(DAY1, 18, 0)
+    assert world.run("evening") == 0
+
+    conn = world.conn()
+    events = store.read_events(conn, daily.PHASE4_VERDICT_EVENT)
+    assert len(events) == 1
+    verdict_alerts = [a for a in world.recorder.alerts if a.kind == "PHASE4_VERDICT"]
+    assert len(verdict_alerts) == 1
+    assert "40 días hábiles" in verdict_alerts[0].message
+    conn.close()
+
+    # Day 41 evening (DAY2): does not duplicate
+    world.at(DAY2, 18, 0)
+    assert world.run("evening") == 0
+
+    conn = world.conn()
+    events2 = store.read_events(conn, daily.PHASE4_VERDICT_EVENT)
+    assert len(events2) == 1
+    verdict_alerts2 = [a for a in world.recorder.alerts if a.kind == "PHASE4_VERDICT"]
+    assert len(verdict_alerts2) == 1
+    conn.close()

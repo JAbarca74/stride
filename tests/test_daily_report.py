@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from stride.data.calendar import trading_days
 from stride.data.store import (
     connect,
     read_table,
@@ -17,6 +19,7 @@ from stride.data.store import (
     record_fills,
     record_orders,
     upsert_equity,
+    upsert_prices,
     upsert_risk_decisions,
     upsert_signals,
 )
@@ -222,3 +225,108 @@ def test_orders_not_sent_are_listed_as_not_done(tmp_path: Path) -> None:
     assert any(x.startswith("No enviada: compra de $20.00 en UUP") for x in s.not_done)
     assert any("el broker no tiene la orden (SEND_FAILED)" in x for x in s.not_done)
     assert not any("UUP" in x for x in s.done)
+
+
+def _make_prices(dates: Sequence[date], start: float, step: float) -> pd.DataFrame:
+    rows = []
+    price = start
+    for d in dates:
+        rows.append(
+            {
+                "date": pd.Timestamp(d),
+                "symbol": "SPY",
+                "open": price,
+                "high": price * 1.01,
+                "low": price * 0.99,
+                "close": price,
+                "volume": 1000.0,
+                "source": "test",
+                "fetched_at": pd.Timestamp("2026-10-01", tz="UTC"),
+            }
+        )
+        price *= 1.0 + step
+    return pd.DataFrame(rows).set_index("date")
+
+
+def _make_equity(dates: Sequence[date], start: float, step: float) -> pd.DataFrame:
+    eq = start
+    rows = []
+    for d in dates:
+        rows.append(
+            {
+                "date": pd.Timestamp(d),
+                "equity": eq,
+                "cash": eq,
+                "gross_exposure": 0.0,
+                "leverage": 0.0,
+            }
+        )
+        eq *= 1.0 + step
+    return pd.DataFrame(rows).set_index("date")
+
+
+def test_evaluate_phase4_under_40_days(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "p4_under.db")
+    days = list(trading_days(date(2026, 1, 2), date(2026, 3, 31)))[:25]
+    upsert_equity(conn, _make_equity(days, 10_000.0, 0.001))
+    verdict = daily.evaluate_phase4(conn, title="STRIDE B")
+    assert not verdict.ready
+    assert not verdict.passed
+    assert verdict.days == 25
+    assert verdict.message == "STRIDE B: prueba en curso (25/40 días hábiles completados)."
+    conn.close()
+
+
+def test_evaluate_phase4_passed_beats_spy(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "p4_passed.db")
+    days = list(trading_days(date(2026, 1, 2), date(2026, 3, 31)))[:40]
+    upsert_equity(conn, _make_equity(days, 10_000.0, 0.005))
+    upsert_prices(conn, _make_prices(days, 100.0, 0.001))
+    verdict = daily.evaluate_phase4(conn, title="STRIDE B")
+    assert verdict.ready
+    assert verdict.passed
+    assert verdict.days == 40
+    assert verdict.clean_operations
+    assert verdict.strategy_return > verdict.spy_return
+    assert verdict.message.startswith("EN HORABUENA YA ESTA LISTO Y EL RESULTADO ES POSITIVO")
+    assert "STRIDE B, 40 días hábiles" in verdict.message
+    conn.close()
+
+
+def test_evaluate_phase4_failed_when_spy_beats_strategy(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "p4_failed_spy.db")
+    days = list(trading_days(date(2026, 1, 2), date(2026, 3, 31)))[:40]
+    upsert_equity(conn, _make_equity(days, 10_000.0, 0.001))
+    upsert_prices(conn, _make_prices(days, 100.0, 0.005))
+    verdict = daily.evaluate_phase4(conn, title="STRIDE B")
+    assert verdict.ready
+    assert not verdict.passed
+    assert verdict.message.startswith("Buena prueba amigo, pero el syp500 es mejor")
+    conn.close()
+
+
+def test_evaluate_phase4_failed_when_operational_issue(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "p4_failed_ops.db")
+    days = list(trading_days(date(2026, 1, 2), date(2026, 3, 31)))[:40]
+    upsert_equity(conn, _make_equity(days, 10_000.0, 0.005))
+    upsert_prices(conn, _make_prices(days, 100.0, 0.001))
+    record_event(conn, "KILL_SWITCH", "kill switch fired", at=f"{days[20].isoformat()}T18:00:00")
+    verdict = daily.evaluate_phase4(conn, title="STRIDE B")
+    assert verdict.ready
+    assert not verdict.clean_operations
+    assert not verdict.passed
+    assert verdict.message.startswith("Buena prueba amigo, pero el syp500 es mejor")
+    conn.close()
+
+
+def test_cli_verdict_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    db_file = tmp_path / "x.db"
+    conn = connect(db_file)
+    days = list(trading_days(date(2026, 1, 2), date(2026, 3, 31)))[:15]
+    upsert_equity(conn, _make_equity(days, 10_000.0, 0.001))
+    conn.close()
+    config = _config(tmp_path)
+    exit_code = daily.main(["--config", str(config), "--verdict"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "STRIDE: prueba en curso (15/40 días hábiles completados)." in out
