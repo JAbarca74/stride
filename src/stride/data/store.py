@@ -258,14 +258,35 @@ CREATE TABLE IF NOT EXISTS runs (
 )
 """
 RUN_STATUSES = ("ok", "error", "no_data", "skipped")
+
+# Paper-run state between days (P4-4): the instrument chosen per asset each day,
+# for the hold days of the leveraged-ETF hysteresis, and the weights of each
+# allocation, for its rules and its period.
+_INSTRUMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS instruments (
+    date     TEXT    NOT NULL,
+    asset    TEXT    NOT NULL,
+    symbol   TEXT    NOT NULL,
+    multiple INTEGER NOT NULL CHECK (multiple >= 1),
+    PRIMARY KEY (date, asset)
+)
+"""
+_ALLOCATIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS allocations (
+    date   TEXT NOT NULL,
+    asset  TEXT NOT NULL,
+    weight REAL NOT NULL,
+    PRIMARY KEY (date, asset)
+)
+"""
 # A (date, phase) with one of these is done: `run_daily --phase auto` skips it.
 DONE_RUN_STATUSES = ("ok", "no_data", "skipped")
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create every table (prices, cash_flows, equity, risk_state, events, signals,
-    risk_decisions, orders, fills, runs) if missing, and add the newer `orders`
-    columns to a table created before them."""
+    risk_decisions, orders, fills, runs, instruments, allocations) if missing,
+    and add the newer `orders` columns to a table created before them."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
@@ -277,6 +298,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(_ORDERS_SCHEMA)
         conn.execute(_FILLS_SCHEMA)
         conn.execute(_RUNS_SCHEMA)
+        conn.execute(_INSTRUMENTS_SCHEMA)
+        conn.execute(_ALLOCATIONS_SCHEMA)
         have = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
         for name, definition in _ORDER_EXTRA_COLUMNS.items():
             if name not in have:
@@ -671,3 +694,49 @@ def read_table(conn: sqlite3.Connection, table: str) -> pd.DataFrame:
     frame = pd.read_sql_query(f"SELECT * FROM {table} ORDER BY {order}", conn)
     frame["date"] = pd.to_datetime(frame["date"])
     return frame
+
+
+def save_instruments(
+    conn: sqlite3.Connection, day: date, choices: dict[str, tuple[str, int]]
+) -> None:
+    """The instrument (symbol, multiple) chosen per asset on `day`; replaces that day."""
+    with conn:
+        conn.execute("DELETE FROM instruments WHERE date = ?", (day.isoformat(),))
+        conn.executemany(
+            "INSERT INTO instruments (date, asset, symbol, multiple) VALUES (?, ?, ?, ?)",
+            [(day.isoformat(), a, s, int(m)) for a, (s, m) in sorted(choices.items())],
+        )
+
+
+def read_instruments(conn: sqlite3.Connection) -> list[tuple[pd.Timestamp, str, str, int]]:
+    """Every stored choice as (date, asset, symbol, multiple), oldest first."""
+    rows = conn.execute(
+        "SELECT date, asset, symbol, multiple FROM instruments ORDER BY date, asset"
+    ).fetchall()
+    return [(pd.Timestamp(d), str(a), str(s), int(m)) for d, a, s, m in rows]
+
+
+def save_allocation(conn: sqlite3.Connection, day: date, weights: dict[str, float]) -> None:
+    """The weights of the allocation made on `day` (none: an empty allocation)."""
+    with conn:
+        conn.execute("DELETE FROM allocations WHERE date = ?", (day.isoformat(),))
+        rows = [(day.isoformat(), a, float(w)) for a, w in sorted(weights.items())]
+        conn.executemany(
+            "INSERT INTO allocations (date, asset, weight) VALUES (?, ?, ?)",
+            rows or [(day.isoformat(), "", 0.0)],  # a marker row keeps the date
+        )
+
+
+def last_allocation(
+    conn: sqlite3.Connection, before: date | None = None
+) -> tuple[pd.Timestamp, dict[str, float]] | None:
+    """The latest allocation (date and weights), optionally strictly before `before`."""
+    query, params = "SELECT MAX(date) FROM allocations", []
+    if before is not None:
+        query += " WHERE date < ?"
+        params.append(before.isoformat())
+    row = conn.execute(query, params).fetchone()
+    if row[0] is None:
+        return None
+    rows = conn.execute("SELECT asset, weight FROM allocations WHERE date = ?", (row[0],))
+    return pd.Timestamp(row[0]), {a: float(w) for a, w in rows.fetchall() if a}
