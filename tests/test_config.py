@@ -8,7 +8,15 @@ import pydantic
 import pytest
 import yaml
 
-from stride.config import ConfigError, StrideConfig, load_config
+from stride.config import (
+    SEARCH_GROUP,
+    ConfigError,
+    StrideConfig,
+    effective_config,
+    load_config,
+    with_extra_universe,
+    with_search_universe,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "config.yaml"
@@ -77,7 +85,9 @@ def test_max_leverage_10_is_rejected(tmp_path: Path) -> None:
         ("execution", "limit_offset", 1),
         ("execution", "max_orders_per_day", 0),
         ("execution", "max_order_pct_equity", 0),
+        ("execution", "max_resize_cost_pct", 1.0),
         ("cash_flows", "monthly_deposit_usd", -20),
+        ("cash_flows", "initial_deposit_usd", 0),
         ("cash_flows", "deposit_day", "last_trading_day"),
         ("costs", "spread_bps", -1),
         ("costs", "commission_max_pct_of_value", -0.01),
@@ -296,3 +306,80 @@ def test_invalid_leverage_switch_is_rejected(
     data["leverage_switch"][key] = value
     with pytest.raises(ConfigError, match=message):
         load_config(_write(tmp_path, data), env={})
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "match"),
+    [
+        ("breakout_systems", [[20, 30]], "exit shorter"),
+        ("dd_scale_full", 0.04, "dd_scale_full must be above"),
+        ("extra_universe", ["SPY"], "new, unique"),
+        ("extra_groups", {"x": ["ZZZ"]}, "unknown symbol"),
+        ("enabled", ["ensemble"], None),  # fine with the three systems
+    ],
+)
+def test_experiments_are_validated(tmp_path: Path, key: str, value: Any, match: str | None) -> None:
+    path = _write(tmp_path, _with("experiments", key, value))
+    if match is None:
+        load_config(path, env={})
+        return
+    with pytest.raises(ConfigError, match=match):
+        load_config(path, env={})
+
+
+def test_ensemble_needs_two_systems(tmp_path: Path) -> None:
+    data = _with("experiments", "enabled", ["ensemble"])
+    data["experiments"]["breakout_systems"] = [[55, 20]]
+    with pytest.raises(ConfigError, match="at least two"):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_wider_universe_merges_symbols_and_groups() -> None:
+    config = load_config(REFERENCE, env={})
+    assert config.experiments.enabled == []  # off until it wins out of sample
+    assert effective_config(config) == config
+    wide = with_extra_universe(config)
+    assert wide.universe[:10] == config.universe and len(wide.universe) == 17
+    assert wide.groups["commodities"] == ["DBC", "USO", "CPER", "DBA"]
+    assert "EEM" in wide.groups["equities"] and "BWX" in wide.groups["bonds"]
+    enabled = config.model_copy(
+        update={
+            "experiments": config.experiments.model_copy(update={"enabled": ["extra_universe"]})
+        }
+    )
+    assert effective_config(enabled).universe == wide.universe
+
+
+@pytest.mark.parametrize(
+    ("values", "match"),
+    [
+        ({"underlying": "QQQ"}, "underlying must be in the universe"),
+        ({"refuge": "BIL"}, "refuge must be in the universe or cash"),
+        ({"underlying": "IEF", "multiple": 2}, "no leveraged version"),
+        ({"refuge": "Cash"}, None),  # wrong spelling: the pattern rejects it
+    ],
+)
+def test_rotation_is_validated(tmp_path: Path, values: dict[str, Any], match: str | None) -> None:
+    data = _reference()
+    data["experiments"]["rotation"].update(values)
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write(tmp_path, data), env={})
+
+
+def test_search_universe_is_added_only_by_with_search_universe() -> None:
+    config = load_config(ROOT / "config.yaml", env={})
+    search = config.experiments.search_universe
+    assert search and not set(search) & set(config.universe)
+    extended = with_search_universe(config)
+    assert set(search) <= set(extended.universe)
+    assert set(config.experiments.extra_universe) <= set(extended.universe)
+    assert extended.groups[SEARCH_GROUP] == search
+    assert extended.leveraged_etfs["QQQ"] == {2: "QLD", 3: "TQQQ"}
+    assert extended.experiments.search_universe == []
+
+
+def test_search_universe_must_be_new_symbols() -> None:
+    data = load_config(ROOT / "config.yaml", env={}).model_dump()
+    data["experiments"]["search_universe"] = ["SPY"]
+    with pytest.raises(ValueError, match="search_universe must be new"):
+        StrideConfig.model_validate(data)

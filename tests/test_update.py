@@ -11,6 +11,7 @@ import pytest
 
 from stride.config import load_config
 from stride.data.calendar import trading_days
+from stride.data.events import PriceEvent
 from stride.data.leveraged import EtfFacts, synthetic_prices, synthetic_returns
 from stride.data.sources import SourceError, to_contract
 from stride.data.store import connect, read_prices, upsert_prices
@@ -84,6 +85,8 @@ def test_plan_covers_universe_leveraged_etfs_and_crypto_spot() -> None:
     symbols = {item.symbol for item in plan}
     assert set(CONFIG.universe) <= symbols
     assert {"SSO", "UPRO", "UBT", "TMF", "UGL", "AGQ", "BITX", "ETHU"} <= symbols
+    assert set(CONFIG.experiments.extra_universe) <= symbols  # data for the experiment
+    assert set(CONFIG.experiments.search_universe) | {"QLD", "TQQQ"} <= symbols  # search
     spot = {item.symbol: item for item in plan if item.source == "coinbase"}
     assert set(spot) == {"BTC-USD", "ETH-USD"}
     assert spot["BTC-USD"].start == CONFIG.data.crypto_history_start
@@ -156,6 +159,22 @@ def test_validate_universe_runs_every_symbol(conn: sqlite3.Connection) -> None:
     spy = [r for r in results if r.symbol == "SPY"]
     assert all(r.passed for r in spy)
     assert {r.symbol for r in results} == set(CONFIG.universe)
+
+
+def test_flagged_event_lets_a_large_move_pass(conn: sqlite3.Connection) -> None:
+    bars = _bars("SLV", DAYS)
+    crash = DAYS[-30]
+    bars.loc[bars.index >= crash, ["open", "high", "low", "close"]] *= 0.7
+    upsert_prices(conn, bars)
+    event = PriceEvent(date=crash.date(), kind="market_move", detail="test", confirmed_by="t")
+
+    def jump_check(events: dict[str, list[PriceEvent]] | None) -> bool:
+        results = validate_universe(conn, CONFIG, DAYS[-1].date(), events)
+        return next(r.passed for r in results if r.symbol == "SLV" and r.name == "MAX_DAILY_CHANGE")
+
+    assert not jump_check(None)
+    assert jump_check({"SLV": [event]})
+    assert not jump_check({"SPY": [event]})  # a flag is per symbol
 
 
 class RawCloses:

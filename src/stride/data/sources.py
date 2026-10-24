@@ -39,7 +39,8 @@ class SourceError(Exception):
 class HttpResponse(Protocol):
     status_code: int
 
-    def json(self) -> Any: ...
+    def json(self) -> Any:
+        """The decoded JSON body."""
 
 
 class HttpSession(Protocol):
@@ -50,7 +51,8 @@ class HttpSession(Protocol):
         params: Mapping[str, str],
         headers: Mapping[str, str],
         timeout: float,
-    ) -> HttpResponse: ...
+    ) -> HttpResponse:
+        """Send a GET request."""
 
 
 class PriceSource(Protocol):
@@ -58,7 +60,6 @@ class PriceSource(Protocol):
 
     def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
         """Daily bars for `symbol` from `start` to `end`, both inclusive."""
-        ...
 
 
 class UnadjustedCloseSource(Protocol):
@@ -66,7 +67,6 @@ class UnadjustedCloseSource(Protocol):
 
     def fetch_unadjusted_close(self, symbol: str, start: date, end: date) -> pd.Series:
         """Raw (unadjusted) closes from `start` to `end`, indexed by `date`."""
-        ...
 
 
 def _utc_now() -> datetime:
@@ -200,6 +200,7 @@ class AlpacaSource:
     name = "alpaca"
     url = "https://data.alpaca.markets/v2/stocks/{symbol}/bars"
     page_limit = 10_000
+    sip_delay = pd.Timedelta(minutes=16)  # Basic plan withholds the latest 15 minutes
 
     def __init__(
         self,
@@ -223,7 +224,7 @@ class AlpacaSource:
         params = {
             "timeframe": "1Day",
             "start": start.isoformat(),
-            "end": end.isoformat(),
+            "end": self._end_param(end),
             "feed": "sip",
             "adjustment": adjustment,
             "limit": str(self.page_limit),
@@ -242,6 +243,19 @@ class AlpacaSource:
             if not token:
                 return bars
             params = {**params, "page_token": token}
+
+    def _end_param(self, end: date) -> str:
+        """The last second of `end` in New York, capped at `now - sip_delay`.
+
+        The Basic plan answers HTTP 403 for any range that reaches into the latest
+        15 minutes, so a bare date for today fails even after the close. A timestamp
+        old enough still returns today's bar at the 18:00 run.
+        """
+        day_end = pd.Timestamp(end + timedelta(days=1), tz="America/New_York") - pd.Timedelta(
+            seconds=1
+        )
+        latest = pd.Timestamp(self._clock()).tz_convert("UTC") - self.sip_delay
+        return min(day_end.tz_convert("UTC"), latest).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     @staticmethod
     def _dates(bars: list[dict[str, Any]]) -> list[date]:
@@ -425,11 +439,13 @@ class TextResponse(Protocol):
     status_code: int
 
     @property
-    def text(self) -> str: ...
+    def text(self) -> str:
+        """The response body as text."""
 
 
 class TextSession(Protocol):
-    def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> TextResponse: ...
+    def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> TextResponse:
+        """Send a GET request."""
 
 
 class FredRateSource:

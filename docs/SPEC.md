@@ -387,6 +387,7 @@ Implementations: `SimBroker` (backtest, tests), `AlpacaBroker` (paper), `IBKRBro
 
 1. `orders.py` compares broker positions with targets and computes the dollar difference per symbol.
 2. A difference below 20% of the target weight, or below $1, creates no order (rebalance band).
+   - **Cost-aware resizing (owner request, 2026-10-23):** a resize, buy or sell, of a position whose rule is `HOLD` (the target moved only because equity, L or N moved) is skipped when its commission plus spread exceeds `execution.max_resize_cost_pct` (0.5%) of the order. Entries, pyramid adds, exits, stops, sells that close a position and switch legs are never skipped. (Skipping only buys ratcheted the exposure down; fixed 2026-10-23.)
 3. Sells go before buys, to free cash.
 4. Orders are sent for the next day's open: limit orders at previous close ±0.5%, or market-on-open if the broker does not accept limits on fractional orders.
 5. Every order passes `risk/guard.py` before submission.
@@ -419,10 +420,10 @@ The backtest uses the same `strategy/` and `risk/` logic as live, with `SimBroke
 | Signal | Close of day t |
 | Execution | Open of day t+1 |
 | Spread and slippage | 5 bps per side (10 bps for crypto), configurable per symbol |
-| Commission | IBKR Pro Fixed: `min(max(0.005 * shares, 1.00), 0.01 * notional)` per order |
+| Commission | IBKR Pro Tiered (owner decision 2026-10-23, `costs.pricing`): `min(max(0.0035 * shares, 0.35), 0.01 * notional) + 0.003 * shares` (exchange, clearing and regulatory fees); Fixed, `min(max(0.005 * shares, 1.00), 0.01 * notional)`, stays available for comparison |
 | Risk-free rate | 3-month T-bill, FRED series `DTB3` (free); the value known at t−1 is used on day t, never a later one |
 | Margin interest | Risk-free rate + 1.5% per year on borrowed amount |
-| Uninvested cash | Earns the risk-free rate |
+| Uninvested cash | Earns the risk-free rate only above $10,000, scaled by NAV / $100,000 (IBKR's rule; `costs.cash_interest_free_usd`, `costs.cash_interest_full_rate_nav`): a small account earns nothing on its cash |
 | Dividends | Included via adjusted prices |
 | Leveraged ETFs | Before launch, synthetic daily return = m × underlying return − (m − 1) × (DTB3 + spread) / 252 − annual fee / 252, where the annual fee is the ETF's own net expense ratio from `reference/etf_facts.yaml` (`costs.leveraged_etf_fee` is only a fallback when the value is missing, and using it logs a warning). The spread is not invented: it is calibrated per asset on the period where both the real ETF and the underlying exist, and the synthetic series must differ from the real one by less than 2% per year |
 | Deposits | $20 on the first trading day of each month, as in live |
@@ -437,6 +438,8 @@ Note on commissions: with small orders, IBKR's 1%-of-trade-value cap is the bind
 3. **Block bootstrap:** 5,000 resamples of daily returns in 20-day blocks for confidence intervals on Sharpe and max drawdown.
 4. **Anti-look-ahead test:** see section 5.
 5. **Leverage comparison:** run with fixed L at 1x, 2x, 3x and 4x, and with the dynamic L of section 7.
+6. **Improvements and experiments (owner request, 2026-10-23):** the configured run against the same run with each improvement removed (cost-aware resizing, Tiered pricing, realistic cash interest) and with each strategy experiment switched on (`experiments` in `config.yaml`: a wider universe of 7 more ETFs with their own correlated groups, and a multi-horizon ensemble of breakout systems 20/10, 55/20 and 100/40 whose rounded mean sets the units). An experiment enters `experiments.enabled` only after it wins out of sample; this changes the strategy and needs a SPEC version.
+7. **Leverage rotation experiment (owner goal of 30% a year, 2026-10-23):** hold the 2x or 3x version of SPY (SSO, UPRO) while SPY closes above its 200-day average, and IEF or cash below it (Gayed and Bilello, "Leverage for the Long Run", 2016). It goes through the same protocol (walk-forward, bootstrap, sensitivity of the average, band and multiple) and the 30% / 25% goal search; it replaces the breakout strategy only through a new SPEC version and only if it passes Phase 3.
 
 **Always-reported metrics**
 
@@ -483,6 +486,8 @@ With monthly deposits, returns are measured as **time-weighted return (TWR)**: d
 - Backtest-vs-reality gap: simulated vs real return for the same period, and average slippage.
 - Leverage used and which limit bound it each day.
 - Correlation matrix of the universe (3-year daily returns; flag pairs above 0.7).
+
+**Daily report** (`reporting/daily.py`, HTML, requested by the owner on 2026-10-23): after the 18:00 run, one short page in Spanish, sent as a document through the Telegram bot: status (OK, attention, halted, kill switch, no run), equity, time-weighted day return, drawdown and leverage; what was done (fills at the open, orders sent for the next open, deposits, unit changes with their rule); what was not done (vetoed orders with the guard reasons, orders rejected or cancelled by the broker, unit adds cut by the caps, errors); and the units held per asset.
 
 **AI summary (optional):** `llm_summary.py` reads the report and writes what the system did and why. Read-only database access; it can never create orders or change parameters. Off by default.
 

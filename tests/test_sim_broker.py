@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from stride.backtest.costs import commission
+from stride.backtest.costs import commission, max_commission_rate
 from stride.config import load_config
 from stride.execution.broker import Broker
 from stride.execution.sim_broker import SimBroker
@@ -89,8 +89,16 @@ def test_long_only_and_cash_only() -> None:
     buy_id = broker.submit_order("SPY", "buy", 500.0)
     broker.step(T1)
     assert broker.get_order(sell_id).status == "rejected"
-    assert broker.get_order(buy_id).status == "rejected"
-    assert broker.get_order(buy_id).reason == "not enough cash"
+    buy = broker.get_order(buy_id)
+    assert buy.status == "filled" and buy.reason == "partial fill: cash available"
+    cost = buy.filled_quantity * (buy.average_price or 0) + buy.commission
+    assert cost == pytest.approx(100.0 / (1 + max_commission_rate(CONFIG)) + buy.commission)
+    assert broker.get_account().cash >= 0
+    broke = _broker(cash=0.0)
+    empty = broke.submit_order("SPY", "buy", 50.0)
+    broke.step(T1)
+    assert broke.get_order(empty).status == "rejected"
+    assert broke.get_order(empty).reason == "not enough cash"
 
 
 def test_buy_limit_fills_at_open_or_limit_or_expires() -> None:
@@ -160,3 +168,90 @@ def test_missing_bar_cancels_and_market_calendar() -> None:
     assert broker.is_market_open(T1)
     assert not broker.is_market_open(date(2026, 11, 26))  # Thanksgiving
     assert broker.today == T1
+
+
+def test_full_sell_closes_the_position_after_a_gap_up() -> None:
+    gap = {"SPY": _bars([(99, 101, 98, 100), (102, 104, 100, 103), (110, 112, 109, 111)])}
+    broker = SimBroker(gap, CONFIG, cash=1_000.0, start=T0)
+    broker.submit_order("SPY", "buy", 500.0)
+    broker.step(T1)
+    value = broker.get_positions()["SPY"].quantity * 103  # the close of T1
+    full = broker.submit_order("SPY", "sell", value)
+    broker.step(T2)  # opens 7% higher: value / price would leave shares behind
+    assert broker.get_order(full).status == "filled"
+    assert "SPY" not in broker.get_positions()
+
+
+def test_partial_sell_is_not_a_full_exit() -> None:
+    broker = _broker()
+    broker.submit_order("SPY", "buy", 1_000.0)
+    broker.step(T1)
+    held = broker.get_positions()["SPY"].quantity
+    broker.submit_order("SPY", "sell", 0.5 * held * 103)
+    broker.step(T2)
+    assert broker.get_positions()["SPY"].quantity == pytest.approx(
+        held - 0.5 * held * 103 / (103 * (1 - 0.0005))
+    )
+
+
+def test_deposits_and_interest_credit_cash() -> None:
+    broker = _broker(cash=100.0)
+    broker.deposit(20.0)
+    broker.credit_interest(0.5)
+    broker.credit_interest(0.0)
+    assert broker.get_account().cash == pytest.approx(120.5)
+    with pytest.raises(ValueError, match="deposit"):
+        broker.deposit(0.0)
+    with pytest.raises(ValueError, match="interest"):
+        broker.credit_interest(-1.0)
+
+
+def test_exit_split_in_two_orders_closes_the_whole_position() -> None:
+    gap = {"SPY": _bars([(99, 101, 98, 100), (102, 104, 100, 103), (110, 112, 109, 111)])}
+    broker = SimBroker(gap, CONFIG, cash=1_000.0, start=T0)
+    broker.submit_order("SPY", "buy", 900.0)
+    broker.step(T1)
+    value = broker.get_positions()["SPY"].quantity * 103
+    first = broker.submit_order("SPY", "sell", 0.5 * value)
+    last = broker.submit_order("SPY", "sell", 0.5 * value)  # together: the whole position
+    broker.step(T2)
+    assert broker.get_order(first).status == "filled"
+    assert broker.get_order(last).status == "filled"
+    assert "SPY" not in broker.get_positions()
+
+
+def test_find_order_by_client_id() -> None:
+    broker = _broker()
+    order_id = broker.submit_order("SPY", "buy", 100.0, client_order_id="stride-20261014-SPY-buy-1")
+    found = broker.find_order("stride-20261014-SPY-buy-1")
+    assert found is not None
+    assert (found.order_id, found.client_order_id) == (order_id, "stride-20261014-SPY-buy-1")
+    broker.step(T1)
+    assert broker.find_order("stride-20261014-SPY-buy-1") == broker.get_order(order_id)
+    assert broker.find_order("stride-unknown") is None
+
+
+def test_duplicate_client_id_is_refused() -> None:
+    broker = _broker()
+    broker.submit_order("SPY", "buy", 100.0, client_order_id="dup")
+    with pytest.raises(ValueError, match="duplicate"):
+        broker.submit_order("SPY", "buy", 100.0, client_order_id="dup")
+    assert len([broker.find_order("dup")]) == 1
+
+
+def test_always_fractionable() -> None:
+    assert _broker().is_fractionable("SPY")
+
+
+def test_a_quantity_covering_the_position_is_a_full_exit() -> None:
+    broker = _broker()
+    broker.submit_order("SPY", "buy", 1_000.0)
+    broker.step(T1)
+    held = broker.get_positions()["SPY"].quantity
+    # A notional below the value at the close, but the quantity covers every share.
+    order_id = broker.submit_order("SPY", "sell", 500.0, quantity=held)
+    broker.step(T2)
+    assert broker.get_order(order_id).filled_quantity == pytest.approx(held)
+    assert "SPY" not in broker.get_positions()
+    with pytest.raises(ValueError, match="quantity"):
+        broker.submit_order("IBIT", "buy", 10.0, quantity=0)

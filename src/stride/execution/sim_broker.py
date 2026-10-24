@@ -3,23 +3,34 @@
 An order submitted on day t is filled at the open of the next trading day it is
 stepped to (t+1), with spread and slippage applied (`backtest/costs.py`) and the
 IBKR Pro Fixed commission. Orders are day orders: whatever is not filled that day
-is cancelled at its close. Cash only, long only: buys larger than the cash are
-rejected and sells are capped at the shares held.
+is cancelled at its close. Cash only, long only: a buy larger than the cash left
+at the fill (after the sells, so after a gap at the open) is filled for what
+the cash pays, commission included, and sells are capped at the shares held.
 
 Limit orders: a buy fills at the open if the open is at or below the limit,
 otherwise at the limit if the day's low reaches it; sells mirror this with the
 high. Spread is applied to the fill price in both cases.
+
+A sell that, with the other sells of the symbol sent the same day, covers the
+whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`), or whose
+`quantity` covers every share held, is a full exit: it fills after them and
+sells every share left, so a gap up at the open leaves no remainder (an exit
+split into several orders included). Otherwise orders fill by `notional`: the
+simulation is always fractionable, so a given `quantity` only marks a full exit.
+Deposits and interest on idle cash are credited by the backtest engine
+(`deposit`, `credit_interest`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date
+from typing import Any
 
 import pandas as pd
 
-from stride.backtest.costs import commission, fill_price
+from stride.backtest.costs import commission, fill_price, max_commission_rate
 from stride.config import StrideConfig
 from stride.data.calendar import is_trading_day
 from stride.execution.broker import (
@@ -32,6 +43,7 @@ from stride.execution.broker import (
 )
 
 _DUST = 1e-12  # a remaining quantity this small counts as a closed position
+FULL_SELL_TOLERANCE_USD = 0.01  # the guard's rounding tolerance for sells
 
 
 class SimBroker(Broker):
@@ -44,11 +56,16 @@ class SimBroker(Broker):
     ) -> None:
         """`prices` maps symbol -> daily bars (`open`, `high`, `low`, `close`)."""
         self._prices = {s: p.sort_index() for s, p in prices.items()}
+        # Closes as arrays for fast "last close on or before a day" lookups.
+        self._close_index = {s: pd.DatetimeIndex(p.index) for s, p in self._prices.items()}
+        self._close_values = {s: p["close"].to_numpy(dtype=float) for s, p in self._prices.items()}
         self._config = config
         self._cash = float(cash)
         self._today = start
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, OrderState] = {}
+        self._full_sells: set[str] = set()  # order ids that close the whole position
+        self._client_ids: dict[str, str] = {}  # client order id -> order id
 
     # Broker interface.
 
@@ -69,7 +86,14 @@ class SimBroker(Broker):
         notional: float,
         type: OrderType = "market",
         limit_price: float | None = None,
+        *,
+        client_order_id: str | None = None,
+        quantity: float | None = None,
     ) -> str:
+        if quantity is not None and not quantity > 0:
+            raise ValueError("quantity must be positive")
+        if client_order_id is not None and client_order_id in self._client_ids:
+            raise ValueError("duplicate client_order_id")
         if notional <= 0:
             raise ValueError("notional must be positive")
         if type == "limit" and (limit_price is None or limit_price <= 0):
@@ -78,12 +102,34 @@ class SimBroker(Broker):
             raise ValueError(f"no prices for {symbol}")
         order_id = f"sim-{len(self._orders) + 1}"
         self._orders[order_id] = OrderState(
-            order_id, symbol, side, float(notional), type, limit_price, self._today, "pending"
-        )
+            order_id, symbol, side, float(notional), type, limit_price, self._today, "pending",
+            client_order_id=client_order_id,
+        )  # fmt: skip
+        if client_order_id is not None:
+            self._client_ids[client_order_id] = order_id
+        held = self._positions.get(symbol)
+        if side == "sell" and held is not None:
+            value = held.quantity * self._close(symbol, self._today)
+            already = sum(
+                o.notional
+                for o in self._orders.values()
+                if o.symbol == symbol and o.side == "sell" and o.status == "pending"
+                and o.submitted == self._today and o.order_id != order_id
+            )  # fmt: skip
+            covers = quantity is not None and quantity >= held.quantity - _DUST
+            if covers or already + notional >= value - FULL_SELL_TOLERANCE_USD:
+                self._full_sells.add(order_id)
         return order_id
 
     def get_order(self, order_id: str) -> OrderState:
         return self._orders[order_id]
+
+    def find_order(self, client_order_id: str) -> OrderState | None:
+        order_id = self._client_ids.get(client_order_id)
+        return self._orders[order_id] if order_id is not None else None
+
+    def is_fractionable(self, symbol: str) -> bool:
+        return True
 
     def cancel_all(self) -> int:
         pending = [o for o in self._orders.values() if o.status == "pending"]
@@ -93,6 +139,42 @@ class SimBroker(Broker):
 
     def is_market_open(self, day: date) -> bool:
         return is_trading_day(day)
+
+    # Cash flows (backtest only).
+
+    def deposit(self, amount: float) -> None:
+        """An external deposit credited to cash (SPEC 9: $20 each month)."""
+        if not amount > 0:
+            raise ValueError("a deposit must be positive")
+        self._cash += float(amount)
+
+    def credit_interest(self, amount: float) -> None:
+        """Interest earned by idle cash (`costs.cash_interest`); never negative."""
+        if amount < 0:
+            raise ValueError("interest on cash cannot be negative")
+        self._cash += float(amount)
+
+    # State, for a simulation that lives across processes (the shadow broker).
+
+    def snapshot(self) -> dict[str, Any]:
+        """Cash, clock, positions and orders as plain JSON-ready values."""
+        return {
+            "cash": self._cash,
+            "today": self._today.isoformat(),
+            "positions": [asdict(p) for p in self._positions.values()],
+            "orders": [_order_json(o) for o in self._orders.values()],
+            "full_sells": sorted(self._full_sells),
+            "client_ids": dict(self._client_ids),
+        }
+
+    def restore(self, state: Mapping[str, Any]) -> None:
+        """The inverse of `snapshot` (prices and config come from the constructor)."""
+        self._cash = float(state["cash"])
+        self._today = date.fromisoformat(state["today"])
+        self._positions = {p["symbol"]: Position(**p) for p in state["positions"]}
+        self._orders = {o["order_id"]: _order_from_json(o) for o in state["orders"]}
+        self._full_sells = set(state["full_sells"])
+        self._client_ids = dict(state["client_ids"])
 
     # Simulation clock.
 
@@ -107,7 +189,8 @@ class SimBroker(Broker):
             raise ValueError("the simulation only moves forward")
         self._today = day
         due = [o for o in self._orders.values() if o.status == "pending" and o.submitted < day]
-        due.sort(key=lambda o: o.side != "sell")  # sells before buys, to free cash
+        # Sells before buys, to free cash; a full exit after the other sells of its symbol.
+        due.sort(key=lambda o: (o.side != "sell", o.order_id in self._full_sells))
         handled = []
         for order in due:
             result = self._fill(order, day)
@@ -126,9 +209,8 @@ class SimBroker(Broker):
         return row if isinstance(row, pd.Series) else None
 
     def _close(self, symbol: str, day: date) -> float:
-        bars = self._prices[symbol]
-        upto = bars.loc[: pd.Timestamp(day)]
-        return float(upto["close"].iloc[-1]) if not upto.empty else 0.0
+        position = int(self._close_index[symbol].searchsorted(pd.Timestamp(day), side="right"))
+        return float(self._close_values[symbol][position - 1]) if position else 0.0
 
     def _reference(self, order: OrderState, bar: pd.Series) -> float | None:
         open_, high, low = float(bar["open"]), float(bar["high"]), float(bar["low"])
@@ -154,24 +236,37 @@ class SimBroker(Broker):
         held = self._positions.get(order.symbol)
         if order.side == "sell":
             quantity = min(order.notional / price, held.quantity if held else 0.0)
+            if order.order_id in self._full_sells and held is not None:
+                quantity = held.quantity
             if quantity <= 0:
                 return replace(order, status="rejected", reason="no position to sell (long only)")
         else:
-            quantity = order.notional / price
+            quantity = min(order.notional, self._affordable()) / price
+            if quantity <= 0:
+                return replace(order, status="rejected", reason="not enough cash")
         fee = commission(quantity, price, self._config)
         cash_change = -(quantity * price + fee) if order.side == "buy" else quantity * price - fee
-        if self._cash + cash_change < 0:
+        if self._cash + cash_change < -_DUST:
             return replace(order, status="rejected", reason="not enough cash")
         self._cash += cash_change
         self._update_position(order.symbol, order.side, quantity, price)
+        partial = order.side == "buy" and quantity * price < order.notional * (1 - _DUST)
         return replace(
             order,
             status="filled",
+            reason="partial fill: cash available" if partial else "",
             filled_quantity=quantity,
             average_price=price,
             commission=fee,
             filled=day,
         )
+
+    def _affordable(self) -> float:
+        """The largest notional the cash pays, commission included (the commission
+        is at most `costs.max_commission_rate` of the notional)."""
+        if self._cash <= 0:
+            return 0.0
+        return self._cash / (1 + max_commission_rate(self._config))
 
     def _update_position(self, symbol: str, side: Side, quantity: float, price: float) -> None:
         held = self._positions.get(symbol)
@@ -189,3 +284,22 @@ class SimBroker(Broker):
             del self._positions[symbol]
         else:
             self._positions[symbol] = Position(symbol, remaining, held.average_price)
+
+
+_DATE_FIELDS = ("submitted", "filled")
+
+
+def _order_json(order: OrderState) -> dict[str, Any]:
+    data = asdict(order)
+    for name in _DATE_FIELDS:
+        if data[name] is not None:
+            data[name] = data[name].isoformat()
+    return data
+
+
+def _order_from_json(data: Mapping[str, Any]) -> OrderState:
+    values = dict(data)
+    for name in _DATE_FIELDS:
+        if values[name] is not None:
+            values[name] = date.fromisoformat(values[name])
+    return OrderState(**values)

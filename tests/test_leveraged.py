@@ -13,6 +13,7 @@ from stride.data.leveraged import (
     annualized_return,
     calibrate_spread,
     expense_ratio_for,
+    leveraged_bars,
     load_etf_facts,
     passes_filters,
     rate_known_at_t_minus_1,
@@ -76,20 +77,25 @@ def test_filters(spread: float | None, aum: float | None, expected: bool) -> Non
 def test_reference_facts_file_loads_and_covers_every_mapped_etf() -> None:
     facts = load_etf_facts()
     config = load_config(ROOT / "config.yaml", env={})
-    mapped = {etf for versions in config.leveraged_etfs.values() for etf in versions.values()}
+    # The strategy search's leveraged versions (QLD, TQQQ) have facts too.
+    every = config.leveraged_etfs | config.experiments.search_leveraged_etfs
+    mapped = {etf for versions in every.values() for etf in versions.values()}
     assert mapped <= set(facts)
     for ticker, fact in facts.items():
-        assert fact.underlying in config.leveraged_etfs
-        assert config.leveraged_etfs[fact.underlying][fact.multiple] == ticker
+        assert fact.underlying in every
+        assert every[fact.underlying][fact.multiple] == ticker
 
 
-def test_reference_facts_leave_owner_fields_empty() -> None:
+def test_reference_facts_are_complete_and_only_ubt_fails_the_filters() -> None:
     facts = load_etf_facts()
+    config = load_config(ROOT / "config.yaml", env={})
     assert facts["ETHU"].underlying == "ETHA"
-    for ticker in ("BITX", "ETHU"):
-        assert facts[ticker].expense_ratio is None
-        assert facts[ticker].aum_usd is None
-    assert all(f.median_spread_30d is None for f in facts.values())
+    for fact in facts.values():
+        assert fact.expense_ratio is not None
+        assert fact.aum_usd is not None
+        assert fact.median_spread_30d is not None
+    failing = {t for t, f in facts.items() if not passes_filters(f, config.leveraged_etf_filters)}
+    assert failing == {"UBT"}  # 0.35% median spread, above the 0.20% cap
 
 
 def test_facts_file_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -193,6 +199,19 @@ def test_calibration_recovers_the_true_spread() -> None:
     assert calibration.passes
 
 
+def test_calibration_ignores_etf_days_before_the_underlying_exists() -> None:
+    # Like BITX (2023) vs IBIT (2024): a crash before the underlying starts must not
+    # move the spread, because the synthetic series has no returns for those days.
+    real = _real_etf(0.0125)
+    early_days = pd.bdate_range(end=real.index[0] - pd.Timedelta(days=1), periods=60)
+    early = pd.Series(np.linspace(200.0, real.iloc[0], 60), index=early_days)
+    underlying = _underlying()
+    underlying = underlying[underlying.index >= DAYS[200]]
+    calibration = calibrate_spread(underlying, pd.concat([early, real]), 2, _rate(), 0.0095)
+    assert calibration.spread == pytest.approx(0.0125, abs=1e-6)
+    assert calibration.passes
+
+
 def test_calibration_fails_when_no_spread_explains_the_gap() -> None:
     calibration = calibrate_spread(
         _underlying(), _real_etf(0.0, extra_drag=0.5), 2, _rate(), 0.0095
@@ -237,3 +256,49 @@ def test_fred_rate_is_a_fraction_without_holidays() -> None:
 def test_fred_http_error_is_a_source_error() -> None:
     with pytest.raises(SourceError, match="HTTP 500"):
         FredRateSource(session=TextFake(500, "")).fetch_rate()
+
+
+# Bars for the backtest: real from launch, synthetic before.
+
+
+def _base_bars() -> pd.DataFrame:
+    days = pd.bdate_range("2020-01-01", periods=8)
+    close = pd.Series([100, 101, 99, 102, 104, 103, 105, 106], index=days, dtype=float)
+    open_ = close.shift(1).fillna(100.0) * 1.002
+    return pd.DataFrame({"open": open_, "high": close + 1, "low": close - 1, "close": close})
+
+
+def test_leveraged_bars_splice_synthetic_history_onto_the_real_etf() -> None:
+    base = _base_bars()
+    real = pd.DataFrame(
+        {"open": [40.0, 41.0], "high": [42.0, 42.5], "low": [39.5, 40.5], "close": [41.0, 42.0],
+         "volume": [10, 20]},
+        index=base.index[5:7],
+    )  # fmt: skip
+    rate = pd.Series(0.0, index=base.index)
+    bars = leveraged_bars(base, real, 2, rate=rate, spread=0.0, annual_fee=0.0)
+    assert list(bars.index) == list(base.index[:7])
+    assert list(bars["source"]) == ["synthetic"] * 5 + ["real"] * 2
+    assert bars.loc[real.index[0], "close"] == 41.0  # no jump at the splice
+    syn = bars["close"].iloc[:6].pct_change().iloc[1:]
+    assert syn.to_numpy() == pytest.approx(2 * base["close"].iloc[:6].pct_change().iloc[1:])
+    day = base.index[2]
+    overnight = base.loc[day, "open"] / base["close"].iloc[1] - 1
+    assert bars.loc[day, "open"] == pytest.approx(bars["close"].iloc[1] * (1 + 2 * overnight))
+    synthetic = bars.iloc[:5]
+    assert (synthetic["low"] <= synthetic[["open", "close"]].min(axis=1)).all()
+    assert (synthetic["high"] >= synthetic[["open", "close"]].max(axis=1)).all()
+
+
+def test_leveraged_bars_without_overlap_keep_only_the_real_bars() -> None:
+    base = _base_bars()
+    real = pd.DataFrame(
+        {"open": [40.0], "high": [42.0], "low": [39.5], "close": [41.0]},
+        index=[pd.Timestamp("2021-06-01")],
+    )
+    bars = leveraged_bars(base, real, 2, rate=pd.Series(0.0, index=base.index), spread=0.0,
+                          annual_fee=0.0)  # fmt: skip
+    assert list(bars["source"]) == ["real"]
+    with pytest.raises(ValueError, match="anchor"):
+        leveraged_bars(base, real.iloc[:0], 2, rate=pd.Series(dtype=float), spread=0.0,
+                       annual_fee=0.0)  # fmt: skip

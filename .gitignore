@@ -8,8 +8,11 @@
 *.pfx
 data/
 !src/stride/data/
+!tests/data/
 KILL_SWITCH
+KILL_SWITCH_*
 HALT
+HALT_*
 *.db
 *.db-journal
 *.sqlite

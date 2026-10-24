@@ -86,13 +86,20 @@ Data flows one way. Strategy and risk are **pure functions** (no network, no fil
   <img src="docs/assets/leverage.svg" alt="Effective leverage is the minimum of five limits: Kelly, volatility target, absolute cap, broker limit and capital limit." width="100%">
 </p>
 
-Leverage is recomputed every day as the minimum of five limits, up to full Kelly and never above 4x. Below $2,000 there is no margin: extra exposure can only come from 2x/3x ETFs, so the maximum loss is the amount deposited.
+Leverage is recomputed every day as the minimum of five limits, up to full Kelly and never above 4x. The real account never borrows (`allow_margin: false`): extra exposure can only come from 2x/3x ETFs, so the maximum loss is the amount deposited.
 
 <p align="center">
   <img src="docs/assets/drawdown.svg" alt="Past a 20% drawdown leverage is halved; at 40% the kill switch closes every position." width="100%">
 </p>
 
-A drawdown past −20% halves leverage until a new high, and −40% trips a kill switch that closes every position and stops the system until a human resets it.
+A drawdown past −20% halves leverage until a new high. The system then has two separate brakes:
+
+| Trigger | Action |
+| :-- | :-- |
+| Drawdown of −40% on the time-weighted index | **Kill switch:** cancel pending orders, liquidate every position at the next open using the positions the broker reports, write `KILL_SWITCH` and stop until a human deletes it |
+| Reconciliation break on two consecutive days | **Halt:** freeze the system without liquidating (no new orders, positions kept), write `HALT` and alert until a human fixes the mismatch and resolves it |
+
+A halt does not sell: when the system is not sure what it holds, selling blind can make things worse. The kill switch stays armed during a halt. −40% is a trigger, not a guaranteed maximum loss: a gap at the next open can push the real loss further.
 
 ### Safety by design
 
@@ -135,6 +142,111 @@ python -m stride.data.update t21           # synthetic vs real leveraged ETFs
 </details>
 
 <details>
+<summary><b>Running the backtest</b></summary>
+
+<br>
+
+Needs `data/stride.db` (above) and network access to FRED for the 3-month T-bill rate (no key). Results go to a separate database, never to `data/stride.db`, whose equity and risk-state tables belong to the paper or live account.
+
+```bash
+python -m stride.backtest.run                              # 2007 to the last stored day, $100 start
+python -m stride.backtest.run --fixed-leverage 2           # leverage comparison (SPEC 9)
+python -m stride.backtest.run --report reports/backtest.html
+python -m stride.backtest.validation                       # SPEC 9 protocol -> docs/results/
+```
+
+</details>
+
+<details>
+<summary><b>Daily job</b></summary>
+
+<br>
+
+`python -m stride.run_daily` runs one paper instance (`mode: paper` only; it refuses `live`). Each instance has its own config, database, log file (`data/logs/<name>.log`) and `KILL_SWITCH`/`HALT` files next to its config. The phases follow SPEC section 8, New York time:
+
+| Phase | Window (ET) | What it does |
+| :-- | :-- | :-- |
+| `evening` | 18:00-20:00 | Download prices (retried on the next tick while today's bar is missing; `no_data` and an alert after 20:00), validate, read the account, detect deposits, advance the time-weighted index, kill switch, targets, plan and guard the orders, Spanish daily report by Telegram |
+| `morning` | 09:15-09:30 | Send last evening's approved orders (market, day); with the kill switch active, cancel everything and sell what the broker reports |
+| `midday` | 12:00-13:00 | Order statuses and fills |
+| `close` | 16:05-17:00 | Cancel what is pending, record fills, reconcile positions, mark unfilled exits for a market resend |
+| `auto` | | The phase due now, once per day and phase (`runs` table); nothing outside the windows or on NYSE holidays |
+
+```bash
+python -m stride.run_daily --config config.paper_b.yaml --phase auto     # what a scheduler runs every 15 min
+python -m stride.run_daily --config config.paper_b.yaml --phase evening  # one phase by hand
+python -m stride.run_daily --config config.paper_b.yaml --mode backtest  # SimBroker on the stored prices
+```
+
+A scheduler (cron, or the Windows Task Scheduler) only needs **one** task every 15 minutes running `--phase auto`: the job finds the phase itself in New York time, so daylight-saving changes need no edit. Any error is recorded in `runs` with status `error`, alerted without secrets, and stops the phase; the next tick tries again.
+
+</details>
+
+<details>
+<summary><b>Paper trading on Windows</b></summary>
+
+<br>
+
+Two paper instances run side by side: **B** (`config.paper_b.yaml`, QQQ core at 1.5x plus the crypto dip sleeve) and **DIP** (`config.paper_dip.yaml`, SPY core plus the same sleeve). No real money is involved: both use `mode: paper` and Alpaca **paper** keys only. One scheduled task runs them every 15 minutes.
+
+The PC must stay **powered on and online** during the New York trading day and evening. The task wakes the PC from sleep, but only if wake timers are allowed (Control Panel → Power Options → Change plan settings → Change advanced power settings → Sleep → Allow wake timers → Enable). A missed run is made up as soon as the PC is back, within the phase window; outside it, that phase is skipped for the day and the next one runs normally.
+
+1. **Reset the Alpaca paper account(s) to a chosen balance.** In the Alpaca dashboard switch to the paper account, open the account menu and choose *Reset account*. Set the balance you want to test with. DIP can use a second paper account. Without one, DIP runs on the *shadow broker*, a simulation on the stored prices that starts from `cash_flows.initial_deposit_usd`.
+2. **Put the keys in `.env`** (copy `.env.example`; never commit `.env`, never use live keys). Names only:
+   `DATA_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, optionally `ALPACA_DIP_API_KEY` and `ALPACA_DIP_SECRET_KEY`, and `ALERT_TELEGRAM_TOKEN`, `ALERT_TELEGRAM_CHAT_ID`.
+   Check that git ignores it: `git check-ignore .env` must print `.env`.
+3. **Install the scheduled task** from PowerShell opened with *Run as administrator*:
+
+   ```powershell
+   cd C:\path\to\stride
+   powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1
+   Get-ScheduledTask -TaskName "STRIDE paper"     # State: Ready
+   ```
+
+   The task "STRIDE paper" runs `scripts\run_stride.ps1` every 15 minutes, every day. Its settings:
+   - it runs whether you are logged on or not; Windows stores no password, and none is written to the repository;
+   - it wakes the PC and starts as soon as possible after a missed start;
+   - it stops after 30 minutes and never starts a second copy while one is running.
+
+   After the paper runs, `scripts\backup_db.ps1` copies `data\*.db` once a day to `%USERPROFILE%\Documents\stride_backups\<date>\` and keeps 30 days. Use `-Destination` for another folder.
+4. **Check the logs** in `data\logs\`: `scheduler.log` (every tick), `b.log` and `dip.log` (one per instance). Each phase also has a row in the `runs` table of `data\paper_b.db` / `data\paper_dip.db`, and every evening Telegram receives one report per instance ("STRIDE B", "STRIDE DIP").
+
+   ```powershell
+   Get-Content data\logs\scheduler.log -Tail 30
+   Get-ScheduledTaskInfo -TaskName "STRIDE paper"   # LastRunTime, LastTaskResult (0 = ok)
+   ```
+5. **Pause or stop the job:**
+
+   ```powershell
+   Disable-ScheduledTask -TaskName "STRIDE paper"                     # pause
+   Enable-ScheduledTask -TaskName "STRIDE paper"                      # resume
+   Unregister-ScheduledTask -TaskName "STRIDE paper" -Confirm:$false  # remove
+   ```
+6. **Fire the kill switch by hand.** Each instance has its own file next to the configs: `KILL_SWITCH_B`, `KILL_SWITCH_DIP`. A plain `KILL_SWITCH` stops both. While the file exists, the next morning cancels every order and sells every position the broker reports, and nothing is bought again.
+
+   ```powershell
+   Set-Content KILL_SWITCH_B "fired by hand"        # B only; use KILL_SWITCH for both
+   python -m stride.execution.kill_switch_file status --config config.paper_b.yaml --file KILL_SWITCH_B --halt-file HALT_B
+   # To trade again: review the account, delete the file by hand, then record the reset:
+   Remove-Item KILL_SWITCH_B
+   python -m stride.execution.kill_switch_file reset --config config.paper_b.yaml --file KILL_SWITCH_B --by "Your Name" --reason "why it is safe"
+   ```
+
+   A reconciliation halt works the same way with `HALT_B` / `HALT_DIP` and `resolve-halt`.
+
+**Costa Rica and New York time.** Costa Rica is UTC-6 all year. New York is UTC-4 from the second Sunday of March to the first Sunday of November (EDT) and UTC-5 the rest of the year (EST). The job reads New York time itself, so nothing changes on your side.
+
+| Phase | New York | Costa Rica, March to November (EDT) | Costa Rica, November to March (EST) |
+| :-- | :-- | :-- | :-- |
+| morning: send orders | 09:15-09:30 | 07:15-07:30 | 08:15-08:30 |
+| market open | 09:30 | 07:30 | 08:30 |
+| midday: fills | 12:00-13:00 | 10:00-11:00 | 11:00-12:00 |
+| close: reconcile | 16:05-17:00 | 14:05-15:00 | 15:05-16:00 |
+| evening: data, plan, report | 18:00-20:00 | 16:00-18:00 | 17:00-19:00 |
+
+</details>
+
+<details>
 <summary><b>Development checks</b></summary>
 
 <br>
@@ -161,7 +273,7 @@ mypy src tests
 | `src/stride/strategy/` | Indicators and trading rules (pure) |
 | `src/stride/risk/` | Sizing, leverage, risk veto, kill switch (pure) |
 | `src/stride/execution/` | Brokers: simulated and Alpaca paper |
-| `src/stride/backtest/` | Costs and performance metrics |
+| `src/stride/backtest/` | Backtest engine, costs and performance metrics |
 | `src/stride/reporting/` | Reports, correlations, alerts |
 | `tests/` | Test suite |
 | `CLAUDE.md`, `AGENTS.md` | Rules for coding agents |

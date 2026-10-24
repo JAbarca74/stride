@@ -1,0 +1,149 @@
+# STRIDE paper instance DIP (owner approval A2, 2026-10-24): a full copy of
+# config.yaml; only data.db_path, the experiments (the validation candidate
+# crypto_dip) and the execution keys differ (tests/test_paper_instances.py checks
+# it).
+# STRIDE configuration — see docs/SPEC.md sections 6, 7, 8 and 11.
+# Values are frozen before the live period. Changing them restarts the experiment.
+
+mode: paper                 # backtest | paper | live
+
+universe: [SPY, EFA, IEF, TLT, GLD, SLV, DBC, UUP, IBIT, ETHA]
+
+groups:
+  equities: [SPY, EFA]
+  bonds: [IEF, TLT]
+  metals: [GLD, SLV]
+  crypto: [IBIT, ETHA]
+
+leveraged_etfs:             # candidates, to be verified at the broker (T21)
+  SPY: {2: SSO, 3: UPRO}
+  TLT: {2: UBT, 3: TMF}
+  GLD: {2: UGL}
+  SLV: {2: AGQ}
+  IBIT: {2: BITX}
+  ETHA: {2: ETHU}
+
+leveraged_etf_filters:      # SPEC section 7; issuer data under SEC rule 6c-11 (T21)
+  max_median_spread: 0.002  # 30-day median bid-ask spread, at most 0.20%
+  min_aum_usd: 50000000
+
+leverage_switch:            # SPEC section 7, step 2b: hysteresis on instrument switching
+  enter_k: 1.25             # switch to a leveraged version only if k >= 1.25
+  exit_k: 0.95              # switch back to the normal ETF only if k <= 0.95
+  min_hold_days: 20         # keep the instrument at least 20 trading days unless the position is closed
+
+strategy:
+  sma_filter: 200
+  entry_breakout: 55
+  exit_breakout: 20
+  atr_period: 20
+  stop_n: 2.0
+  pyramid_step_n: 0.5
+  max_units_per_asset: 4
+
+risk:
+  risk_per_unit: 0.01
+  max_units_group: 6
+  max_units_crypto: 4
+  max_units_total: 12
+  kelly_fraction: 1.0
+  max_leverage: 4.0
+  max_etf_portfolio_leverage: 2.5
+  max_portfolio_vol: 0.60
+  dd_delever_at: 0.20
+  kill_switch_dd: 0.40
+  allow_margin: false              # SPEC 1.4: the real account never borrows
+  margin_min_equity: 2000
+  margin_buffer: 0.25
+  min_history_days_for_kelly: 250
+  reconciliation_tolerance: 0.01   # SPEC 1.3: per symbol, with a dollar floor
+  reconciliation_floor_usd: 1.0
+
+execution:
+  rebalance_band: 0.20
+  min_order_usd: 1.0
+  limit_offset: 0.005
+  max_orders_per_day: 12
+  max_order_pct_equity: 0.60
+  max_resize_cost_pct: 0.005       # skip HOLD top-up buys costing more (added 2026-10-23, owner request)
+  broker: alpaca                   # paper: alpaca | shadow (SimBroker on stored prices) (A2, 2026-10-24)
+  alpaca_key_env: ALPACA_DIP       # paper keys read from .env: ALPACA_* or ALPACA_DIP_* (A2)
+
+cash_flows:
+  initial_deposit_usd: 100         # SPEC 2: starting capital (added 2026-10-23, owner decision)
+  monthly_deposit_usd: 20
+  deposit_day: first_trading_day
+
+costs:
+  spread_bps: 5
+  spread_bps_crypto: 10
+  pricing: tiered                  # fixed | tiered (owner decision 2026-10-23; choose Tiered at IBKR)
+  commission_per_share: 0.005      # IBKR Pro Fixed
+  commission_min_per_order: 1.00
+  commission_max_pct_of_value: 0.01
+  tiered_per_share: 0.0035         # IBKR Pro Tiered, lowest-volume tier
+  tiered_min_per_order: 0.35
+  tiered_max_pct_of_value: 0.01    # to verify on IBKR's schedule
+  tiered_third_party_per_share: 0.003  # exchange, clearing and regulatory fees (conservative)
+  cash_interest_free_usd: 10000    # IBKR pays no interest on the first $10,000 of cash
+  cash_interest_full_rate_nav: 100000  # full rate only from this NAV; pro rata below
+  leveraged_etf_fee: 0.0095        # approximate annual fee
+  margin_spread: 0.015
+
+data:
+  db_path: data/paper_dip.db
+  history_start: "2007-01-01"
+  crypto_history_start: "2015-01-01"
+  quality:                         # section 5 validations; data parameters, not frozen
+    missing_days_lookback: 300     # NYSE trading days (validation 1)
+    max_daily_change: 0.25         # unflagged close-to-close move (validation 2)
+    source_close_tolerance: 0.005  # historical sample, alert only (validation 4)
+    latest_bar_max_diff: 0.02      # latest bar; blocks that symbol for the day (validation 4)
+
+experiments:                       # owner request 2026-10-23; measured in validation section 6
+  enabled: [allocation, drawdown_scaling]  # the validation candidate run in paper
+  extra_universe: [EEM, VNQ, BWX, USO, CPER, DBA, FXY]
+  extra_groups:                    # correlated families share a unit cap
+    equities: [EEM, VNQ]
+    bonds: [BWX]
+    commodities: [DBC, USO, CPER, DBA]
+  search_universe: [QQQ, IWM, XLK, XLV, XLF, XLE, XLI]   # strategy search only (round 2)
+  search_leveraged_etfs:
+    QQQ: {2: QLD, 3: TQQQ}
+  breakout_systems: [[20, 10], [55, 20], [100, 40]]   # Turtle S1, S2 and a slower one
+  dd_scale_start: 0.05             # drawdown_scaling: full leverage up to -5%,
+  dd_scale_full: 0.20              # shrinking linearly to dd_scale_floor at -20%
+  dd_scale_floor: 0.25             # (keeps large drawdowns out; owner goal 2026-10-23)
+  dd_scale_window: 0               # drawdown from the peak of the last N days; 0 = all-time peak
+  rotation:                        # leverage_rotation (Gayed & Bilello 2016; owner goal 30%/yr)
+    underlying: SPY                # hold its leveraged version above its moving average
+    sma: 200
+    band: 0.0                      # hysteresis around the average (0 = none)
+    multiple: 3                    # UPRO; 2 = SSO
+    refuge: IEF                    # below the average: IEF, or cash
+  allocation:                      # pre-registered search: docs/design/strategy_search.md
+    mode: sleeve                   # dual_momentum | relative_strength | vol_managed |
+                                   # momentum_vol | risk_parity | hold | sleeve
+    assets: [IBIT, ETHA]           # dual momentum: US vs international equities
+    refuge: IEF
+    lookback: 252                  # 12 months
+    skip: 0
+    top: 3                         # relative_strength: number of assets held
+    target_vol: 0.20               # vol_managed: annual volatility aimed at
+    max_weight: 3.0                # vol_managed: weight cap
+    vol_window: 21                 # days behind the realized volatility (Moreira and Muir: 21)
+    leverage: 1.0                  # multiplies the weights (leveraged ETFs above 1x)
+    rebalance: daily               # monthly | daily
+    core: [SPY]                    # sleeve (round 5): holds 1 - sleeve of equity
+    core_leverage: 1.0             # sleeve: multiplies the core only (round 6: 1.5)
+    sleeve: 0.20                   # owner request 2026-10-23: 20% in crypto
+    signal: dip                    # hold | trend | breakout | range | dip
+    trend_sma: 200
+    entry: 55                      # breakout 55/20 (Turtle); range uses 20/20
+    exit: 20
+    kelly_fraction: 0.0            # half Kelly; 0 = the full share
+    kelly_window: 504              # two years of returns
+    dip_drop: 0.25                 # dip (owner idea): buy 25% below the 90-day high,
+    dip_window: 90
+    take_profit: 0.30              # target 30% above the buy close (owner: 10k -> 13k),
+                                   # then held until a close below the prior `exit`-day low
