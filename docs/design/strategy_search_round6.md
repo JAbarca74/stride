@@ -57,3 +57,15 @@ To pass, the candidate's out-of-sample results must meet all four of these:
   - maximum drawdown of about 35–40%, with 2022 the risk, when QQQ and crypto fell together.
 - **Full period from 2007:** 2008 at 1.2x QQQ probably trips the kill switch unless the scaling is on. With scaling on, roughly 10–14% a year.
 - **Deflated Sharpe ratio:** probably below 0.95, because each round raises the bar.
+
+## Result (prices to 2026-10-23, commit b506aae): FAIL (deflated Sharpe)
+
+| | OOS CAGR | OOS Sharpe | OOS max drawdown | Deflated Sharpe |
+| --- | --- | --- | --- | --- |
+| SPY | 14.9% | 0.825 | — | — |
+| `qqq_core_dip` | **24.4%** | 1.088 | 37.1% | 0.590 |
+
+- Out of sample it has the highest CAGR of all rounds, 24.4%, with a Sharpe ratio above SPY's. It fails only on the deflated Sharpe ratio: 0.590 against the required 0.95.
+- **Full period from 2007 with the drawdown scaling on: 21.8% a year, Sharpe 1.054, maximum drawdown 34.3%** (10,000 grew to 98,125). Without the scaling, the 2008 crash trips the kill switch.
+- 2017 alone returned +218% out of sample. The robustness check of the same crypto sleeve (`docs/design/dip_robustness.md`) found that its edge depends on the crypto bubble years and on the start date. The same caveat applies here.
+- Each candidate tried raises the bar for the deflated Sharpe ratio. With 15 candidates tried, more rounds on the same data mostly add selection bias.
