@@ -24,8 +24,9 @@ Deposits and interest on idle cash are credited by the backtest engine
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date
+from typing import Any
 
 import pandas as pd
 
@@ -153,6 +154,28 @@ class SimBroker(Broker):
             raise ValueError("interest on cash cannot be negative")
         self._cash += float(amount)
 
+    # State, for a simulation that lives across processes (the shadow broker).
+
+    def snapshot(self) -> dict[str, Any]:
+        """Cash, clock, positions and orders as plain JSON-ready values."""
+        return {
+            "cash": self._cash,
+            "today": self._today.isoformat(),
+            "positions": [asdict(p) for p in self._positions.values()],
+            "orders": [_order_json(o) for o in self._orders.values()],
+            "full_sells": sorted(self._full_sells),
+            "client_ids": dict(self._client_ids),
+        }
+
+    def restore(self, state: Mapping[str, Any]) -> None:
+        """The inverse of `snapshot` (prices and config come from the constructor)."""
+        self._cash = float(state["cash"])
+        self._today = date.fromisoformat(state["today"])
+        self._positions = {p["symbol"]: Position(**p) for p in state["positions"]}
+        self._orders = {o["order_id"]: _order_from_json(o) for o in state["orders"]}
+        self._full_sells = set(state["full_sells"])
+        self._client_ids = dict(state["client_ids"])
+
     # Simulation clock.
 
     @property
@@ -261,3 +284,22 @@ class SimBroker(Broker):
             del self._positions[symbol]
         else:
             self._positions[symbol] = Position(symbol, remaining, held.average_price)
+
+
+_DATE_FIELDS = ("submitted", "filled")
+
+
+def _order_json(order: OrderState) -> dict[str, Any]:
+    data = asdict(order)
+    for name in _DATE_FIELDS:
+        if data[name] is not None:
+            data[name] = data[name].isoformat()
+    return data
+
+
+def _order_from_json(data: Mapping[str, Any]) -> OrderState:
+    values = dict(data)
+    for name in _DATE_FIELDS:
+        if values[name] is not None:
+            values[name] = date.fromisoformat(values[name])
+    return OrderState(**values)

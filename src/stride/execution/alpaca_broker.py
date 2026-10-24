@@ -124,7 +124,8 @@ class AlpacaBroker(Broker):
     ) -> None:
         if config.mode != "paper":
             raise CredentialError(f"AlpacaBroker is paper only; config mode is {config.mode!r}")
-        key, secret = secrets.alpaca_paper_keys()  # raises unless the key is a paper key
+        # Raises unless the instance's key (`execution.alpaca_key_env`) is a paper key.
+        key, secret = secrets.alpaca_paper_keys(config.execution.alpaca_key_env)
         if not key.startswith(ALPACA_PAPER_KEY_PREFIX):  # pragma: no cover - guarded above
             raise CredentialError("not a paper-trading key")
         if client is None:

@@ -26,7 +26,7 @@ Phases, New York time (SPEC 8 schedule):
   then covers every phase, across US daylight-saving changes.
 
 Safety: only `mode: backtest` or `mode: paper`; in paper the broker is
-`AlpacaBroker` (paper keys only) or the shadow broker (T23). Any exception
+`AlpacaBroker` (paper keys only) or the shadow broker (T23, `make_broker`). Any exception
 records `runs.status = error`, sends an alert without secrets, and stops the
 phase: nothing more is sent. Logs go to `data/logs/<instance>.log`.
 
@@ -84,6 +84,7 @@ from stride.data.update import PlanItem, UpdateResult, series_for, update_all
 from stride.execution import orders
 from stride.execution.broker import Broker, Position
 from stride.execution.kill_switch_file import fire, halt, is_active, is_halted
+from stride.execution.shadow_broker import ShadowBroker
 from stride.reporting import daily
 from stride.reporting.alerts import Alert, Alerter, AlertError, AlertKind, alerter_from_env
 from stride.risk import guard
@@ -94,7 +95,7 @@ from stride.risk.kill_switch import (
     kill_switch_decision,
     reconciliation_breaks,
 )
-from stride.settings import Secrets, load_secrets
+from stride.settings import MissingCredentialError, Secrets, load_secrets
 
 NEW_YORK = ZoneInfo("America/New_York")
 PHASES = ("evening", "morning", "midday", "close")
@@ -392,6 +393,9 @@ class DailyJob:
 
         data = self.market()
         closes = closes_on(data.bars, day)
+        # Fills the broker settled since the close phase (the shadow broker fills
+        # at the open only once today's bar is stored), before reading the cash.
+        orders.sync_orders(self.conn, self.broker, closes_on(data.bars, previous_trading_day(day)))
         held = self.positions()
         equity, cash, twr = self._account(day, closes, held)
         positions_usd = {s: p.quantity * closes[s] for s, p in held.items()}
@@ -707,7 +711,8 @@ class DailyJob:
         closes = self._stored_closes(
             previous_trading_day(day), held, extra=list(open_orders["symbol"])
         )
-        orders.sync_orders(self.conn, self.broker, closes, final=True)
+        final = not getattr(self.broker, "settles_at_evening", False)
+        orders.sync_orders(self.conn, self.broker, closes, final=final)
         breaks = self._reconcile(day, held, closes)
         resend = orders.mark_resends(self.conn, previous_trading_day(day))
         if resend:
@@ -895,18 +900,41 @@ def main(argv: Sequence[str] | None = None, deps: Deps | None = None) -> int:
 def default_deps(instance: Instance) -> Deps:
     """The real world: the clock, the paper broker, Tiingo, FRED and Telegram."""
     return Deps(
-        broker=paper_broker,
+        broker=make_broker,
         update_prices=default_update_prices,
         alerter=alerter_from_env(str(instance.root / ".env")),
     )
 
 
-def paper_broker(config: StrideConfig, secrets: Secrets, conn: sqlite3.Connection) -> Broker:
-    """`AlpacaBroker` with paper keys only (it refuses anything else)."""
-    del conn
+def traded_symbols(config: StrideConfig) -> list[str]:
+    """The allocation symbols and their leveraged versions."""
+    symbols = allocation_symbols(config)
+    for symbol in list(symbols):
+        symbols += list(config.leveraged_etfs.get(symbol, {}).values())
+    return symbols
+
+
+def make_broker(config: StrideConfig, secrets: Secrets, conn: sqlite3.Connection) -> Broker:
+    """The paper broker of an instance (T23):
+
+    - `execution.broker: shadow`: the shadow broker, on the instance's database;
+    - `alpaca`: `AlpacaBroker` with the keys named by `execution.alpaca_key_env`,
+      paper keys only. When the DIP keys are simply missing, the DIP instance
+      logs a warning and runs on the shadow broker instead; any other key problem
+      (a live key, B's keys missing) stops the run."""
+    if config.mode != "paper":
+        raise RunError(f"no paper broker in mode {config.mode!r}")
+    if config.execution.broker == "shadow":
+        return ShadowBroker(config, conn, traded_symbols(config))
     from stride.execution.alpaca_broker import AlpacaBroker  # noqa: PLC0415 - optional extra
 
-    return AlpacaBroker(config, secrets)
+    try:
+        return AlpacaBroker(config, secrets)
+    except MissingCredentialError:
+        if config.execution.alpaca_key_env != "ALPACA_DIP":
+            raise
+        logger.warning("ALPACA_DIP keys are not in .env: using the shadow broker")
+        return ShadowBroker(config, conn, traded_symbols(config))
 
 
 if __name__ == "__main__":

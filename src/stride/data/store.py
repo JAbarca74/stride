@@ -280,6 +280,14 @@ CREATE TABLE IF NOT EXISTS positions (
     PRIMARY KEY (date, symbol)
 )
 """
+# The shadow broker's simulated account (T23): one JSON document.
+_SHADOW_SCHEMA = """
+CREATE TABLE IF NOT EXISTS shadow_state (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    state      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
 _ALLOCATIONS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS allocations (
     date   TEXT NOT NULL,
@@ -294,8 +302,9 @@ DONE_RUN_STATUSES = ("ok", "no_data", "skipped")
 
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create every table (prices, cash_flows, equity, risk_state, events, signals,
-    risk_decisions, orders, fills, runs, instruments, allocations, positions) if missing,
-    and add the newer `orders` columns to a table created before them."""
+    risk_decisions, orders, fills, runs, instruments, allocations, positions,
+    shadow_state) if missing, and add the newer `orders` columns to a table
+    created before them."""
     with conn:
         conn.execute(_SCHEMA)
         conn.execute(_CASH_FLOWS_SCHEMA)
@@ -310,6 +319,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(_INSTRUMENTS_SCHEMA)
         conn.execute(_ALLOCATIONS_SCHEMA)
         conn.execute(_POSITIONS_SCHEMA)
+        conn.execute(_SHADOW_SCHEMA)
         have = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
         for name, definition in _ORDER_EXTRA_COLUMNS.items():
             if name not in have:
@@ -794,3 +804,19 @@ def last_positions(
         return None
     rows = conn.execute("SELECT symbol, quantity FROM positions WHERE date = ?", (row[0],))
     return date.fromisoformat(row[0]), {s: float(q) for s, q in rows.fetchall() if s}
+
+
+def load_shadow_state(conn: sqlite3.Connection) -> str | None:
+    """The shadow broker's stored state (JSON), or None before its first day."""
+    row = conn.execute("SELECT state FROM shadow_state WHERE id = 1").fetchone()
+    return None if row is None else str(row[0])
+
+
+def save_shadow_state(conn: sqlite3.Connection, state: str) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO shadow_state (id, state, updated_at) VALUES (1, ?, ?)"
+            " ON CONFLICT (id) DO UPDATE SET state = excluded.state,"
+            " updated_at = excluded.updated_at",
+            (state, _now()),
+        )

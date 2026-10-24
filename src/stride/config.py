@@ -114,6 +114,11 @@ class ExecutionConfig(_Section):
     # Cost-aware resizing (owner request, 2026-10-23): a HOLD top-up buy whose
     # commission plus spread is above this fraction of the order is skipped.
     max_resize_cost_pct: Fraction
+    # Paper instances (owner approval A2, 2026-10-24): the broker a paper run
+    # uses ("alpaca", or "shadow": a SimBroker on the stored prices) and which
+    # Alpaca paper keys in `.env` it reads (ALPACA_* or ALPACA_DIP_*).
+    broker: Literal["alpaca", "shadow"] = "alpaca"
+    alpaca_key_env: Literal["ALPACA", "ALPACA_DIP"] = "ALPACA"
 
 
 class CashFlowsConfig(_Section):
