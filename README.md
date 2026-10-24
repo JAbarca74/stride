@@ -151,6 +151,31 @@ python -m stride.backtest.validation                       # SPEC 9 protocol -> 
 </details>
 
 <details>
+<summary><b>Daily job</b></summary>
+
+<br>
+
+`python -m stride.run_daily` runs one paper instance (`mode: paper` only; it refuses `live`). Each instance has its own config, database, log file (`data/logs/<name>.log`) and `KILL_SWITCH`/`HALT` files next to its config. The phases follow SPEC section 8, New York time:
+
+| Phase | Window (ET) | What it does |
+| :-- | :-- | :-- |
+| `evening` | 18:00-20:00 | Download prices (retried on the next tick while today's bar is missing; `no_data` and an alert after 20:00), validate, read the account, detect deposits, advance the time-weighted index, kill switch, targets, plan and guard the orders, Spanish daily report by Telegram |
+| `morning` | 09:15-09:30 | Send last evening's approved orders (market, day); with the kill switch active, cancel everything and sell what the broker reports |
+| `midday` | 12:00-13:00 | Order statuses and fills |
+| `close` | 16:05-17:00 | Cancel what is pending, record fills, reconcile positions, mark unfilled exits for a market resend |
+| `auto` | | The phase due now, once per day and phase (`runs` table); nothing outside the windows or on NYSE holidays |
+
+```bash
+python -m stride.run_daily --config config.paper_b.yaml --phase auto     # what a scheduler runs every 15 min
+python -m stride.run_daily --config config.paper_b.yaml --phase evening  # one phase by hand
+python -m stride.run_daily --config config.paper_b.yaml --mode backtest  # SimBroker on the stored prices
+```
+
+A scheduler (cron, or the Windows Task Scheduler) only needs **one** task every 15 minutes running `--phase auto`: the job finds the phase itself in New York time, so daylight-saving changes need no edit. Any error is recorded in `runs` with status `error`, alerted without secrets, and stops the phase; the next tick tries again.
+
+</details>
+
+<details>
 <summary><b>Development checks</b></summary>
 
 <br>

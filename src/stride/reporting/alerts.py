@@ -33,6 +33,8 @@ AlertKind = Literal[
     "RECONCILIATION",
     "DRAWDOWN",
     "KILL_SWITCH",
+    "ORDER_PROBLEM",
+    "CASH_FLOW",
     "TEST",
 ]
 TELEGRAM_URL = "https://api.telegram.org/bot{token}/sendMessage"

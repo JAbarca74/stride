@@ -271,6 +271,15 @@ CREATE TABLE IF NOT EXISTS instruments (
     PRIMARY KEY (date, asset)
 )
 """
+# The positions the system expects after each close (reconciliation, SPEC 7).
+_POSITIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS positions (
+    date     TEXT NOT NULL,
+    symbol   TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    PRIMARY KEY (date, symbol)
+)
+"""
 _ALLOCATIONS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS allocations (
     date   TEXT NOT NULL,
@@ -285,7 +294,7 @@ DONE_RUN_STATUSES = ("ok", "no_data", "skipped")
 
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create every table (prices, cash_flows, equity, risk_state, events, signals,
-    risk_decisions, orders, fills, runs, instruments, allocations) if missing,
+    risk_decisions, orders, fills, runs, instruments, allocations, positions) if missing,
     and add the newer `orders` columns to a table created before them."""
     with conn:
         conn.execute(_SCHEMA)
@@ -300,6 +309,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute(_RUNS_SCHEMA)
         conn.execute(_INSTRUMENTS_SCHEMA)
         conn.execute(_ALLOCATIONS_SCHEMA)
+        conn.execute(_POSITIONS_SCHEMA)
         have = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
         for name, definition in _ORDER_EXTRA_COLUMNS.items():
             if name not in have:
@@ -467,6 +477,7 @@ def read_events(conn: sqlite3.Connection, kind: str | None = None) -> list[tuple
 
 TWR_INDEX = "twr_index"
 TWR_PEAK = "twr_peak"
+TWR_DATE = "twr_date"  # ordinal of the day the stored index was last advanced to
 
 
 def load_twr(conn: sqlite3.Connection) -> tuple[float, float]:
@@ -740,3 +751,46 @@ def last_allocation(
         return None
     rows = conn.execute("SELECT asset, weight FROM allocations WHERE date = ?", (row[0],))
     return pd.Timestamp(row[0]), {a: float(w) for a, w in rows.fetchall() if a}
+
+
+def twr_date(conn: sqlite3.Connection) -> date | None:
+    """The day the stored index was last advanced to (`save_twr_date`), or None."""
+    row = conn.execute("SELECT value FROM risk_state WHERE key = ?", (TWR_DATE,)).fetchone()
+    return None if row is None else date.fromordinal(int(row[0]))
+
+
+def save_twr_date(conn: sqlite3.Connection, day: date) -> None:
+    """Record that the stored index includes `day`, so a rerun never advances it twice."""
+    with conn:
+        conn.execute(
+            "INSERT INTO risk_state (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+            " updated_at = excluded.updated_at",
+            (TWR_DATE, float(day.toordinal()), _now()),
+        )
+
+
+def save_positions(conn: sqlite3.Connection, day: date, quantities: dict[str, float]) -> None:
+    """The positions the system expects after the close of `day`; replaces that day."""
+    with conn:
+        conn.execute("DELETE FROM positions WHERE date = ?", (day.isoformat(),))
+        rows = [(day.isoformat(), s, float(q)) for s, q in sorted(quantities.items())]
+        conn.executemany(
+            "INSERT INTO positions (date, symbol, quantity) VALUES (?, ?, ?)",
+            rows or [(day.isoformat(), "", 0.0)],  # a marker row keeps an empty day
+        )
+
+
+def last_positions(
+    conn: sqlite3.Connection, before: date | None = None
+) -> tuple[date, dict[str, float]] | None:
+    """The latest expected positions (date and quantities), optionally before `before`."""
+    query, params = "SELECT MAX(date) FROM positions", []
+    if before is not None:
+        query += " WHERE date < ?"
+        params.append(before.isoformat())
+    row = conn.execute(query, params).fetchone()
+    if row[0] is None:
+        return None
+    rows = conn.execute("SELECT symbol, quantity FROM positions WHERE date = ?", (row[0],))
+    return date.fromisoformat(row[0]), {s: float(q) for s, q in rows.fetchall() if s}

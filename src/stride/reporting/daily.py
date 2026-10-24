@@ -317,9 +317,10 @@ def render_daily(summary: DailySummary) -> str:
     )
 
 
-def caption(summary: DailySummary) -> str:
-    """One line for the Telegram message that carries the file."""
-    parts = [f"STRIDE [{summary.mode}] {summary.day}: {summary.status}"]
+def caption(summary: DailySummary, title: str = "STRIDE") -> str:
+    """One line for the Telegram message that carries the file; `title` names the
+    instance ("STRIDE B", "STRIDE DIP")."""
+    parts = [f"{title} [{summary.mode}] {summary.day}: {summary.status}"]
     if summary.equity is not None:
         parts.append(f"equity {_usd(summary.equity)} ({_pct(summary.day_return)})")
     parts.append(f"{len(summary.done)} hechas, {len(summary.not_done)} no hechas")
