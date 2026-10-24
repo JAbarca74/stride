@@ -27,6 +27,10 @@
 </p>
 
 <p align="center">
+  <b>English</b> • <a href="README.es.md">Español</a>
+</p>
+
+<p align="center">
   <a href="#why-stride">Why STRIDE?</a> •
   <a href="#algorithmic-pillars">Algorithmic Core</a> •
   <a href="#how-a-trading-day-flows">Architecture</a> •
@@ -260,13 +264,16 @@ Copy `.env.example` to `.env` and add a free data API key (Tiingo) and paper key
 cp .env.example .env
 
 # Download or incrementally update all 10 ETF series
-python -m stride.data.update prices
+stride-data prices            # or: python -m stride.data.update prices
 
 # Run SPEC section 5 integrity checks (anomalies, gaps, zero-volume)
-python -m stride.data.update validate
+stride-data validate          # or: python -m stride.data.update validate
 
 # Cross-check free Alpaca closes against Tiingo
-python -m stride.data.update check-alpaca
+stride-data check-alpaca      # or: python -m stride.data.update check-alpaca
+
+# Calibrate synthetic vs real leveraged ETFs (SPEC §7 / T21)
+stride-data t21               # or: python -m stride.data.update t21
 ```
 
 ---
@@ -361,6 +368,7 @@ stride/
 ├── config.paper_dip.yaml     # Paper Instance DIP configuration (SPY core + dip)
 ├── docs/                     # Specifications, architecture, and SVG assets
 │   ├── SPEC.md               # Technical specification (single source of truth)
+│   ├── CONFIG.md             # Complete parameter reference for config.yaml
 │   └── assets/               # Vector diagrams, animated SVGs, and previews
 ├── src/stride/
 │   ├── data/                 # Market data ingestion, validation, SQLite storage

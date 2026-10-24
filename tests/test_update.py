@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import numpy as np
@@ -261,3 +262,9 @@ def test_cli_without_keys_fails_cleanly(
     assert code == 2
     assert "DATA_API_KEY is not set" in capsys.readouterr().out
     assert (tmp_path / "data" / "stride.db").exists()
+
+
+def test_stride_data_entrypoint_resolves_to_main() -> None:
+    eps = [ep for ep in entry_points(group="console_scripts") if ep.name == "stride-data"]
+    assert len(eps) == 1
+    assert eps[0].load() == main

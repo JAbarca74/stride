@@ -14,9 +14,19 @@ Thanks for your interest. STRIDE is a personal research project that trades a sm
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev,alpaca]"
+pre-commit install            # install git hooks for ruff and gitleaks
 pytest
 ruff check . && ruff format --check .
 mypy src tests
+```
+
+### Pre-commit hooks
+
+To catch linting issues, formatting mismatches and secret leaks automatically before each commit, run:
+
+```bash
+pre-commit install
+pre-commit run --all-files
 ```
 
 The tests need no network and no keys. Do not add tests that call real APIs.
