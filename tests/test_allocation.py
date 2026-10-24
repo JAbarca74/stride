@@ -236,6 +236,8 @@ def test_sleeve_keeps_the_core_and_sizes_crypto_only_while_on() -> None:
     assert halved["SPY"] == pytest.approx(0.8)
     assert 0 < halved["IBIT"] <= 0.1
     assert sum(sleeve(closes, 0.0, **kw).values()) <= 1.0
+    levered = sleeve(closes, 0.0, **(kw | {"core_leverage": 1.5}))
+    assert levered == pytest.approx({"SPY": 1.2, "IBIT": 0.1})  # only the core is levered
 
 
 def test_target_weights_dispatch_on_the_config_mode() -> None:

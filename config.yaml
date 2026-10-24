@@ -129,6 +129,7 @@ experiments:                       # owner request 2026-10-23; measured in valid
     leverage: 1.0                  # multiplies the weights (leveraged ETFs above 1x)
     rebalance: monthly             # monthly | daily
     core: [SPY]                    # sleeve (round 5): holds 1 - sleeve of equity
+    core_leverage: 1.0             # sleeve: multiplies the core only (round 6: 1.5)
     sleeve: 0.20                   # owner request 2026-10-23: 20% in crypto
     signal: trend                  # hold | trend | breakout | range | dip
     trend_sma: 200

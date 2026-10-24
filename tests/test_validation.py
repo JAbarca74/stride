@@ -427,6 +427,16 @@ def test_round_five_is_a_twenty_percent_crypto_sleeve_without_leverage() -> None
     assert dip.kelly_fraction == 0.0
 
 
+def test_round_six_is_a_qqq_core_at_one_and_a_half_with_the_dip_sleeve() -> None:
+    assert v.candidate_levels("qqq_core_dip", (1.5, 2.0)) == (1.0,)
+    cfg = v.candidate_config(CONFIG, "qqq_core_dip")
+    alloc = cfg.experiments.allocation
+    assert alloc.core == ["QQQ"] and alloc.core_leverage == 1.5
+    assert alloc.signal == "dip" and alloc.sleeve == 0.20
+    assert cfg.experiments.dd_scale_window == 252
+    assert "QQQ" in cfg.universe and "QQQ" in cfg.leveraged_etfs
+
+
 def test_round_three_holds_spy_at_one_and_a_half_only() -> None:
     assert v.candidate_levels("spy_levered", (1.0,)) == (1.5,)
     cfg = v.candidate_config(CONFIG, "spy_levered")

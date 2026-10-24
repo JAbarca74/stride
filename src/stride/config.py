@@ -215,6 +215,7 @@ class AllocationConfig(_Section):
     # 1 - `sleeve` of equity; `assets` share `sleeve`, each in only while its
     # `signal` is on, sized by `kelly_fraction` of Kelly (0 = the full share).
     core: list[Ticker]
+    core_leverage: Annotated[float, Field(gt=0, le=3)]  # multiplies the core weights only
     sleeve: Fraction
     signal: Literal["hold", "trend", "breakout", "range", "dip"]
     trend_sma: Lookback  # trend: in while the close is above this average
