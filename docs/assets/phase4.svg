@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" width="960" height="220" role="img" aria-labelledby="t d">
+  <title id="t">Phase 4 40-Trading-Day Verdict Evaluator</title>
+  <desc id="d">Automatic 40-day evaluation comparing STRIDE against SPY on return, Sharpe ratio, and operational cleanliness.</desc>
+  <style>
+    :root {
+      --bg:#ffffff; --card:#f6f8fa; --border:#d0d7de; --fg:#1f2328; --muted:#59636e;
+      --stride:#0969da; --spy:#8c959f; --ok:#1a7f37; --warn:#9a6700; --accent:#8250df;
+      --grid:#eaeef2; --glow:rgba(9, 105, 218, 0.2);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#9198a1;
+        --stride:#4493f8; --spy:#6e7681; --ok:#3fb950; --warn:#d29922; --accent:#ab7df8;
+        --grid:#21262d; --glow:rgba(68, 147, 248, 0.25);
+      }
+    }
+    .panel { fill:var(--card); stroke:var(--border); stroke-width:1.5; }
+    .title { font:700 15px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--fg); }
+    .subtitle { font:500 12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--muted); }
+    .mono { font:600 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--muted); }
+    .val-stride { font:700 13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--stride); }
+    .val-spy { font:600 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:var(--spy); }
+    .val-ok { font:700 12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:var(--ok); }
+    .grid { stroke:var(--grid); stroke-width:1; stroke-dasharray:2 2; }
+    
+    .stride-line {
+      fill:none; stroke:var(--stride); stroke-width:3; stroke-linecap:round; stroke-linejoin:round;
+      stroke-dasharray:600; stroke-dashoffset:600; animation:drawStride 4s ease-in-out infinite alternate;
+    }
+    .spy-line {
+      fill:none; stroke:var(--spy); stroke-width:2; stroke-linecap:round; stroke-linejoin:round;
+      stroke-dasharray:600; stroke-dashoffset:600; animation:drawSpy 4s ease-in-out infinite alternate;
+      stroke-dasharray:4 3; opacity:0.85;
+    }
+    @keyframes drawStride { 0% { stroke-dashoffset:600; } 100% { stroke-dashoffset:0; } }
+    @keyframes drawSpy { 0% { stroke-dashoffset:600; } 100% { stroke-dashoffset:0; } }
+
+    .scanner {
+      animation: scan 4s ease-in-out infinite alternate;
+    }
+    @keyframes scan {
+      0% { transform: translateX(0px); }
+      100% { transform: translateX(250px); }
+    }
+
+    .ping {
+      transform-box:fill-box; transform-origin:center;
+      animation: ripple 2s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+    }
+    @keyframes ripple {
+      0% { opacity:0.9; transform:scale(1); }
+      100% { opacity:0; transform:scale(2.8); }
+    }
+
+    .badge-pass {
+      fill: var(--ok); opacity:0.12;
+    }
+    .badge-border {
+      fill: none; stroke: var(--ok); stroke-width: 1.5;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .stride-line, .spy-line, .scanner, .ping { animation:none; stroke-dashoffset:0; }
+      .ping { opacity:0; }
+    }
+  </style>
+
+  <!-- Container Box -->
+  <rect class="panel" x="12" y="10" width="936" height="200" rx="14"/>
+
+  <!-- Left: 40-Day Progress Tracker -->
+  <g transform="translate(36 34)">
+    <text class="title" x="0" y="0">Phase 4 · Paper Trial</text>
+    <text class="subtitle" x="0" y="20">SPEC §12 exit duration: 40 consecutive trading days</text>
+    
+    <!-- Timeline Bar -->
+    <rect x="0" y="45" width="250" height="12" rx="6" fill="var(--border)"/>
+    <rect x="0" y="45" width="250" height="12" rx="6" fill="var(--stride)" opacity="0.25"/>
+    <rect class="scanner" x="0" y="43" width="16" height="16" rx="8" fill="var(--stride)"/>
+
+    <g transform="translate(0 80)">
+      <text class="mono" x="0" y="0">Day 1</text>
+      <text class="mono" x="125" y="0" text-anchor="middle">Day 20 (Halve)</text>
+      <text class="mono" x="250" y="0" text-anchor="end">Day 40 (Verdict)</text>
+    </g>
+
+    <g transform="translate(0 115)">
+      <rect x="0" y="0" width="120" height="28" rx="6" fill="var(--border)" opacity="0.3"/>
+      <text class="mono" x="12" y="18">STRIDE B</text>
+      <text class="val-stride" x="108" y="18" text-anchor="end">Active</text>
+      
+      <rect x="130" y="0" width="120" height="28" rx="6" fill="var(--border)" opacity="0.3"/>
+      <text class="mono" x="142" y="18">STRIDE DIP</text>
+      <text class="val-stride" x="238" y="18" text-anchor="end">Active</text>
+    </g>
+  </g>
+
+  <!-- Divider 1 -->
+  <line x1="325" y1="25" x2="325" y2="195" stroke="var(--border)" stroke-width="1"/>
+
+  <!-- Center: Race vs SPY Benchmark Chart -->
+  <g transform="translate(355 34)">
+    <text class="title" x="0" y="0">Outperformance Benchmark</text>
+    <text class="subtitle" x="0" y="20">TWR &amp; Sharpe Ratio vs S&amp;P 500 (SPY)</text>
+
+    <!-- Chart Grid -->
+    <g transform="translate(0 40)">
+      <rect x="0" y="0" width="290" height="95" rx="8" fill="var(--bg)" stroke="var(--border)"/>
+      <line class="grid" x1="0" y1="24" x2="290" y2="24"/>
+      <line class="grid" x1="0" y1="48" x2="290" y2="48"/>
+      <line class="grid" x1="0" y1="72" x2="290" y2="72"/>
+      
+      <!-- SPY Line (Muted, Volatile) -->
+      <path class="spy-line" d="M10,80 Q45,65 80,72 T150,55 T220,60 T280,48"/>
+      
+      <!-- STRIDE Line (Primary, Steady Climb) -->
+      <path class="stride-line" d="M10,85 Q45,70 80,58 T150,42 T220,26 T280,18"/>
+      <circle cx="280" cy="18" r="4.5" fill="var(--stride)"/>
+      <circle class="ping" cx="280" cy="18" r="4.5" fill="none" stroke="var(--stride)" stroke-width="2"/>
+    </g>
+
+    <!-- Legend & Stats -->
+    <g transform="translate(0 152)">
+      <line x1="4" y1="-3" x2="20" y2="-3" stroke="var(--stride)" stroke-width="3"/>
+      <text class="val-stride" x="26" y="0">STRIDE TWR</text>
+      <line x1="150" y1="-3" x2="166" y2="-3" stroke="var(--spy)" stroke-width="2" stroke-dasharray="4 2"/>
+      <text class="val-spy" x="172" y="0">SPY Benchmark</text>
+    </g>
+  </g>
+
+  <!-- Divider 2 -->
+  <line x1="680" y1="25" x2="680" y2="195" stroke="var(--border)" stroke-width="1"/>
+
+  <!-- Right: Automatic Verdict Evaluator Gate -->
+  <g transform="translate(710 34)">
+    <text class="title" x="0" y="0">Automatic Final Verdict</text>
+    <text class="subtitle" x="0" y="20">Runs automatically at Day 40 evening</text>
+
+    <!-- Verdict Card -->
+    <g transform="translate(0 38)">
+      <rect class="badge-pass" x="0" y="0" width="215" height="66" rx="8"/>
+      <rect class="badge-border" x="0" y="0" width="215" height="66" rx="8"/>
+      <circle cx="22" cy="33" r="10" fill="var(--ok)"/>
+      <path d="M17,33 L21,37 L28,29" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+      <text class="val-ok" x="40" y="27">PASSED CRITERIA</text>
+      <text class="subtitle" x="40" y="43">TWR &gt; SPY · Sharpe ≥ SPY</text>
+      <text class="mono" x="40" y="56" style="font-size:10px;">Clean Ops (DD &lt; 40%)</text>
+    </g>
+
+    <!-- Alert Mechanism -->
+    <g transform="translate(0 120)">
+      <rect x="0" y="0" width="215" height="32" rx="6" fill="var(--border)" opacity="0.3"/>
+      <!-- Telegram Icon -->
+      <path d="M12,16 L22,12 L19,22 L15,18 Z" fill="var(--stride)"/>
+      <text class="mono" x="30" y="20">Telegram: PHASE4_VERDICT</text>
+    </g>
+  </g>
+</svg>

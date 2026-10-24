@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&amp;logoColor=black" alt="Ruff"></a>
   <img src="https://img.shields.io/badge/types-mypy%20strict-2A6DB2" alt="mypy strict">
-  <img src="https://img.shields.io/badge/tests-pytest%20%2B%20hypothesis-0A9EDC?logo=pytest&amp;logoColor=white" alt="pytest and Hypothesis">
+  <img src="https://img.shields.io/badge/tests-791%20passed-0A9EDC?logo=pytest&amp;logoColor=white" alt="791 tests passing">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
   <a href="https://github.com/JAbarca74/stride/stargazers"><img src="https://img.shields.io/github/stars/JAbarca74/stride?style=flat&amp;logo=github" alt="GitHub stars"></a>
 </p>
@@ -29,6 +29,7 @@
   <a href="#how-a-trading-day-flows">How it works</a> ·
   <a href="#risk-with-brakes">Risk</a> ·
   <a href="#quick-start">Quick start</a> ·
+  <a href="#phase-4-paper-trading--verdict">Phase 4 trial</a> ·
   <a href="#roadmap">Roadmap</a> ·
   <a href="#contributing">Contributing</a>
 </p>
@@ -282,17 +283,57 @@ mypy src tests
 
 <img src="docs/assets/divider.svg" alt="" width="100%">
 
+## Phase 4: Paper Trading &amp; Verdict
+
+<p align="center">
+  <img src="docs/assets/phase4.svg" alt="Phase 4 40-day evaluation comparing STRIDE against SPY on return, Sharpe ratio, and operational cleanliness." width="100%">
+</p>
+
+STRIDE is actively running **Phase 4 Paper Trading** across two forward-testing instances (SPEC §12):
+- **STRIDE B** (`config.paper_b.yaml`): QQQ core at 1.5x plus the crypto dip sleeve.
+- **STRIDE DIP** (`config.paper_dip.yaml`): SPY core plus the same crypto dip sleeve.
+
+### Automatic 40-Trading-Day Final Verdict Evaluator
+
+Once an instance reaches **40 stored trading days** in its `equity` table, `Runner.evening()` automatically runs the final Phase 4 verdict evaluator comparing the strategy against the $SPY$ benchmark:
+
+1. **Benchmark Comparison**:
+   - **TWR vs SPY**: The strategy's cumulative time-weighted return over the 40-day window must exceed the buy-and-hold return on $SPY$.
+   - **Sharpe Ratio**: The strategy's annualized Sharpe ratio must meet or exceed $SPY$'s Sharpe ratio.
+2. **Operational Cleanliness**:
+   - Zero occurrences of `KILL_SWITCH`, `HALT`, or `RECONCILIATION_BREAK` events over the 40-day window.
+   - Maximum peak-to-trough drawdown strictly below **40%**.
+3. **Automated Alerting**:
+   - When the 40th trading day completes, a `PHASE4_VERDICT` event is stored in the database and sent as a high-priority Telegram alert once.
+   - Pass verdict: `"EN HORABUENA YA ESTA LISTO Y EL RESULTADO ES POSITIVO"` with full TWR, Sharpe, and drawdown metrics.
+   - Fail verdict: `"Buena prueba amigo, pero el syp500 es mejor"` with detailed comparative metrics.
+
+### Checking Trial Status Anytime
+
+You can inspect current progress or trigger the evaluator at any time using the `--verdict` CLI flag:
+
+```bash
+# Check progress or trigger verdict on Paper Instance B
+python -m stride.reporting.daily --config config.paper_b.yaml --verdict
+
+# Check progress or trigger verdict on Paper Instance DIP
+python -m stride.reporting.daily --config config.paper_dip.yaml --verdict
+```
+
+<img src="docs/assets/divider.svg" alt="" width="100%">
+
 ## Roadmap
 
 No phase starts until the previous one meets its exit criterion. Real money enters only in Phase 5.
 
 ```mermaid
 flowchart LR
-    P1["1 · Foundations<br/>data and validation"]:::now --> P2["2 · Strategy and risk<br/>pure functions"]
-    P2 --> P3["3 · Backtest<br/>costs and metrics"]
-    P3 --> P4["4 · Paper trading<br/>2 months minimum"]
+    P1["1 · Foundations<br/>data &amp; validation"]:::done --> P2["2 · Strategy &amp; risk<br/>pure functions"]:::done
+    P2 --> P3["3 · Backtest<br/>costs &amp; metrics"]:::done
+    P3 --> P4["4 · Paper trading<br/>40-day live trial"]:::now
     P4 --> P5["5 · Live<br/>12 months, $100 + $20/mo"]
     P5 -.-> P6["6 · C++ core<br/>optional"]
+    classDef done fill:#1a7f37,stroke:#1a7f37,color:#ffffff
     classDef now fill:#1f6feb,stroke:#1f6feb,color:#ffffff
 ```
 
@@ -301,13 +342,13 @@ flowchart LR
 
 <br>
 
-| Phase | Exit criterion |
-| :-- | :-- |
-| 1. Foundations | Data for the 10 assets loaded (from 2007; crypto from 2015) with every validation green |
-| 2. Strategy and risk | Test coverage ≥ 90% in `strategy/` and `risk/`, anti-look-ahead test passing |
-| 3. Backtest | Out-of-sample Sharpe above SPY's and below 1.5, stable sensitivity, documented results |
-| 4. Paper trading | 40 consecutive trading days without failures, clean reconciliation, orders identical to the backtest |
-| 5. Live | Hypotheses H1, H2 and H3 evaluated in the final report |
+| Phase | Exit criterion | Status |
+| :-- | :-- | :-- |
+| 1. Foundations | Data for the 10 assets loaded (from 2007; crypto from 2015) with every validation green | **Completed** |
+| 2. Strategy and risk | Test coverage ≥ 90% in `strategy/` and `risk/`, anti-look-ahead test passing | **Completed** |
+| 3. Backtest | Out-of-sample Sharpe above SPY's and below 1.5, stable sensitivity, documented results | **Completed** |
+| 4. Paper trading | 40 consecutive trading days without failures, clean reconciliation, outperforming SPY | **In progress** (evaluator active) |
+| 5. Live | Hypotheses H1, H2 and H3 evaluated in the final report | Planned |
 
 </details>
 
