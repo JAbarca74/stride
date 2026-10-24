@@ -176,6 +176,70 @@ A scheduler (cron, or the Windows Task Scheduler) only needs **one** task every 
 </details>
 
 <details>
+<summary><b>Paper trading on Windows</b></summary>
+
+<br>
+
+Two paper instances run side by side: **B** (`config.paper_b.yaml`, QQQ core at 1.5x plus the crypto dip sleeve) and **DIP** (`config.paper_dip.yaml`, SPY core plus the same sleeve). No real money is involved: both use `mode: paper` and Alpaca **paper** keys only. One scheduled task runs them every 15 minutes.
+
+The PC must stay **powered on and online** during the New York trading day and evening. The task wakes the PC from sleep, but only if wake timers are allowed (Control Panel → Power Options → Change plan settings → Change advanced power settings → Sleep → Allow wake timers → Enable). A missed run is made up as soon as the PC is back, within the phase window; outside it, that phase is skipped for the day and the next one runs normally.
+
+1. **Reset the Alpaca paper account(s) to a chosen balance.** In the Alpaca dashboard switch to the paper account, open the account menu and choose *Reset account*. Set the balance you want to test with. DIP can use a second paper account. Without one, DIP runs on the *shadow broker*, a simulation on the stored prices that starts from `cash_flows.initial_deposit_usd`.
+2. **Put the keys in `.env`** (copy `.env.example`; never commit `.env`, never use live keys). Names only:
+   `DATA_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, optionally `ALPACA_DIP_API_KEY` and `ALPACA_DIP_SECRET_KEY`, and `ALERT_TELEGRAM_TOKEN`, `ALERT_TELEGRAM_CHAT_ID`.
+   Check that git ignores it: `git check-ignore .env` must print `.env`.
+3. **Install the scheduled task** from PowerShell opened with *Run as administrator*:
+
+   ```powershell
+   cd C:\path\to\stride
+   powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1
+   Get-ScheduledTask -TaskName "STRIDE paper"     # State: Ready
+   ```
+
+   The task "STRIDE paper" runs `scripts\run_stride.ps1` every 15 minutes, every day. Its settings:
+   - it runs whether you are logged on or not; Windows stores no password, and none is written to the repository;
+   - it wakes the PC and starts as soon as possible after a missed start;
+   - it stops after 30 minutes and never starts a second copy while one is running.
+
+   After the paper runs, `scripts\backup_db.ps1` copies `data\*.db` once a day to `%USERPROFILE%\Documents\stride_backups\<date>\` and keeps 30 days. Use `-Destination` for another folder.
+4. **Check the logs** in `data\logs\`: `scheduler.log` (every tick), `b.log` and `dip.log` (one per instance). Each phase also has a row in the `runs` table of `data\paper_b.db` / `data\paper_dip.db`, and every evening Telegram receives one report per instance ("STRIDE B", "STRIDE DIP").
+
+   ```powershell
+   Get-Content data\logs\scheduler.log -Tail 30
+   Get-ScheduledTaskInfo -TaskName "STRIDE paper"   # LastRunTime, LastTaskResult (0 = ok)
+   ```
+5. **Pause or stop the job:**
+
+   ```powershell
+   Disable-ScheduledTask -TaskName "STRIDE paper"                     # pause
+   Enable-ScheduledTask -TaskName "STRIDE paper"                      # resume
+   Unregister-ScheduledTask -TaskName "STRIDE paper" -Confirm:$false  # remove
+   ```
+6. **Fire the kill switch by hand.** Each instance has its own file next to the configs: `KILL_SWITCH_B`, `KILL_SWITCH_DIP`. A plain `KILL_SWITCH` stops both. While the file exists, the next morning cancels every order and sells every position the broker reports, and nothing is bought again.
+
+   ```powershell
+   Set-Content KILL_SWITCH_B "fired by hand"        # B only; use KILL_SWITCH for both
+   python -m stride.execution.kill_switch_file status --config config.paper_b.yaml --file KILL_SWITCH_B --halt-file HALT_B
+   # To trade again: review the account, delete the file by hand, then record the reset:
+   Remove-Item KILL_SWITCH_B
+   python -m stride.execution.kill_switch_file reset --config config.paper_b.yaml --file KILL_SWITCH_B --by "Your Name" --reason "why it is safe"
+   ```
+
+   A reconciliation halt works the same way with `HALT_B` / `HALT_DIP` and `resolve-halt`.
+
+**Costa Rica and New York time.** Costa Rica is UTC-6 all year. New York is UTC-4 from the second Sunday of March to the first Sunday of November (EDT) and UTC-5 the rest of the year (EST). The job reads New York time itself, so nothing changes on your side.
+
+| Phase | New York | Costa Rica, March to November (EDT) | Costa Rica, November to March (EST) |
+| :-- | :-- | :-- | :-- |
+| morning: send orders | 09:15-09:30 | 07:15-07:30 | 08:15-08:30 |
+| market open | 09:30 | 07:30 | 08:30 |
+| midday: fills | 12:00-13:00 | 10:00-11:00 | 11:00-12:00 |
+| close: reconcile | 16:05-17:00 | 14:05-15:00 | 15:05-16:00 |
+| evening: data, plan, report | 18:00-20:00 | 16:00-18:00 | 17:00-19:00 |
+
+</details>
+
+<details>
 <summary><b>Development checks</b></summary>
 
 <br>
