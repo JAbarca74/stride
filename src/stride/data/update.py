@@ -261,7 +261,7 @@ def _print(line: str) -> None:
 
 
 def main(argv: Sequence[str] | None = None, now: Callable[[], datetime] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m stride.data.update")
+    parser = argparse.ArgumentParser(prog="stride-data")
     parser.add_argument("command", choices=["prices", "validate", "check-alpaca", "t21"])
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--env-file", default=".env")
