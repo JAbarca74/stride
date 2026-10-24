@@ -57,3 +57,22 @@ To pass, a candidate must meet all of these over the out-of-sample years:
 - At 2x without scaling, the kill switch is likely to fire in 2008, 2020 or 2022.
 
 If no candidate passes, the next step is the owner's choice: a round 5 with the kill switch at −50%, which needs the owner's explicit OK for that value.
+
+## Result (prices to 2026-10-23, commit ae2e4bb)
+
+**Owner's target met: `qqq_levered_12m` returned 21.0% a year out of sample (2012–2026), above the owner's goal of about 20%.** The owner records round 4 as a success on that target.
+
+| Strategy | OOS CAGR | OOS Sharpe | OOS max drawdown | Deflated Sharpe | Pre-registered pass |
+| --- | --- | --- | --- | --- | --- |
+| SPY | 14.9% | 0.825 | — | — | — |
+| `spy_levered_12m` | 15.8% | 0.765 | 32.8% | 0.339 | FAIL |
+| `qqq_levered_12m` | **21.0%** | 0.823 | 31.7% | 0.395 | FAIL |
+
+What the result does and does not show:
+
+- Measuring the scaling drawdown from the 12-month peak worked. Without the 12-month window (round 3), SPY at 1.5x returned 14.5%; with it, `spy_levered_12m` returned 15.8%, above SPY's 14.9%. QQQ returned 21.0% with a Sharpe ratio equal to SPY's (0.823 against 0.825).
+- **The pre-registered criteria were not met.** The Sharpe ratio is not above SPY's, and the deflated Sharpe ratio is 0.395 against the required 0.95. The QQQ hindsight warning above still applies.
+- **The out-of-sample figure restarts every year.** Each window starts from a running account, so a kill switch fired in an earlier year never carries over. The full-period runs from 2007, which include 2008, are the continuous-account view:
+  - QQQ at 1.5x with the 12-month scaling: 9.7% a year, with a 39.7% maximum drawdown, just short of the −40% kill switch;
+  - every run without scaling, and QQQ at 2x, tripped the kill switch.
+- Next, kept open by the owner: round 5 (a 20% crypto sleeve, `docs/design/strategy_search_round5.md`), then possibly moving the kill switch to −50%. The −50% move needs the owner's explicit OK.
