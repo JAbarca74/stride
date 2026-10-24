@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 from datetime import date
@@ -77,11 +78,9 @@ def test_shifted_config_moves_one_parameter_in_memory() -> None:
     valid = 0
     for section, key in v.SENSITIVITY_PARAMETERS:
         for factor in (0.8, 1.2):
-            try:
+            with contextlib.suppress(ValidationError):
                 v.shifted_config(CONFIG, section, key, factor)
                 valid += 1
-            except ValidationError:
-                pass
     assert valid >= 2 * len(v.SENSITIVITY_PARAMETERS) - 4  # only a few hit a hard limit
 
 

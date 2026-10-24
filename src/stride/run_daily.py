@@ -130,6 +130,21 @@ class WaitForData(Exception):
     """Today's bar is not there yet and the evening window is still open."""
 
 
+def _git_hash() -> str:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            cwd=Path(__file__).resolve().parent,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return out.stdout.strip() or "unknown"
+
+
 @dataclass
 class Deps:
     """Everything the job reads from the outside world, injectable in tests."""
@@ -139,7 +154,7 @@ class Deps:
     update_prices: Callable[..., list[UpdateResult]] | None = None
     risk_free: Callable[[], pd.Series] = field(default=lambda: FredRateSource().fetch_rate())
     alerter: Alerter | None = None
-    git_hash: Callable[[], str] = field(default=lambda: _git_hash())  # noqa: PLW0108 - defined below
+    git_hash: Callable[[], str] = _git_hash
     facts: Callable[[], Mapping[str, EtfFacts]] = load_etf_facts
 
 
@@ -205,21 +220,6 @@ def instance_name(config_path: Path) -> str:
 
 def _suffixed(name: str, instance: str) -> str:
     return name if instance == "STRIDE" else f"{name}_{instance}"
-
-
-def _git_hash() -> str:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-            cwd=Path(__file__).resolve().parent,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    return out.stdout.strip() or "unknown"
 
 
 def scrub(text: str, secrets: Secrets | None) -> str:
