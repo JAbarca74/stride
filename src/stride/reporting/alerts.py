@@ -17,7 +17,7 @@ import logging
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 import requests
 
@@ -33,9 +33,13 @@ AlertKind = Literal[
     "RECONCILIATION",
     "DRAWDOWN",
     "KILL_SWITCH",
+    "ORDER_PROBLEM",
+    "CASH_FLOW",
     "TEST",
 ]
 TELEGRAM_URL = "https://api.telegram.org/bot{token}/sendMessage"
+TELEGRAM_DOCUMENT_URL = "https://api.telegram.org/bot{token}/sendDocument"
+MAX_CAPTION = 1024  # Telegram's limit for a document caption
 TIMEOUT_SECONDS = 15
 MAX_LENGTH = 4096  # Telegram's limit per message
 HTTP_OK = 200
@@ -54,6 +58,18 @@ class PostSession(Protocol):
         """Send a POST request with a JSON body."""
 
 
+class UploadSession(Protocol):
+    def post(
+        self,
+        url: str,
+        *,
+        data: Mapping[str, str],
+        files: Mapping[str, tuple[str, bytes, str]],
+        timeout: float,
+    ) -> PostResponse:
+        """Upload `files` with the form fields in `data`."""
+
+
 @dataclass(frozen=True)
 class Alert:
     kind: AlertKind
@@ -69,12 +85,18 @@ class Alerter(Protocol):
     def send(self, alert: Alert) -> None:
         """Deliver one alert."""
 
+    def send_document(self, filename: str, content: bytes, caption: str) -> None:
+        """Send a file (the daily HTML report) with a short caption."""
+
 
 class LogAlerter:
     """Fallback when Telegram is not configured: alerts go to the log."""
 
     def send(self, alert: Alert) -> None:
         logger.warning("%s", alert.text())
+
+    def send_document(self, filename: str, content: bytes, caption: str) -> None:
+        logger.warning("%s (%s not sent: Telegram is not configured)", caption, filename)
 
 
 class TelegramAlerter:
@@ -94,6 +116,27 @@ class TelegramAlerter:
             )
         except requests.RequestException as exc:
             raise AlertError(f"telegram request failed: {type(exc).__name__}") from None
+        if response.status_code != HTTP_OK:
+            raise AlertError(f"telegram returned HTTP {response.status_code}")
+
+    def send_document(
+        self,
+        filename: str,
+        content: bytes,
+        caption: str,
+        session: UploadSession | None = None,
+    ) -> None:
+        """Send a file (the daily HTML report) with a short caption."""
+        uploader = session if session is not None else cast("UploadSession", self._session)
+        try:
+            response = uploader.post(
+                TELEGRAM_DOCUMENT_URL.format(token=self._token),
+                data={"chat_id": self._chat_id, "caption": caption[:MAX_CAPTION]},
+                files={"document": (filename, content, "text/html")},
+                timeout=TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise AlertError(f"telegram upload failed: {type(exc).__name__}") from None
         if response.status_code != HTTP_OK:
             raise AlertError(f"telegram returned HTTP {response.status_code}")
 

@@ -2,6 +2,11 @@
 
 The same code runs in backtest, paper and live; only the implementation chosen by
 `mode` changes. All amounts are USD; quantities may be fractional.
+
+Duplicates (SPEC 8): the caller gives each order a deterministic
+`client_order_id`. A failed or timed-out `submit_order` is never retried blindly:
+the caller looks the id up with `find_order` first, and resends only if the
+broker has no order with that id.
 """
 
 from __future__ import annotations
@@ -46,6 +51,12 @@ class OrderState:
     commission: float = 0.0
     filled: date | None = None
     reason: str = ""
+    client_order_id: str | None = None
+
+
+class BrokerError(Exception):
+    """A broker call failed. For `submit_order` the order's fate is unknown until
+    `find_order` says otherwise. The text never carries a credential."""
 
 
 class Broker(ABC):
@@ -65,12 +76,25 @@ class Broker(ABC):
         notional: float,
         type: OrderType = "market",
         limit_price: float | None = None,
+        *,
+        client_order_id: str | None = None,
+        quantity: float | None = None,
     ) -> str:
-        """Send an order for `notional` dollars; returns its order id."""
+        """Send one order and return the broker's order id. `quantity` replaces
+        `notional` for an asset that is not fractionable (whole shares) and for a
+        full exit (every share held)."""
 
     @abstractmethod
     def get_order(self, order_id: str) -> OrderState:
         """Status, filled quantity, average price and commission."""
+
+    @abstractmethod
+    def find_order(self, client_order_id: str) -> OrderState | None:
+        """The order sent with this client id, or None if the broker has none."""
+
+    @abstractmethod
+    def is_fractionable(self, symbol: str) -> bool:
+        """Whether the broker accepts fractional (notional) orders for `symbol`."""
 
     @abstractmethod
     def cancel_all(self) -> int:

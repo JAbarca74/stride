@@ -19,12 +19,19 @@ class CredentialError(Exception):
     """A required key is missing, or a key is not of an allowed kind."""
 
 
+class MissingCredentialError(CredentialError):
+    """A key is simply not in `.env` (as opposed to a key of the wrong kind)."""
+
+
 class Secrets(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     data_api_key: SecretStr | None = None
     alpaca_api_key: SecretStr | None = None
     alpaca_secret_key: SecretStr | None = None
+    # A second Alpaca paper account, for the DIP instance (owner approval A3). Optional.
+    alpaca_dip_api_key: SecretStr | None = None
+    alpaca_dip_secret_key: SecretStr | None = None
     alert_telegram_token: SecretStr | None = None
     alert_telegram_chat_id: SecretStr | None = None
 
@@ -47,14 +54,26 @@ class Secrets(BaseSettings):
             self.alert_telegram_chat_id.get_secret_value(),
         )
 
-    def alpaca_paper_keys(self) -> tuple[str, str]:
-        """Alpaca keys, refusing anything that is not a paper-trading key."""
-        if self.alpaca_api_key is None or self.alpaca_secret_key is None:
-            raise CredentialError("ALPACA_API_KEY and ALPACA_SECRET_KEY are not set in .env")
-        key = self.alpaca_api_key.get_secret_value()
+    def alpaca_paper_keys(self, prefix: str = "ALPACA") -> tuple[str, str]:
+        """Alpaca keys of one paper account (`prefix` "ALPACA" or "ALPACA_DIP"),
+        refusing anything that is not a paper-trading key."""
+        pairs = {
+            "ALPACA": (self.alpaca_api_key, self.alpaca_secret_key),
+            "ALPACA_DIP": (self.alpaca_dip_api_key, self.alpaca_dip_secret_key),
+        }
+        if prefix not in pairs:
+            raise CredentialError(f"unknown Alpaca key prefix {prefix!r}")
+        api_key, secret_key = pairs[prefix]
+        if api_key is None or secret_key is None:
+            raise MissingCredentialError(
+                f"{prefix}_API_KEY and {prefix}_SECRET_KEY are not set in .env"
+            )
+        key = api_key.get_secret_value()
         if not key.startswith(ALPACA_PAPER_KEY_PREFIX):
-            raise CredentialError("ALPACA_API_KEY is not a paper-trading key; refusing to use it")
-        return key, self.alpaca_secret_key.get_secret_value()
+            raise CredentialError(
+                f"{prefix}_API_KEY is not a paper-trading key; refusing to use it"
+            )
+        return key, secret_key.get_secret_value()
 
 
 def load_secrets(env_file: str | Path = ".env") -> Secrets:

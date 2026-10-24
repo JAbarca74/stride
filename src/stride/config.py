@@ -114,6 +114,11 @@ class ExecutionConfig(_Section):
     # Cost-aware resizing (owner request, 2026-10-23): a HOLD top-up buy whose
     # commission plus spread is above this fraction of the order is skipped.
     max_resize_cost_pct: Fraction
+    # Paper instances (owner approval A2, 2026-10-24): the broker a paper run
+    # uses ("alpaca", or "shadow": a SimBroker on the stored prices) and which
+    # Alpaca paper keys in `.env` it reads (ALPACA_* or ALPACA_DIP_*).
+    broker: Literal["alpaca", "shadow"] = "alpaca"
+    alpaca_key_env: Literal["ALPACA", "ALPACA_DIP"] = "ALPACA"
 
 
 class CashFlowsConfig(_Section):
@@ -215,6 +220,7 @@ class AllocationConfig(_Section):
     # 1 - `sleeve` of equity; `assets` share `sleeve`, each in only while its
     # `signal` is on, sized by `kelly_fraction` of Kelly (0 = the full share).
     core: list[Ticker]
+    core_leverage: Annotated[float, Field(gt=0, le=3)]  # multiplies the core weights only
     sleeve: Fraction
     signal: Literal["hold", "trend", "breakout", "range", "dip"]
     trend_sma: Lookback  # trend: in while the close is above this average

@@ -22,11 +22,10 @@ the risk-free rate known at t-1, in the order of the live daily run:
    (`risk/leverage.choose_instruments`).
 7. Orders -> `risk/guard.check_orders` -> `SimBroker`, filled at the open of t+1.
 
-PROVISIONAL: `plan_orders` below stands in for `execution/orders.py`, which is a
-human-reviewed module not written yet. It follows the proposal in
-`docs/design/execution_modules.md` (PR #45: band, exits and switch legs,
-sells first) and must be replaced by `orders.plan_orders` once that module is
-approved, so that backtest and live share it.
+Order planning (`plan_orders`, `skip_costly_resizes`, `split_orders`,
+`fit_buys`, `approve_batch`) is pure and shared with the paper and live run:
+`execution/orders.py` calls these same functions, so backtest and paper follow
+one set of rules (docs/design/execution_modules.md, section 1).
 
 Indicators are computed once on each full series: every indicator only reads
 data up to its own day (tests/test_lookahead.py), and the engine only looks up
@@ -52,6 +51,14 @@ from stride.backtest.costs import (
     spread_bps,
 )
 from stride.backtest.metrics import time_weighted_returns
+from stride.backtest.targets import (
+    ALLOCATE_IN,
+    ALLOCATE_OUT,
+    allocation_period,
+    allocation_targets,
+    drawdown_scale,
+    update_instruments,
+)
 from stride.config import StrideConfig
 from stride.data.calendar import trading_days
 from stride.data.leveraged import rate_known_at_t_minus_1
@@ -71,14 +78,11 @@ from stride.risk.leverage import (
     kelly_estimate,
 )
 from stride.risk.sizing import UnitLot, apply_caps, target_usd
-from stride.strategy.allocation import target_weights
 from stride.strategy.rules import HOLD, Decision, Indicators, PositionState, decide
 
 Row = tuple[float, float, float, float, float]  # close, SMA200, HH55, LL20, N
 
 ALLOCATION = "ALLOCATION"  # binding limit in the allocation experiment
-ALLOCATE_IN = "ALLOCATE_IN"  # allocation: the asset enters the portfolio this month
-ALLOCATE_OUT = "ALLOCATE_OUT"  # allocation: the asset leaves it
 ROTATION = "ROTATION"  # binding limit in the leverage_rotation experiment
 ROTATE_ON = "ROTATE_ON"  # rotation: the underlying crossed above its average
 ROTATE_OFF = "ROTATE_OFF"  # rotation: it crossed below; move to the refuge
@@ -239,22 +243,6 @@ def skip_costly_resizes(
     return kept, skipped
 
 
-def drawdown_scale(drawdown: float, config: StrideConfig) -> float:
-    """Experiment (owner request, 2026-10-23: keep large drawdowns out). The
-    leverage is multiplied by 1 until the drawdown of the time-weighted index
-    reaches `dd_scale_start`, then falls linearly to `dd_scale_floor` at
-    `dd_scale_full`, and stays there until the index recovers. The engine passes
-    the drawdown from the peak of the last `dd_scale_window` days (all-time when
-    0); see `Engine._scaling_drawdown`."""
-    e = config.experiments
-    if drawdown <= e.dd_scale_start:
-        return 1.0
-    if drawdown >= e.dd_scale_full:
-        return e.dd_scale_floor
-    share = (drawdown - e.dd_scale_start) / (e.dd_scale_full - e.dd_scale_start)
-    return 1.0 - share * (1.0 - e.dd_scale_floor)
-
-
 def split_orders(
     orders: Sequence[PlannedOrder], equity: float, config: StrideConfig
 ) -> list[PlannedOrder]:
@@ -292,6 +280,27 @@ def fit_buys(
         scale = available / needed
         buys = [replace(o, notional=o.notional * scale) for o in buys]
     return sells + [o for o in buys if o.notional >= config.execution.min_order_usd]
+
+
+def guard_planned(
+    planned: Sequence[PlannedOrder], ctx: guard.GuardContext, config: StrideConfig
+) -> list[tuple[PlannedOrder, guard.GuardDecision]]:
+    """Each planned order with its guard decision, in the order given."""
+    proposed = [guard.ProposedOrder(p.symbol, p.side, p.notional, p.switch) for p in planned]
+    decisions = {id(d.order): d for d in guard.check_orders(proposed, ctx, config)}
+    return [(p, decisions[id(o)]) for p, o in zip(planned, proposed, strict=True)]
+
+
+def approve_batch(
+    planned: Sequence[PlannedOrder], ctx: guard.GuardContext, cash: float, config: StrideConfig
+) -> list[tuple[PlannedOrder, guard.GuardDecision]]:
+    """Guard the planned orders, fit the approved buys to the cash the approved
+    sells free, and guard the result again (the batch changed). Returns the
+    rejected orders of the first pass, then the final batch, with decisions."""
+    first = guard_planned(planned, ctx, config)
+    rejected = [(p, d) for p, d in first if not d.approved]
+    fitted = fit_buys([p for p, d in first if d.approved], cash, config)
+    return rejected + guard_planned(fitted, ctx, config)
 
 
 # Engine.
@@ -807,38 +816,27 @@ class Engine:
         still checked every day). Orders go through the same resizing rule, split,
         guard and broker as the main strategy."""
         drawdown = min(max(self.twr.drawdown, 0.0), 1.0)
-        month: tuple[int, ...] = (day.year, day.month)
-        if self.config.experiments.allocation.rebalance == "daily":
-            month = (day.year, day.month, day.day)
+        month = allocation_period(day, self.config.experiments.allocation.rebalance)
         if month == self.allocation_month or self.allocation_closes is None:
             self._record_risk(day, None, 0, 0.0, 0.0, ALLOCATION, drawdown, [])
             return
         self.allocation_month = month
-        settings = self.config.experiments.allocation
         history = self.allocation_closes.loc[:day]
-        weights = target_weights(settings, history, float(self.rate[day]))
-        level = self.settings.fixed_leverage or settings.leverage
-        scale = 1.0
-        if "drawdown_scaling" in self.config.experiments.enabled:
-            scale = drawdown_scale(self._scaling_drawdown(), self.config)
-        exposures = {a: w * equity * level * scale for a, w in weights.items() if w > 0}
-        choices = choose_instruments(
-            exposures,
+        result = allocation_targets(
+            self.config,
+            history,
+            float(self.rate[day]),
             equity,
+            scaling_drawdown=self._scaling_drawdown(),
+            held=self.held,
             eligible=self.data.eligible,
-            current=self.held,
-            switch=self.config.leverage_switch,
-            max_etf_portfolio_leverage=self.config.risk.max_etf_portfolio_leverage,
-            borrow=1.0,
+            previous_weights=self.allocation_weights,
+            fixed_leverage=self.settings.fixed_leverage,
         )
-        self._update_instruments(day, choices)
-        targets = {c.symbol: c.cash_usd for c in choices.values()}
-        rules = {}
-        for asset in set(weights) | set(self.allocation_weights):
+        self._update_instruments(day, result.choices)
+        weights, targets, rules = result.weights, result.targets, result.rules
+        for asset, rule in rules.items():
             was, now = self.allocation_weights.get(asset, 0.0) > 0, weights.get(asset, 0.0) > 0
-            rules[asset] = (
-                ALLOCATE_IN if now and not was else ALLOCATE_OUT if was and not now else HOLD
-            )
             self.rec.signals.append(
                 {
                     "date": day,
@@ -848,7 +846,7 @@ class Engine:
                     "hh55": math.nan,
                     "ll20": math.nan,
                     "n": math.nan,
-                    "rule": rules[asset],
+                    "rule": rule,
                     "current_units": int(was),
                     "target_units": int(now),
                     "last_entry": None,
@@ -876,7 +874,7 @@ class Engine:
             )
         planned = split_orders(planned, equity, self.config)
         vetoes = self._check_and_submit(day, equity, cash, positions, planned, set())
-        gross = sum(c.exposure_usd for c in choices.values()) / equity if equity > 0 else 0.0
+        gross = result.gross
         self._record_risk(day, None, 0, 0.0, gross, ALLOCATION, drawdown, vetoes, gross)
 
     def _trade(
@@ -955,20 +953,9 @@ class Engine:
     def _update_instruments(
         self, day: pd.Timestamp, choices: Mapping[str, InstrumentChoice]
     ) -> None:
-        held: dict[str, HeldInstrument] = {}
-        for asset, choice in choices.items():
-            before = self.held.get(asset)
-            if before is not None and before.multiple == choice.multiple:
-                held[asset] = HeldInstrument(choice.multiple, before.days_held + 1)
-                continue
-            held[asset] = HeldInstrument(choice.multiple, 0)
-            previous = self.chosen.get(asset)
-            if previous is not None and previous != choice.symbol:
-                self.rec.switches.append(
-                    {"date": day, "asset": asset, "from": previous, "to": choice.symbol}
-                )
-        self.held = held
-        self.chosen = {asset: c.symbol for asset, c in choices.items()}
+        self.held, self.chosen, switches = update_instruments(self.held, self.chosen, choices)
+        for asset, before, after in switches:
+            self.rec.switches.append({"date": day, "asset": asset, "from": before, "to": after})
 
     def _check_and_submit(  # noqa: PLR0917
         self,
@@ -989,23 +976,12 @@ class Engine:
             blocked=frozenset(blocked),
         )
         vetoes: list[str] = []
-        first = self._guard(planned, ctx)
-        rejected = [(p, d) for p, d in first if not d.approved]
-        fitted = fit_buys([p for p, d in first if d.approved], cash, self.config)
-        final = self._guard(fitted, ctx)
-        for plan, check in rejected + final:
+        for plan, check in approve_batch(planned, ctx, cash, self.config):
             self._submit(day, plan, check, self.settings.order_type)
             if not check.approved:
                 vetoes.append(f"{plan.symbol}:{plan.side}:{'+'.join(check.reasons)}")
                 self.rec.event(day, "VETO", vetoes[-1])
         return vetoes
-
-    def _guard(
-        self, planned: Sequence[PlannedOrder], ctx: guard.GuardContext
-    ) -> list[tuple[PlannedOrder, guard.GuardDecision]]:
-        proposed = [guard.ProposedOrder(p.symbol, p.side, p.notional, p.switch) for p in planned]
-        decisions = {id(d.order): d for d in guard.check_orders(proposed, ctx, self.config)}
-        return [(p, decisions[id(o)]) for p, o in zip(planned, proposed, strict=True)]
 
     def _submit(
         self, day: pd.Timestamp, plan: PlannedOrder, check: guard.GuardDecision, kind: OrderType
@@ -1174,14 +1150,18 @@ def eligible_instruments(
 
 
 __all__ = [
+    "ALLOCATE_IN",
+    "ALLOCATE_OUT",
     "BacktestResult",
     "BacktestSettings",
     "MarketData",
     "PlannedOrder",
+    "approve_batch",
     "combine_systems",
     "drawdown_scale",
     "eligible_instruments",
     "fit_buys",
+    "guard_planned",
     "plan_orders",
     "run_backtest",
     "skip_costly_resizes",

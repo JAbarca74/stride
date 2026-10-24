@@ -218,3 +218,40 @@ def test_exit_split_in_two_orders_closes_the_whole_position() -> None:
     assert broker.get_order(first).status == "filled"
     assert broker.get_order(last).status == "filled"
     assert "SPY" not in broker.get_positions()
+
+
+def test_find_order_by_client_id() -> None:
+    broker = _broker()
+    order_id = broker.submit_order("SPY", "buy", 100.0, client_order_id="stride-20261014-SPY-buy-1")
+    found = broker.find_order("stride-20261014-SPY-buy-1")
+    assert found is not None
+    assert (found.order_id, found.client_order_id) == (order_id, "stride-20261014-SPY-buy-1")
+    broker.step(T1)
+    assert broker.find_order("stride-20261014-SPY-buy-1") == broker.get_order(order_id)
+    assert broker.find_order("stride-unknown") is None
+
+
+def test_duplicate_client_id_is_refused() -> None:
+    broker = _broker()
+    broker.submit_order("SPY", "buy", 100.0, client_order_id="dup")
+    with pytest.raises(ValueError, match="duplicate"):
+        broker.submit_order("SPY", "buy", 100.0, client_order_id="dup")
+    assert len([broker.find_order("dup")]) == 1
+
+
+def test_always_fractionable() -> None:
+    assert _broker().is_fractionable("SPY")
+
+
+def test_a_quantity_covering_the_position_is_a_full_exit() -> None:
+    broker = _broker()
+    broker.submit_order("SPY", "buy", 1_000.0)
+    broker.step(T1)
+    held = broker.get_positions()["SPY"].quantity
+    # A notional below the value at the close, but the quantity covers every share.
+    order_id = broker.submit_order("SPY", "sell", 500.0, quantity=held)
+    broker.step(T2)
+    assert broker.get_order(order_id).filled_quantity == pytest.approx(held)
+    assert "SPY" not in broker.get_positions()
+    with pytest.raises(ValueError, match="quantity"):
+        broker.submit_order("IBIT", "buy", 10.0, quantity=0)

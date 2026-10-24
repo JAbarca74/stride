@@ -487,6 +487,8 @@ With monthly deposits, returns are measured as **time-weighted return (TWR)**: d
 - Leverage used and which limit bound it each day.
 - Correlation matrix of the universe (3-year daily returns; flag pairs above 0.7).
 
+**Daily report** (`reporting/daily.py`, HTML, requested by the owner on 2026-10-23): after the 18:00 run, one short page in Spanish, sent as a document through the Telegram bot: status (OK, attention, halted, kill switch, no run), equity, time-weighted day return, drawdown and leverage; what was done (fills at the open, orders sent for the next open, deposits, unit changes with their rule); what was not done (vetoed orders with the guard reasons, orders rejected or cancelled by the broker, unit adds cut by the caps, errors); and the units held per asset.
+
 **AI summary (optional):** `llm_summary.py` reads the report and writes what the system did and why. Read-only database access; it can never create orders or change parameters. Off by default.
 
 **Alerts** (Telegram) when: a daily run fails or does not run; data fails validation; the risk manager vetoes an order; reconciliation differs; drawdown crosses −20% or the kill switch fires.

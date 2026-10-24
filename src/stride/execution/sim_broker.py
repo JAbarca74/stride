@@ -12,17 +12,21 @@ otherwise at the limit if the day's low reaches it; sells mirror this with the
 high. Spread is applied to the fill price in both cases.
 
 A sell that, with the other sells of the symbol sent the same day, covers the
-whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`) is a full
-exit: it fills after them and sells every share left, so a gap up at the open
-leaves no remainder (an exit split into several orders included). Deposits and interest
-on idle cash are credited by the backtest engine (`deposit`, `credit_interest`).
+whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`), or whose
+`quantity` covers every share held, is a full exit: it fills after them and
+sells every share left, so a gap up at the open leaves no remainder (an exit
+split into several orders included). Otherwise orders fill by `notional`: the
+simulation is always fractionable, so a given `quantity` only marks a full exit.
+Deposits and interest on idle cash are credited by the backtest engine
+(`deposit`, `credit_interest`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date
+from typing import Any
 
 import pandas as pd
 
@@ -61,6 +65,7 @@ class SimBroker(Broker):
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, OrderState] = {}
         self._full_sells: set[str] = set()  # order ids that close the whole position
+        self._client_ids: dict[str, str] = {}  # client order id -> order id
 
     # Broker interface.
 
@@ -81,7 +86,14 @@ class SimBroker(Broker):
         notional: float,
         type: OrderType = "market",
         limit_price: float | None = None,
+        *,
+        client_order_id: str | None = None,
+        quantity: float | None = None,
     ) -> str:
+        if quantity is not None and not quantity > 0:
+            raise ValueError("quantity must be positive")
+        if client_order_id is not None and client_order_id in self._client_ids:
+            raise ValueError("duplicate client_order_id")
         if notional <= 0:
             raise ValueError("notional must be positive")
         if type == "limit" and (limit_price is None or limit_price <= 0):
@@ -90,8 +102,11 @@ class SimBroker(Broker):
             raise ValueError(f"no prices for {symbol}")
         order_id = f"sim-{len(self._orders) + 1}"
         self._orders[order_id] = OrderState(
-            order_id, symbol, side, float(notional), type, limit_price, self._today, "pending"
-        )
+            order_id, symbol, side, float(notional), type, limit_price, self._today, "pending",
+            client_order_id=client_order_id,
+        )  # fmt: skip
+        if client_order_id is not None:
+            self._client_ids[client_order_id] = order_id
         held = self._positions.get(symbol)
         if side == "sell" and held is not None:
             value = held.quantity * self._close(symbol, self._today)
@@ -101,12 +116,20 @@ class SimBroker(Broker):
                 if o.symbol == symbol and o.side == "sell" and o.status == "pending"
                 and o.submitted == self._today and o.order_id != order_id
             )  # fmt: skip
-            if already + notional >= value - FULL_SELL_TOLERANCE_USD:
+            covers = quantity is not None and quantity >= held.quantity - _DUST
+            if covers or already + notional >= value - FULL_SELL_TOLERANCE_USD:
                 self._full_sells.add(order_id)
         return order_id
 
     def get_order(self, order_id: str) -> OrderState:
         return self._orders[order_id]
+
+    def find_order(self, client_order_id: str) -> OrderState | None:
+        order_id = self._client_ids.get(client_order_id)
+        return self._orders[order_id] if order_id is not None else None
+
+    def is_fractionable(self, symbol: str) -> bool:
+        return True
 
     def cancel_all(self) -> int:
         pending = [o for o in self._orders.values() if o.status == "pending"]
@@ -130,6 +153,28 @@ class SimBroker(Broker):
         if amount < 0:
             raise ValueError("interest on cash cannot be negative")
         self._cash += float(amount)
+
+    # State, for a simulation that lives across processes (the shadow broker).
+
+    def snapshot(self) -> dict[str, Any]:
+        """Cash, clock, positions and orders as plain JSON-ready values."""
+        return {
+            "cash": self._cash,
+            "today": self._today.isoformat(),
+            "positions": [asdict(p) for p in self._positions.values()],
+            "orders": [_order_json(o) for o in self._orders.values()],
+            "full_sells": sorted(self._full_sells),
+            "client_ids": dict(self._client_ids),
+        }
+
+    def restore(self, state: Mapping[str, Any]) -> None:
+        """The inverse of `snapshot` (prices and config come from the constructor)."""
+        self._cash = float(state["cash"])
+        self._today = date.fromisoformat(state["today"])
+        self._positions = {p["symbol"]: Position(**p) for p in state["positions"]}
+        self._orders = {o["order_id"]: _order_from_json(o) for o in state["orders"]}
+        self._full_sells = set(state["full_sells"])
+        self._client_ids = dict(state["client_ids"])
 
     # Simulation clock.
 
@@ -239,3 +284,22 @@ class SimBroker(Broker):
             del self._positions[symbol]
         else:
             self._positions[symbol] = Position(symbol, remaining, held.average_price)
+
+
+_DATE_FIELDS = ("submitted", "filled")
+
+
+def _order_json(order: OrderState) -> dict[str, Any]:
+    data = asdict(order)
+    for name in _DATE_FIELDS:
+        if data[name] is not None:
+            data[name] = data[name].isoformat()
+    return data
+
+
+def _order_from_json(data: Mapping[str, Any]) -> OrderState:
+    values = dict(data)
+    for name in _DATE_FIELDS:
+        if values[name] is not None:
+            values[name] = date.fromisoformat(values[name])
+    return OrderState(**values)

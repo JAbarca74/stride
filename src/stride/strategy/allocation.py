@@ -291,14 +291,17 @@ def sleeve(
     dip_drop: float = 0.25,
     dip_window: int = 90,
     take_profit: float = 0.30,
+    core_leverage: float = 1.0,
 ) -> dict[str, float]:
-    """Core plus a sleeve: `core` assets split 1 - `share`; each sleeve asset may
-    use `share` / len(assets) while its signal is on, times its Kelly share. Only
+    """Core plus a sleeve: `core` assets split 1 - `share`, times `core_leverage`;
+    each sleeve asset may use `share` / len(assets) while its signal is on, times
+    its Kelly share. Only
     the last `kelly_window` + `trend_sma` days are read, so the signal state is
     the one those days imply."""
     tail = closes.iloc[-(kelly_window + trend_sma + 1) :]
     held = [c for c in core if c in tail.columns and tail[c].notna().any()]
-    weights = dict.fromkeys(held, (1.0 - share) / len(held)) if held else {}
+    core_weight = (1.0 - share) * core_leverage / len(held) if held else 0.0
+    weights = dict.fromkeys(held, core_weight)
     part = share / len(assets) if assets else 0.0
     for asset in assets:
         if asset not in tail.columns or tail[asset].dropna().empty:
@@ -342,6 +345,7 @@ def target_weights(  # noqa: PLR0911 - one return per mode
             dip_drop=settings.dip_drop,
             dip_window=settings.dip_window,
             take_profit=settings.take_profit,
+            core_leverage=settings.core_leverage,
         )
     if settings.mode == "hold":
         return hold(closes, risk_free, assets=settings.assets)

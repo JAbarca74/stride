@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import requests
+from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
 
 from stride.config import load_config
 from stride.execution.alpaca_broker import AlpacaBroker
-from stride.execution.broker import Broker
+from stride.execution.broker import Broker, BrokerError
 from stride.settings import CredentialError, load_secrets
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,12 +25,19 @@ FAKE_SECRET = "fake-secret-not-real"
 NOW = datetime(2026, 10, 21, 13, 30, tzinfo=UTC)
 
 
+def _api_error(status: int, code: int, message: str) -> APIError:
+    """An alpaca-py APIError as the SDK raises it, with an HTTP status."""
+    http = SimpleNamespace(response=SimpleNamespace(status_code=status), request=None)
+    return APIError(json.dumps({"code": code, "message": message}), http)  # type: ignore[no-untyped-call]
+
+
 class FakeClient:
     """Stands in for alpaca's TradingClient; returns SDK-shaped objects."""
 
     def __init__(self) -> None:
         self.submitted: list[Any] = []
         self.orders: dict[str, SimpleNamespace] = {}
+        self.asset_calls = 0
 
     def get_account(self) -> SimpleNamespace:
         return SimpleNamespace(equity="10250.50", cash="4000", buying_power="8000",
@@ -42,6 +52,16 @@ class FakeClient:
 
     def get_order_by_id(self, order_id: Any) -> SimpleNamespace:
         return self.orders[str(order_id)]
+
+    def get_order_by_client_id(self, client_id: str) -> SimpleNamespace:
+        for order in self.orders.values():
+            if order.client_order_id == client_id:
+                return order
+        raise _api_error(404, 40410000, "order not found")
+
+    def get_asset(self, symbol_or_asset_id: Any) -> SimpleNamespace:
+        self.asset_calls += 1
+        return SimpleNamespace(symbol=symbol_or_asset_id, fractionable=symbol_or_asset_id != "UUP")
 
     def cancel_orders(self) -> list[SimpleNamespace]:
         return [SimpleNamespace(id="a"), SimpleNamespace(id="b")]
@@ -177,3 +197,135 @@ def test_cancel_all_and_calendar(tmp_path: Path) -> None:
     assert broker.cancel_all() == 2
     assert broker.is_market_open(date(2026, 10, 21))
     assert not broker.is_market_open(date(2026, 11, 26))
+
+
+def _order(order_id: str, client_order_id: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=order_id, client_order_id=client_order_id, symbol="SPY", side=OrderSide.BUY,
+        type=OrderType.MARKET, notional="20", limit_price=None, submitted_at=NOW,
+        filled_at=None, status=OrderStatus.NEW, filled_qty="0", filled_avg_price=None,
+    )  # fmt: skip
+
+
+class FlakyClient(FakeClient):
+    """Fails the first `failures` calls of every method with `error`."""
+
+    def __init__(self, error: Exception, failures: int) -> None:
+        super().__init__()
+        self.error, self.failures, self.calls = error, failures, 0
+
+    def _maybe_fail(self) -> None:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.error
+
+    def get_account(self) -> SimpleNamespace:
+        self._maybe_fail()
+        return super().get_account()
+
+    def submit_order(self, order_data: Any) -> SimpleNamespace:
+        self._maybe_fail()
+        return super().submit_order(order_data)
+
+
+def _flaky(tmp_path: Path, client: FakeClient) -> tuple[AlpacaBroker, list[float]]:
+    sleeps: list[float] = []
+    return AlpacaBroker(CONFIG, _secrets(tmp_path), client, sleep=sleeps.append), sleeps
+
+
+def test_client_order_id_is_passed_through(tmp_path: Path) -> None:
+    client = FakeClient()
+    _broker(tmp_path, client).submit_order(
+        "SPY", "buy", 20.0, client_order_id="stride-20261021-SPY-buy-1"
+    )
+    assert client.submitted[0].client_order_id == "stride-20261021-SPY-buy-1"
+
+
+def test_find_order_found(tmp_path: Path) -> None:
+    client = FakeClient()
+    client.orders["o-1"] = _order("o-1", "stride-20261021-SPY-buy-1")
+    found = _broker(tmp_path, client).find_order("stride-20261021-SPY-buy-1")
+    assert found is not None
+    assert (found.order_id, found.client_order_id, found.status) == (
+        "o-1", "stride-20261021-SPY-buy-1", "pending")  # fmt: skip
+
+
+def test_find_order_not_found_is_none(tmp_path: Path) -> None:
+    assert _broker(tmp_path).find_order("stride-20261021-SPY-buy-9") is None
+
+
+def test_find_order_other_errors_raise(tmp_path: Path) -> None:
+    class Forbidden(FakeClient):
+        def get_order_by_client_id(self, client_id: str) -> SimpleNamespace:
+            raise _api_error(403, 40310000, "forbidden")
+
+    with pytest.raises(BrokerError, match=r"find_order failed: APIError \(HTTP 403\)"):
+        _broker(tmp_path, Forbidden()).find_order("x")
+
+
+def test_submit_is_never_retried(tmp_path: Path) -> None:
+    client = FlakyClient(requests.ConnectionError("boom"), failures=1)
+    broker, sleeps = _flaky(tmp_path, client)
+    with pytest.raises(BrokerError, match="submit_order failed: ConnectionError"):
+        broker.submit_order("SPY", "buy", 20.0, client_order_id="stride-20261021-SPY-buy-1")
+    assert (client.calls, client.submitted, sleeps) == (1, [], [])
+
+
+def test_reads_retry_transient_errors_with_backoff(tmp_path: Path) -> None:
+    client = FlakyClient(_api_error(503, 50300000, "unavailable"), failures=2)
+    broker, sleeps = _flaky(tmp_path, client)
+    assert broker.get_account().equity == 10250.50
+    assert (client.calls, sleeps) == (3, [1.0, 2.0])
+
+
+def test_reads_give_up_after_three_retries(tmp_path: Path) -> None:
+    client = FlakyClient(requests.Timeout("slow"), failures=10)
+    broker, sleeps = _flaky(tmp_path, client)
+    with pytest.raises(BrokerError, match="get_account failed: Timeout"):
+        broker.get_account()
+    assert (client.calls, sleeps) == (4, [1.0, 2.0, 4.0])
+
+
+def test_reads_do_not_retry_client_errors(tmp_path: Path) -> None:
+    client = FlakyClient(_api_error(401, 40110000, "unauthorized"), failures=10)
+    broker, sleeps = _flaky(tmp_path, client)
+    with pytest.raises(BrokerError, match="HTTP 401"):
+        broker.get_account()
+    assert (client.calls, sleeps) == (1, [])
+
+
+@pytest.mark.parametrize("method", ["submit", "read"])
+def test_no_key_in_any_error_text(tmp_path: Path, method: str) -> None:
+    leaky = RuntimeError(f"request failed with key {FAKE_PAPER} and {FAKE_SECRET}")
+    broker, _ = _flaky(tmp_path, FlakyClient(leaky, failures=10))
+    with pytest.raises(BrokerError) as info:
+        if method == "submit":
+            broker.submit_order("SPY", "buy", 20.0)
+        else:
+            broker.get_account()
+    text = str(info.value) + repr(info.value)
+    assert FAKE_PAPER not in text
+    assert FAKE_SECRET not in text
+    assert info.value.__cause__ is None
+    assert info.value.__suppress_context__
+
+
+def test_is_fractionable_uses_the_asset_flag_once(tmp_path: Path) -> None:
+    client = FakeClient()
+    broker = _broker(tmp_path, client)
+    assert broker.is_fractionable("SPY")
+    assert broker.is_fractionable("SPY")
+    assert not broker.is_fractionable("UUP")
+    assert client.asset_calls == 2
+
+
+def test_quantity_orders(tmp_path: Path) -> None:
+    client = FakeClient()
+    broker = _broker(tmp_path, client)
+    broker.submit_order("UUP", "buy", 56.0, quantity=2)
+    broker.submit_order("SPY", "sell", 20.0, quantity=0.0345)
+    whole, full_exit = client.submitted
+    assert (whole.qty, whole.notional) == (2, None)
+    assert (full_exit.qty, full_exit.notional) == (0.0345, None)
+    with pytest.raises(ValueError, match="quantity"):
+        broker.submit_order("UUP", "buy", 56.0, quantity=0)
