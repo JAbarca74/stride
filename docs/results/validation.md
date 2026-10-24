@@ -196,26 +196,27 @@ Block bootstrap (out of sample): Sharpe -0.320 / 0.200 / 0.753; max drawdown 0.2
 | 2025 | 1.5x | off | 1.112 | 0.313 | 0.119 | traded |
 | 2026 | 3x | off | 1.122 | 0.248 | 0.092 | traded |
 
-## 10. Pre-registered strategy search (docs/design/strategy_search.md, strategy_search_round2.md to strategy_search_round5.md)
+## 10. Pre-registered strategy search (docs/design/strategy_search.md, strategy_search_round2.md to strategy_search_round6.md)
 
 Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95, max drawdown <= 40%.
 
 | strategy | oos_sharpe | spy_sharpe | oos_cagr | spy_cagr | oos_max_drawdown | deflated_sharpe | passes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| dual_momentum | 0.431 | 0.825 | 0.072 | 0.149 | 0.375 | 0.022 | FAIL |
-| relative_strength | 0.431 | 0.825 | 0.096 | 0.149 | 0.656 | 0.019 | FAIL |
-| vol_managed | 0.622 | 0.825 | 0.134 | 0.149 | 0.383 | 0.080 | FAIL |
-| sector_momentum | 0.424 | 0.825 | 0.082 | 0.149 | 0.407 | 0.017 | FAIL |
-| momentum_vol | 0.380 | 0.825 | 0.071 | 0.149 | 0.359 | 0.011 | FAIL |
-| risk_parity | 0.554 | 0.825 | 0.098 | 0.149 | 0.288 | 0.056 | FAIL |
-| spy_levered | 0.748 | 0.825 | 0.145 | 0.149 | 0.328 | 0.188 | FAIL |
-| spy_levered_12m | 0.765 | 0.825 | 0.158 | 0.149 | 0.328 | 0.199 | FAIL |
-| qqq_levered_12m | 0.823 | 0.825 | 0.210 | 0.149 | 0.317 | 0.242 | FAIL |
-| crypto_hold | 0.961 | 0.825 | 0.186 | 0.149 | 0.349 | 0.472 | FAIL |
-| crypto_trend | 0.888 | 0.825 | 0.130 | 0.149 | 0.260 | 0.419 | FAIL |
-| crypto_breakout | 0.992 | 0.825 | 0.142 | 0.149 | 0.259 | 0.578 | FAIL |
-| crypto_range | 0.436 | 0.825 | 0.065 | 0.149 | 0.276 | 0.029 | FAIL |
-| crypto_dip | 1.304 | 0.825 | 0.224 | 0.149 | 0.288 | 0.905 | FAIL |
+| dual_momentum | 0.431 | 0.825 | 0.072 | 0.149 | 0.375 | 0.016 | FAIL |
+| relative_strength | 0.431 | 0.825 | 0.096 | 0.149 | 0.656 | 0.014 | FAIL |
+| vol_managed | 0.622 | 0.825 | 0.134 | 0.149 | 0.383 | 0.062 | FAIL |
+| sector_momentum | 0.424 | 0.825 | 0.082 | 0.149 | 0.407 | 0.012 | FAIL |
+| momentum_vol | 0.380 | 0.825 | 0.071 | 0.149 | 0.359 | 0.008 | FAIL |
+| risk_parity | 0.554 | 0.825 | 0.098 | 0.149 | 0.288 | 0.043 | FAIL |
+| spy_levered | 0.748 | 0.825 | 0.145 | 0.149 | 0.328 | 0.154 | FAIL |
+| spy_levered_12m | 0.765 | 0.825 | 0.158 | 0.149 | 0.328 | 0.164 | FAIL |
+| qqq_levered_12m | 0.823 | 0.825 | 0.210 | 0.149 | 0.317 | 0.202 | FAIL |
+| crypto_hold | 0.961 | 0.825 | 0.186 | 0.149 | 0.349 | 0.419 | FAIL |
+| crypto_trend | 0.888 | 0.825 | 0.130 | 0.149 | 0.260 | 0.369 | FAIL |
+| crypto_breakout | 0.992 | 0.825 | 0.142 | 0.149 | 0.259 | 0.526 | FAIL |
+| crypto_range | 0.436 | 0.825 | 0.065 | 0.149 | 0.276 | 0.021 | FAIL |
+| crypto_dip | 1.304 | 0.825 | 0.224 | 0.149 | 0.288 | 0.880 | FAIL |
+| qqq_core_dip | 1.088 | 0.825 | 0.244 | 0.149 | 0.371 | 0.590 | FAIL |
 
 ### dual_momentum: leverage chosen in sample
 
@@ -616,6 +617,33 @@ Pass: out-of-sample Sharpe and CAGR above SPY's, deflated Sharpe >= 0.95, max dr
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | crypto_dip | 1x | off | -0.023 | -0.502 | 0.413 | 4639.051 | False |
 | crypto_dip | 1x | on | 0.137 | 0.935 | 0.284 | 37450.850 | False |
+
+### qqq_core_dip: leverage chosen in sample
+
+| out_of_sample | chosen_leverage | drawdown_scaling | sharpe | cagr | max_drawdown | status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2012 | 1x | on | 1.216 | 0.174 | 0.107 | traded |
+| 2013 | 1x | on | 2.584 | 0.308 | 0.051 | traded |
+| 2014 | 1x | off | 1.384 | 0.185 | 0.078 | traded |
+| 2015 | 1x | off | 0.600 | 0.085 | 0.118 | traded |
+| 2016 | 1x | off | 0.492 | 0.077 | 0.167 | traded |
+| 2017 | 1x | on | 4.740 | 2.182 | 0.069 | traded |
+| 2018 | 1x | off | -0.637 | -0.217 | 0.371 | traded |
+| 2019 | 1x | on | 1.476 | 0.309 | 0.131 | traded |
+| 2020 | 1x | on | 1.831 | 0.551 | 0.260 | traded |
+| 2021 | 1x | on | 1.863 | 0.581 | 0.137 | traded |
+| 2022 | 1x | on | -2.057 | -0.237 | 0.249 | traded |
+| 2023 | 1x | on | 1.802 | 0.410 | 0.139 | traded |
+| 2024 | 1x | on | 0.711 | 0.203 | 0.176 | traded |
+| 2025 | 1x | on | 0.474 | 0.119 | 0.179 | traded |
+| 2026 | 1x | on | 0.129 | 0.041 | 0.130 | traded |
+
+### qqq_core_dip: full period (30% goal)
+
+| strategy | leverage | drawdown_scaling | cagr | sharpe | max_drawdown | final_equity | meets_goal |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| qqq_core_dip | 1x | off | -0.018 | -0.494 | 0.427 | 4670.993 | False |
+| qqq_core_dip | 1x | on | 0.218 | 1.054 | 0.343 | 98124.671 | False |
 
 ## Notes
 
