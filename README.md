@@ -1,4 +1,5 @@
 <a id="top"></a>
+<!-- STRIDE: Production Quantitative Trend-Following & Risk System -->
 
 <p align="center">
   <img src="docs/assets/hero.svg" alt="STRIDE: Systematic Trend &amp; Risk-Integrated Daily Execution" width="100%">
