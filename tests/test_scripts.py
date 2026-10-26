@@ -14,8 +14,23 @@ def _text(name: str) -> str:
 
 
 def test_scripts_exist() -> None:
-    for name in ("run_stride.ps1", "install_task.ps1", "backup_db.ps1"):
+    for name in (
+        "run_stride.ps1",
+        "install_task.ps1",
+        "backup_db.ps1",
+        "run_stride.sh",
+        "install_cron.sh",
+        "backup_db.sh",
+    ):
         assert (SCRIPTS / name).is_file(), name
+
+
+def test_linux_scripts_run_both_instances_in_auto_mode() -> None:
+    text = _text("run_stride.sh")
+    assert '"config.paper_b.yaml" "config.paper_dip.yaml"' in text
+    assert "python -m stride.run_daily --config" in text
+    assert "--phase auto" in text
+    assert "backup_db.sh" in text
 
 
 def test_run_script_runs_both_instances_in_auto_mode() -> None:
@@ -56,6 +71,6 @@ def test_backup_script_keeps_30_days_in_documents() -> None:
 
 
 def test_no_script_mentions_live_trading() -> None:
-    for path in SCRIPTS.glob("*.ps1"):
+    for path in [*SCRIPTS.glob("*.ps1"), *SCRIPTS.glob("*.sh")]:
         text = path.read_text(encoding="utf-8")
         assert "LIVE_CONFIRM" not in text and "mode: live" not in text, path.name

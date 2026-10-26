@@ -323,6 +323,24 @@ python -m stride.run_daily --config config.paper_b.yaml --mode backtest
 ```
 
 <details>
+<summary><b>Automated 24/7 Linux Server / Cloud Setup (Click to expand)</b></summary>
+
+<br>
+
+To automate STRIDE on a 24/7 Linux server (e.g., Ubuntu / Oracle Cloud Always Free VM):
+1. Install the provided cron job:
+   ```bash
+   bash scripts/install_cron.sh
+   ```
+2. The job triggers `scripts/run_stride.sh` every 15 minutes in `auto` mode across market phases and performs automated daily rolling SQLite backups via `scripts/backup_db.sh`.
+3. Monitor live execution logs:
+   ```bash
+   tail -f data/logs/scheduler.log
+   ```
+
+</details>
+
+<details>
 <summary><b>Automated Windows Task Scheduler Setup (Click to expand)</b></summary>
 
 <br>

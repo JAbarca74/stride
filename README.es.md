@@ -311,6 +311,43 @@ python -m stride.run_daily --config config.paper_b.yaml --phase auto
 python -m stride.run_daily --config config.paper_b.yaml --phase evening
 ```
 
+<details>
+<summary><b>Configuración en Servidor Linux 24/7 (Cron / Nube) (Clic para expandir)</b></summary>
+
+<br>
+
+Para automatizar STRIDE en un servidor 24/7 (ej. Ubuntu / Oracle Cloud Always Free VM):
+1. Instala el cron job proporcionado:
+   ```bash
+   bash scripts/install_cron.sh
+   ```
+2. La tarea ejecuta `scripts/run_stride.sh` cada 15 minutos en modo `auto` cubriendo todas las fases del mercado bursátil y genera respaldos automáticos en `~/stride_backups/` mediante `scripts/backup_db.sh`.
+3. Monitorizar logs en vivo:
+   ```bash
+   tail -f data/logs/scheduler.log
+   ```
+
+</details>
+
+<details>
+<summary><b>Configuración en Windows (Programador de Tareas) (Clic para expandir)</b></summary>
+
+<br>
+
+Para automatizar STRIDE localmente en Windows 10/11:
+1. Abre PowerShell como Administrador y ejecuta:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1
+   Get-ScheduledTask -TaskName "STRIDE paper"
+   ```
+2. La tarea ejecuta `scripts\run_stride.ps1` cada 15 minutos con soporte de reactivación y respaldos automáticos en `~/Documents/stride_backups`.
+3. Monitorizar logs en vivo:
+   ```powershell
+   Get-Content data\logs\scheduler.log -Tail 30
+   ```
+
+</details>
+
 <img src="docs/assets/divider.svg" alt="" width="100%">
 
 ## Desarrollo y Calidad de Código
