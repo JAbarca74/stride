@@ -1,0 +1,79 @@
+name: Paper run
+
+# The 40-day paper test, run on GitHub's servers so no personal computer has to be on.
+# Three loops a day cover every phase window in New York time (summer and winter);
+# the state (SQLite databases, HALT / KILL_SWITCH files) lives in a private repo.
+
+on:
+  schedule:
+    - cron: "30 12 * * 1-5"
+    - cron: "30 17 * * 1-5"
+    - cron: "30 22 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-run
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    if: github.repository == 'JAbarca74/stride'
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    env:
+      STATE_DIR: ${{ github.workspace }}/../stride-state
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e ".[alpaca]"
+
+      - name: Keys (paper and data only)
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          DATA_API_KEY: ${{ secrets.DATA_API_KEY }}
+          ALERT_TELEGRAM_TOKEN: ${{ secrets.ALERT_TELEGRAM_TOKEN }}
+          ALERT_TELEGRAM_CHAT_ID: ${{ secrets.ALERT_TELEGRAM_CHAT_ID }}
+        run: |
+          umask 077
+          {
+            echo "ALPACA_API_KEY=$ALPACA_API_KEY"
+            echo "ALPACA_SECRET_KEY=$ALPACA_SECRET_KEY"
+            echo "DATA_API_KEY=$DATA_API_KEY"
+            echo "ALERT_TELEGRAM_TOKEN=$ALERT_TELEGRAM_TOKEN"
+            echo "ALERT_TELEGRAM_CHAT_ID=$ALERT_TELEGRAM_CHAT_ID"
+          } > .env
+
+      - name: Restore state
+        env:
+          STATE_DEPLOY_KEY: ${{ secrets.STATE_DEPLOY_KEY }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$STATE_DEPLOY_KEY" > ~/.ssh/state_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global core.sshCommand "ssh -i $HOME/.ssh/state_key -o IdentitiesOnly=yes"
+          git clone --depth 1 git@github.com:JAbarca74/stride-state.git "$STATE_DIR"
+          mkdir -p data
+          cp -r "$STATE_DIR"/data/. data/ 2>/dev/null || true
+          for F in "$STATE_DIR"/HALT* "$STATE_DIR"/KILL_SWITCH*; do
+            if [ -f "$F" ]; then cp "$F" .; fi
+          done
+          ls -la data
+
+      - name: Ticks every 5 minutes
+        env:
+          DURATION: "18600"
+        run: bash scripts/actions_loop.sh

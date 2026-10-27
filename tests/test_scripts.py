@@ -70,7 +70,26 @@ def test_backup_script_keeps_30_days_in_documents() -> None:
     assert '"*.db"' in text
 
 
+def test_server_setup_script_installs_cron_and_never_copies_secrets() -> None:
+    text = _text("setup_server.sh")
+    assert "python3.12 -m venv .venv" in text
+    assert "install_cron.sh" in text
+    assert "chmod 600 .env" in text
+    assert "--verdict" in text
+
+
 def test_no_script_mentions_live_trading() -> None:
     for path in [*SCRIPTS.glob("*.ps1"), *SCRIPTS.glob("*.sh")]:
         text = path.read_text(encoding="utf-8")
         assert "LIVE_CONFIRM" not in text and "mode: live" not in text, path.name
+
+
+def test_actions_run_uses_state_repo_and_never_live_keys() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "paper.yml").read_text(encoding="utf-8")
+    assert "scripts/actions_loop.sh" in workflow
+    assert "stride-state" in workflow
+    assert "IBKR" not in workflow and "LIVE_CONFIRM" not in workflow
+    assert "--phase auto" in _text("actions_loop.sh")
+    assert "push -q --force" in _text("save_state.sh")
+    setup = _text("setup_actions.ps1")
+    assert "--private" in setup and "IBKR" in setup and "never copied" in setup
