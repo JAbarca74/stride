@@ -10,6 +10,10 @@ on:
     - cron: "30 17 * * 1-5"
     - cron: "30 22 * * 1-5"
   workflow_dispatch:
+    inputs:
+      duration:
+        description: Seconds to keep ticking (18600 normal; 120 to test)
+        default: "18600"
 
 permissions:
   contents: read
@@ -75,5 +79,5 @@ jobs:
 
       - name: Ticks every 5 minutes
         env:
-          DURATION: "18600"
+          DURATION: ${{ inputs.duration || '18600' }}
         run: bash scripts/actions_loop.sh
