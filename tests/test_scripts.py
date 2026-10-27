@@ -82,3 +82,14 @@ def test_no_script_mentions_live_trading() -> None:
     for path in [*SCRIPTS.glob("*.ps1"), *SCRIPTS.glob("*.sh")]:
         text = path.read_text(encoding="utf-8")
         assert "LIVE_CONFIRM" not in text and "mode: live" not in text, path.name
+
+
+def test_actions_run_uses_state_repo_and_never_live_keys() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "paper.yml").read_text(encoding="utf-8")
+    assert "scripts/actions_loop.sh" in workflow
+    assert "stride-state" in workflow
+    assert "IBKR" not in workflow and "LIVE_CONFIRM" not in workflow
+    assert "--phase auto" in _text("actions_loop.sh")
+    assert "push -q --force" in _text("save_state.sh")
+    setup = _text("setup_actions.ps1")
+    assert "--private" in setup and "IBKR" in setup and "never copied" in setup
