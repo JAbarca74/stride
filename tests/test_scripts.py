@@ -70,6 +70,14 @@ def test_backup_script_keeps_30_days_in_documents() -> None:
     assert '"*.db"' in text
 
 
+def test_server_setup_script_installs_cron_and_never_copies_secrets() -> None:
+    text = _text("setup_server.sh")
+    assert "python3.12 -m venv .venv" in text
+    assert "install_cron.sh" in text
+    assert "chmod 600 .env" in text
+    assert "--verdict" in text
+
+
 def test_no_script_mentions_live_trading() -> None:
     for path in [*SCRIPTS.glob("*.ps1"), *SCRIPTS.glob("*.sh")]:
         text = path.read_text(encoding="utf-8")
