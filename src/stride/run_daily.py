@@ -13,17 +13,21 @@ Phases, New York time (SPEC 8 schedule):
   the backtest's own function), plan and guard the orders (`execution/orders.py`)
   and store them as "planned", with the signals and risk decisions; then send
   the daily report in Spanish by Telegram.
-- morning (09:15-09:30): read the positions again. Kill switch active: cancel
-  everything and liquidate from the broker's positions (A1, Q5). Otherwise send
-  last evening's approved orders through `orders.submit_approved`.
+- morning (09:15-15:30, or until 30 minutes before an early close): read the
+  positions again. Kill switch active: cancel everything and liquidate from the
+  broker's positions (A1, Q5). Otherwise send last evening's approved orders
+  through `orders.submit_approved`. The window is wide because scheduled runs
+  (GitHub Actions) can start hours late; a 15-minute window was never hit.
 - midday (12:00-13:00): order statuses and fills.
 - close (16:05-17:00): cancel what is pending, record fills, reconcile broker
   positions against the expected ones (a break is an event and an alert; two
   days in a row halt the system through the kill switch module), and mark
   unfilled exits for a market resend the next day (A1, Q7).
-- auto: the phase due now, once per (date, phase) (the `runs` table), nothing
-  outside the windows or on NYSE holidays. One scheduled task every 15 minutes
-  then covers every phase, across US daylight-saving changes.
+- auto: the first phase due now that is not done yet, once per (date, phase)
+  (the `runs` table), nothing outside the windows or on NYSE holidays. Windows
+  may overlap (morning and midday): the morning goes first, so midday checks
+  orders that were sent. One scheduled task every 15 minutes then covers every
+  phase, across US daylight-saving changes.
 
 Safety: only `mode: backtest` or `mode: paper`; in paper the broker is
 `AlpacaBroker` (paper keys only) or the shadow broker (T23, `make_broker`). Any exception
@@ -63,7 +67,7 @@ from stride.backtest.targets import (
 )
 from stride.config import StrideConfig, effective_config, load_config
 from stride.data import store
-from stride.data.calendar import is_trading_day, previous_trading_day
+from stride.data.calendar import is_trading_day, previous_trading_day, sessions
 from stride.data.events import flagged_dates, load_price_events
 from stride.data.leveraged import EtfFacts, load_etf_facts, rate_known_at_t_minus_1
 from stride.data.quality import (
@@ -108,11 +112,13 @@ NEW_YORK = ZoneInfo("America/New_York")
 PHASES = ("evening", "morning", "midday", "close")
 # (start, end) of each phase window, New York time, end excluded.
 WINDOWS: dict[str, tuple[time, time]] = {
-    "morning": (time(9, 15), time(9, 30)),
+    "morning": (time(9, 15), time(15, 30)),
     "midday": (time(12, 0), time(13, 0)),
     "close": (time(16, 5), time(17, 0)),
     "evening": (time(18, 0), time(20, 0)),
 }
+# The morning stops this long before the session close (early closes at 13:00).
+MORNING_CLOSE_MARGIN = timedelta(minutes=30)
 EVENING_LAST_TRY = time(19, 45)  # the last 15-minute tick before 20:00
 BINDING = "ALLOCATION"
 KILLED = "KILL_SWITCH"
@@ -239,17 +245,30 @@ def scrub(text: str, secrets: Secrets | None) -> str:
 # Which phase is due.
 
 
-def due_phase(now: datetime) -> tuple[date, str] | None:
-    """The (day, phase) whose window contains `now` in New York, or None outside
-    every window and on days NYSE is closed."""
+def _window_end(phase: str, day: date) -> time:
+    """The end of a phase window on `day`: the morning also ends
+    `MORNING_CLOSE_MARGIN` before an early session close."""
+    end = WINDOWS[phase][1]
+    if phase != "morning":
+        return end
+    close = pd.Timestamp(sessions(day, day)["market_close"].iloc[0]).tz_convert(NEW_YORK)
+    last: time = (close - MORNING_CLOSE_MARGIN).time()
+    return min(end, last)
+
+
+def due_phases(now: datetime) -> list[tuple[date, str]]:
+    """The (day, phase) pairs whose window contains `now` in New York, in
+    `WINDOWS` order (morning before midday); empty outside every window and on
+    days NYSE is closed."""
     local = now.astimezone(NEW_YORK)
     if not is_trading_day(local.date()):
-        return None
+        return []
     clock = local.time()
-    for phase, (start, end) in WINDOWS.items():
-        if start <= clock < end:
-            return local.date(), phase
-    return None
+    return [
+        (local.date(), phase)
+        for phase, (start, _) in WINDOWS.items()
+        if start <= clock < _window_end(phase, local.date())
+    ]
 
 
 def phase_day(phase: str, now: datetime) -> date:
@@ -817,16 +836,20 @@ def run_phase(
     if instance.config.mode != "paper":
         raise RunError("phases need mode: paper (use --mode backtest for a backtest)")
     now = deps.now()
+    due: list[tuple[date, str]] = []
     if phase == "auto":
-        due = due_phase(now)
-        if due is None:
+        due = due_phases(now)
+        if not due:
             logger.info("%s: nothing due at %s", instance.name, now.astimezone(NEW_YORK))
             return 0
-        day, phase = due
+        day, phase = due[0]
     elif day is None:
         day = phase_day(phase, now)
     conn = store.connect(instance.db)
     try:
+        pending = [(d, p) for d, p in due if not store.run_done(conn, d, p)]
+        if due and pending:
+            day, phase = pending[0]
         if store.run_done(conn, day, phase):
             logger.info("%s: %s for %s already done", instance.name, phase, day)
             return 0

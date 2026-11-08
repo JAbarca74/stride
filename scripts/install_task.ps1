@@ -35,7 +35,7 @@ $Action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -WorkingDirectory $Root
 
 # Every day at 00:00, repeated every 15 minutes for the whole day: the ticks land
-# on :00, :15, :30 and :45, so the 09:15-09:30 morning window always gets one.
+# on :00, :15, :30 and :45, so the morning window (from 09:15) always gets one early.
 $Trigger = New-ScheduledTaskTrigger -Daily -At "00:00"
 $Repeat = New-ScheduledTaskTrigger -Once -At "00:00" `
     -RepetitionInterval (New-TimeSpan -Minutes 15) `

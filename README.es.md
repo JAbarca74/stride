@@ -298,7 +298,7 @@ python -m stride.backtest.validation
 | Fase | Ventana (ET) | Propósito y Tareas |
 | :-- | :-- | :-- |
 | `evening` | 18:00 – 20:00 | Descarga de precios, avance del índice, revisión del kill switch, cálculo de pesos objetivo, aprobación de órdenes por riesgo, reporte en Telegram y veredicto de Fase 4 |
-| `morning` | 09:15 – 09:30 | Envío de órdenes aprobadas al broker antes de la campana de apertura; en caso de kill switch, liquidación de emergencia |
+| `morning` | 09:15 – 15:30 | Envío de las órdenes aprobadas al broker (desde antes de la apertura; la ventana es amplia porque los runs programados pueden empezar tarde); en caso de kill switch, liquidación de emergencia |
 | `midday` | 12:00 – 13:00 | Comprobación de estado de órdenes y ejecuciones parciales |
 | `close` | 16:05 – 17:00 | Cancelación de órdenes pendientes, registro de ejecuciones y conciliación con el broker |
 | `auto` | Continuo | Detecta automáticamente la fase activa del momento para integrarse con cron o el Programador de Tareas |

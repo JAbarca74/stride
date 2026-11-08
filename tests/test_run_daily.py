@@ -164,19 +164,33 @@ def _world(tmp_path: Path) -> World:
         (datetime(2026, 7, 15, 7, 20, tzinfo=COSTA_RICA), "morning"),  # 09:20 EDT
         (datetime(2026, 1, 15, 8, 20, tzinfo=COSTA_RICA), "morning"),  # 09:20 EST
         (datetime(2026, 1, 15, 7, 20, tzinfo=COSTA_RICA), None),  # 08:20 EST
-        (datetime(2026, 7, 15, 16, 30, tzinfo=UTC), "midday"),  # 12:30 EDT
+        (datetime(2026, 7, 15, 16, 30, tzinfo=UTC), "morning"),  # 12:30 EDT: morning first
+        (datetime(2026, 1, 15, 19, 40, tzinfo=UTC), "morning"),  # 14:40 EST: a late run
+        (datetime(2026, 1, 15, 20, 30, tzinfo=UTC), None),  # 15:30 EST: morning over
         (datetime(2026, 1, 15, 21, 10, tzinfo=UTC), "close"),  # 16:10 EST
         (datetime(2026, 1, 15, 21, 0, tzinfo=UTC), None),  # 16:00 EST: not yet
     ],
 )
 def test_auto_picks_the_phase_in_summer_and_winter(local: datetime, expected: str | None) -> None:
-    due = run_daily.due_phase(local)
-    assert (due[1] if due else None) == expected
+    due = run_daily.due_phases(local)
+    assert (due[0][1] if due else None) == expected
+
+
+def test_morning_and_midday_overlap_with_the_morning_first() -> None:
+    due = run_daily.due_phases(datetime(2026, 10, 22, 12, 15, tzinfo=NY))
+    assert [p for _, p in due] == ["morning", "midday"]
+
+
+def test_morning_ends_30_minutes_before_an_early_close() -> None:
+    early = date(2026, 11, 27)  # the day after Thanksgiving: NYSE closes at 13:00
+    phases = run_daily.due_phases(datetime(2026, 11, 27, 12, 20, tzinfo=NY))
+    assert phases == [(early, "morning"), (early, "midday")]
+    assert run_daily.due_phases(datetime(2026, 11, 27, 12, 30, tzinfo=NY)) == [(early, "midday")]
 
 
 def test_nothing_due_on_holidays_and_weekends() -> None:
-    assert run_daily.due_phase(datetime(2026, 11, 26, 18, 30, tzinfo=NY)) is None  # Thanksgiving
-    assert run_daily.due_phase(datetime(2026, 10, 24, 18, 30, tzinfo=NY)) is None  # Saturday
+    assert run_daily.due_phases(datetime(2026, 11, 26, 18, 30, tzinfo=NY)) == []  # Thanksgiving
+    assert run_daily.due_phases(datetime(2026, 10, 24, 18, 30, tzinfo=NY)) == []  # Saturday
 
 
 def test_manual_evening_before_18_works_on_the_previous_session() -> None:
@@ -273,9 +287,27 @@ def test_auto_is_idempotent_per_date_and_phase(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_late_morning_sends_the_orders_then_midday_runs(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    world.at(DAY1, 18, 0)
+    assert world.run() == 0
+    conn = world.conn()
+    planned = store.read_orders(conn, statuses=("planned",))
+    assert not planned.empty
+    world.at(DAY2, 12, 15)  # the run started late: the morning goes before midday
+    assert world.run() == 0
+    assert len(store.read_orders(conn, statuses=("pending",))) == len(planned)
+    world.at(DAY2, 12, 20)
+    assert world.run() == 0
+    world.at(DAY2, 12, 25)  # both done: nothing more
+    assert world.run() == 0
+    assert list(store.read_runs(conn)["phase"]) == ["evening", "morning", "midday"]
+    conn.close()
+
+
 def test_auto_does_nothing_outside_the_windows_and_on_holidays(tmp_path: Path) -> None:
     world = _world(tmp_path)
-    world.at(DAY1, 14, 0)
+    world.at(DAY1, 15, 45)
     assert world.run() == 0
     world.at(date(2026, 11, 26), 18, 30)  # Thanksgiving
     assert world.run() == 0
