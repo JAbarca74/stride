@@ -306,7 +306,7 @@ python -m stride.backtest.validation
 | Phase | Window (ET) | Purpose &amp; Tasks |
 | :-- | :-- | :-- |
 | `evening` | 18:00 – 20:00 | Ingest daily prices, update time-weighted index, check kill switch, compute new target weights, generate risk-approved orders, emit Spanish Telegram report &amp; Phase 4 verdict |
-| `morning` | 09:15 – 09:30 | Submit approved day orders to broker before open; if kill switch is active, cancel orders and liquidate holdings |
+| `morning` | 09:15 – 15:30 | Submit approved day orders to broker (from before the open; wide because scheduled runs can start late); if kill switch is active, cancel orders and liquidate holdings |
 | `midday` | 12:00 – 13:00 | Inspect order status and partial fills |
 | `close` | 16:05 – 17:00 | Cancel unfilled day orders, record final executions, reconcile broker ledger against local state |
 | `auto` | Continuous | Automatically detects and runs the current active phase once per day (ideal for cron / task scheduler) |
