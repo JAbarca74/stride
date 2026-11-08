@@ -1,8 +1,11 @@
 name: Paper run
 
 # The 40-day paper test, run on GitHub's servers so no personal computer has to be on.
-# Three loops a day cover every phase window in New York time (summer and winter);
-# the state (SQLite databases, HALT / KILL_SWITCH files) lives in a private repo.
+# Each run ticks for about 5 hours and then dispatches the next one, so the loop runs
+# around the clock: GitHub starts scheduled runs hours late, and a cron-only loop
+# missed the morning window every day. The crons only restart the chain if it breaks.
+# The state (SQLite databases, HALT / KILL_SWITCH files) lives in a private repo.
+# To stop the loop: disable this workflow in the Actions tab.
 
 on:
   schedule:
@@ -27,6 +30,9 @@ jobs:
     if: github.repository == 'JAbarca74/stride'
     runs-on: ubuntu-latest
     timeout-minutes: 345
+    permissions:
+      contents: read
+      actions: write # only to dispatch the next run of this workflow
     env:
       STATE_DIR: ${{ github.workspace }}/../stride-state
     steps:
@@ -81,3 +87,12 @@ jobs:
         env:
           DURATION: ${{ inputs.duration || '18600' }}
         run: bash scripts/actions_loop.sh
+
+      # Runs even when a tick failed (a transient broker error must not stop the
+      # loop); not on a manual cancel or a short test run. The new run waits in the
+      # `paper-run` concurrency group until this one ends.
+      - name: Dispatch the next run
+        if: ${{ !cancelled() && (inputs.duration || '18600') == '18600' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run paper.yml --repo "$GITHUB_REPOSITORY" --ref main
