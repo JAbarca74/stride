@@ -786,7 +786,12 @@ class DailyJob:
             return []
         expected = dict(last[1])
         fills = store.read_table(self.conn, "fills")
-        if not fills.empty:
+        if getattr(self.broker, "settles_at_evening", False):
+            # The shadow broker records the fills of day d at the evening, after the
+            # close of d saved `last`, so a date cutoff would drop them. It starts
+            # with cash only, so the expected book is every fill so far.
+            expected = {}
+        elif not fills.empty:
             fills = fills[pd.DatetimeIndex(fills["date"]) > pd.Timestamp(last[0])]
         for f in fills.to_dict("records"):
             sign = 1.0 if f["side"] == "buy" else -1.0
