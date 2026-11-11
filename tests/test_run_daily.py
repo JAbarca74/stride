@@ -535,3 +535,29 @@ def test_phase4_verdict_emitted_at_40_days_and_idempotent(tmp_path: Path) -> Non
     verdict_alerts2 = [a for a in world.recorder.alerts if a.kind == "PHASE4_VERDICT"]
     assert len(verdict_alerts2) == 1
     conn.close()
+
+
+def test_shadow_fills_recorded_at_the_evening_do_not_break_the_next_close(
+    tmp_path: Path,
+) -> None:
+    world = _world(tmp_path)
+    # Like ShadowBroker: fills are known at the evening, and the close cancels nothing.
+    world.sim.settles_at_evening = True  # type: ignore[attr-defined]
+    world.sim.cancel_all = lambda: 0  # type: ignore[method-assign]
+    world.at(DAY1, 18, 0)
+    assert world.run() == 0
+    world.at(DAY2, 9, 20)  # morning: send
+    assert world.run() == 0
+    world.at(DAY2, 16, 10)  # close: the shadow broker has not filled anything yet
+    assert world.run() == 0
+    world.sim.step(DAY2)  # the bar of DAY2 arrives: the fills are dated DAY2
+    world.at(DAY2, 18, 0)  # the evening records them, after the close
+    assert world.run() == 0
+    conn = world.conn()
+    assert not store.read_table(conn, "fills").empty
+    world.at(DAY3, 16, 10)
+    assert world.run() == 0
+    assert store.read_events(conn, run_daily.RECONCILIATION_BREAK) == []
+    last = store.last_positions(conn)
+    assert last is not None and set(last[1]) == set(world.sim.get_positions())
+    conn.close()
