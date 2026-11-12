@@ -1,6 +1,6 @@
 # Risk-based allocation for the Monte Carlo universe: design
 
-Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phases 1 and 2 are built (section 11). **Gate R1 is met** (`docs/design/mc_risk_calibration_results.md`); gate R2 has not been run and there is no allocation result yet. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
+Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phases 1 to 3 are built (section 11). **Gate R1 is met** (`docs/design/mc_risk_calibration_results.md`); gate R2 has not been run and there is no allocation result yet. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
 
 Rules this work keeps:
 
@@ -181,3 +181,19 @@ Gate R1 is met: pooled coverage of the 90% interval 0.894 to 0.902 at 5 and 20 s
 Settled before the run: the coverage check of section 6 pools all assets, as the 30-minute gate did; the asset-by-asset figures are reported (four cells outside the range at 20 sessions, none at 5).
 
 Findings that phases 3 and 4 must respect (details in the results document, section 5): the 1% tail was exceeded about 1.6 times as often as simulated; in the first days of a crash the realized loss was up to 2.9 times the simulated 1% quantile; and an equal-weight hold of the universe lost more than 20% over 20 sessions in 2008 and in 2020, so the kill switch result in those two years is the real test of the brakes.
+
+### Phase 3: weights and brakes (2026-11-12)
+
+| Piece | File |
+| --- | --- |
+| Allocators `EW`, `IV`, `ERC`, limits, brakes, loss-cap factor (pure) | `src/stride/forecast/risk_weights.py` |
+| Tests, with hypothesis properties | `tests/test_risk_weights.py` |
+
+No result: the module is not run on market data in this phase. `src/stride/forecast/weights.py` is not changed (its `portfolio_loss` is imported).
+
+Points the design left open, settled here before any allocation result exists:
+
+- **What a removed weight becomes.** Every step after the allocator only lowers a weight, and what is taken away stays in cash. That holds for the caps, for a target below the minimum order, and for the `trend` brake: an asset below its 200-day average leaves its share in cash and the other assets are not scaled up (the usual form of this rule, and the one that does not concentrate the portfolio in a crash).
+- **`ERC` method.** Cyclical coordinate descent on the covariance of the joint simulated paths, rescaled to sum to 1. The hypothesis test checks that every risk contribution equals 1/n.
+- **`trend` needs 200 closes.** An asset with fewer is not held by the `trend` variants.
+- **The `dd` brake has an absorbing end.** At a drawdown of 15% its exposure is zero, and a portfolio in cash cannot recover its drawdown, so a `dd` variant that reaches 15% stays in cash for good. That is the rule as pre-registered (it is in cash before the 20% kill switch); phase 4 reports whether and when it happens instead of changing the rule.
