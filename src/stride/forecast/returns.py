@@ -43,6 +43,18 @@ class ReturnPanel:
     def __len__(self) -> int:
         return len(self.slot)
 
+    def window(self, start: int, stop: int) -> ReturnPanel:
+        """Rows `start` to `stop - 1`, for evaluating one period of a longer history."""
+        return ReturnPanel(
+            self.symbols,
+            self.end[start:stop],
+            self.day[start:stop],
+            self.slot[start:stop],
+            self.open[start:stop],
+            self.close[start:stop],
+            self.ret[start:stop],
+        )
+
     def upto(self, rows: int) -> ReturnPanel:
         """The first `rows` rows: what was known after slot `rows - 1` closed."""
         return ReturnPanel(

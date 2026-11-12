@@ -72,6 +72,10 @@ def test_build_panel_aligns_fills_gaps_and_marks_unlisted_history() -> None:
     assert np.isnan(panel.open[3, 1])
     assert panel.ret[4, 1] == pytest.approx(np.log(104.0 / 102.0))
     assert len(panel.upto(5)) == 5
+    middle = panel.window(3, 9)
+    assert len(middle) == 6
+    assert middle.end[0] == panel.end[3]
+    assert middle.close[0, 0] == panel.close[3, 0]
     assert panel.upto(5).ret.shape == (5, 2)
 
 

@@ -8,6 +8,7 @@ the 7 slots of a session: 9:30-10:00, then one per hour until the close.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Protocol
@@ -288,3 +289,28 @@ def slot_bars(bars: pd.DataFrame, asof: datetime | None = None) -> pd.DataFrame:
     if asof is not None:
         out = out[out["end"] <= _utc(asof)]
     return out[columns].reset_index(drop=True)
+
+
+def slot_inputs(
+    conn: sqlite3.Connection, symbols: Sequence[str], asof: datetime
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Session slot grid and per-symbol slot bars, up to the last slot that had ended by `asof`.
+
+    The grid (columns day, slot, end) starts on the earliest stored bar of any symbol,
+    so assets listed later have no bars in the early slots. Feed both results to
+    `forecast.returns.build_panel`.
+    """
+    stamp = _utc(asof)
+    starts = [last for last in (_first_ts(conn, symbol) for symbol in symbols) if last is not None]
+    if not starts:
+        raise ValueError("no intraday bars are stored for these symbols")
+    first_day = min(starts).tz_convert(NEW_YORK).date()
+    grid = session_slots(first_day, stamp.tz_convert(NEW_YORK).date())
+    grid = grid[grid["end"] <= stamp].reset_index(drop=True)
+    slots = {symbol: slot_bars(read_intraday(conn, symbol), asof=stamp) for symbol in symbols}
+    return grid[["day", "slot", "end"]], slots
+
+
+def _first_ts(conn: sqlite3.Connection, symbol: str) -> pd.Timestamp | None:
+    row = conn.execute("SELECT MIN(ts) FROM intraday_bars WHERE symbol = ?", (symbol,)).fetchone()
+    return None if row[0] is None else pd.Timestamp(row[0])
