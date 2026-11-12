@@ -116,3 +116,20 @@ Las claves de Alpaca (de papel) se leen de `.env`; el módulo nunca opera dinero
 ## 9. Limitaciones conocidas
 
 Ver la sección 7 de `docs/design/mc_backtest_results.md`. Las principales: una sola década casi toda alcista, 12 reglas probadas (el ganador de 12 está sesgado al alza), spread constante en el modelo frente a spreads reales más altos en activos poco líquidos (UNG, CPER), y datos con 15 minutos de retraso.
+
+## 10. Seguimiento: asignación por riesgo (2026-11-12)
+
+Se probó la idea 1 de la sección 6 con el historial diario desde 2007 (idea 2), en cuatro fases con un PR cada una. No cambia nada de `paper_mc` ni de su configuración: es investigación aparte. Diseño: `docs/design/mc_risk_allocation.md`. Resultados: `docs/design/mc_risk_calibration_results.md` (puerta R1) y `docs/design/mc_risk_results.md` (puerta R2).
+
+| Pregunta | Respuesta medida |
+| --- | --- |
+| ¿El riesgo simulado se sostiene en datos diarios desde 2008? | Sí (puerta R1 cumplida): cobertura del intervalo del 90% entre 0,894 y 0,902. La cola del 1% se supera 1,6 veces más de lo simulado y en los primeros días de un desplome el modelo llega tarde |
+| ¿Mantener el universo sin freno sobrevive? | No: con pesos iguales o por volatilidad inversa el interruptor del 20% se activa en octubre de 2008 |
+| ¿Qué variante quedó elegida con 20 activos y 10.000 USD simulados? | Volatilidad inversa con freno de tendencia de 200 días (`IV_trend`): +35,5% en 2008-2016 y +63,9% en 2017-2026, caídas máximas de 8,8% y 9,3%, sin interruptor |
+| ¿Y con 6 activos y 1.000 USD? | La elegida (`IV_dd`) cumple la puerta en la letra pero quedó en efectivo desde el 2022-09-27: +8,4% en 9,8 años. No es un éxito |
+| ¿Gana más que estar invertido en los años recientes? | No: de 2023 a noviembre de 2026 hizo +24,7%, menos que la regla actual de `paper_mc` en su backtest (+32,3%) y que comprar y mantener (+54,4%). Lo que aporta es pasar 2008, 2020 y 2022 lejos del interruptor |
+| ¿Qué parte hace el trabajo? | El freno de tendencia. La simulación Monte Carlo no aportó: dimensionar con una volatilidad simple de 60 días dio lo mismo, y el tope de pérdida simulado nunca actuó en las variantes elegidas |
+
+Cifras sin promesa: son resultados medidos en datos pasados con ejecuciones simuladas.
+
+Decisiones que quedan en tus manos: si se quiere una instancia de papel con `IV_trend` y 10.000 USD simulados (necesita su propio diseño y tu aprobación; no se empezó), y qué hacer con la cuenta de 1.000 USD, donde la selección fijada de antemano no sirvió.

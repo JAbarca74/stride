@@ -1,0 +1,171 @@
+{
+  "seed": 20261112,
+  "window_days": 252,
+  "n_paths": 2000,
+  "kill_switch_dd": 0.2,
+  "periods": {
+    "selection": [
+      "2008-01-01",
+      "2016-12-31"
+    ],
+    "holdout": [
+      "2017-01-01",
+      "2100-01-01"
+    ]
+  },
+  "last_day": "2026-11-11",
+  "s6": [
+    "QQQ",
+    "EFA",
+    "TLT",
+    "GLD",
+    "USO",
+    "VNQ"
+  ],
+  "gates": [
+    {
+      "setup": "U20",
+      "variants_without_kill_switch": 7,
+      "survivors": [
+        "EW_trend",
+        "EW_dd",
+        "IV_trend",
+        "IV_dd",
+        "ERC_none",
+        "ERC_trend",
+        "ERC_dd"
+      ],
+      "selected": "IV_trend",
+      "passed": true,
+      "checks": [
+        {
+          "check": "1 kill switch fired in neither period",
+          "value": "selection 0, holdout 0",
+          "passed": true
+        },
+        {
+          "check": "2 net return positive in both periods",
+          "value": "selection +0.3547, holdout +0.6387",
+          "passed": true
+        },
+        {
+          "check": "3 holdout costs below 1% of starting capital a year",
+          "value": "0.0036",
+          "passed": true
+        },
+        {
+          "check": "4 holdout return over drawdown at least that of EW_none",
+          "value": "6.842 against -0.155",
+          "passed": true
+        },
+        {
+          "check": "5a at least 6 of 9 variants avoid the kill switch in both periods",
+          "value": "7 of 9",
+          "passed": true
+        },
+        {
+          "check": "5b the four neighbours have a positive holdout return",
+          "value": "IV_none +1.0405, IV_dd +0.5201, EW_trend +0.6000, ERC_trend +0.3365",
+          "passed": true
+        }
+      ],
+      "sharpe_alarm": false
+    },
+    {
+      "setup": "S6",
+      "variants_without_kill_switch": 7,
+      "survivors": [
+        "EW_trend",
+        "EW_dd",
+        "IV_trend",
+        "IV_dd",
+        "ERC_none",
+        "ERC_trend",
+        "ERC_dd"
+      ],
+      "selected": "IV_dd",
+      "passed": true,
+      "checks": [
+        {
+          "check": "1 kill switch fired in neither period",
+          "value": "selection 0, holdout 0",
+          "passed": true
+        },
+        {
+          "check": "2 net return positive in both periods",
+          "value": "selection +0.7363, holdout +0.0842",
+          "passed": true
+        },
+        {
+          "check": "3 holdout costs below 1% of starting capital a year",
+          "value": "0.0015",
+          "passed": true
+        },
+        {
+          "check": "4 holdout return over drawdown at least that of EW_none",
+          "value": "0.547 against 0.311",
+          "passed": true
+        },
+        {
+          "check": "5a at least 6 of 9 variants avoid the kill switch in both periods",
+          "value": "7 of 9",
+          "passed": true
+        },
+        {
+          "check": "5b the four neighbours have a positive holdout return",
+          "value": "IV_none +0.2002, IV_trend +0.6015, EW_dd +0.0586, ERC_dd +0.4444",
+          "passed": true
+        }
+      ],
+      "sharpe_alarm": false
+    },
+    {
+      "setup": "U20X",
+      "variants_without_kill_switch": 7,
+      "survivors": [
+        "EW_trend",
+        "EW_dd",
+        "IV_trend",
+        "IV_dd",
+        "ERC_none",
+        "ERC_trend",
+        "ERC_dd"
+      ],
+      "selected": "IV_trend",
+      "passed": true,
+      "checks": [
+        {
+          "check": "1 kill switch fired in neither period",
+          "value": "selection 0, holdout 0",
+          "passed": true
+        },
+        {
+          "check": "2 net return positive in both periods",
+          "value": "selection +0.3701, holdout +0.7283",
+          "passed": true
+        },
+        {
+          "check": "3 holdout costs below 1% of starting capital a year",
+          "value": "0.0038",
+          "passed": true
+        },
+        {
+          "check": "4 holdout return over drawdown at least that of EW_none",
+          "value": "7.862 against 0.976",
+          "passed": true
+        },
+        {
+          "check": "5a at least 6 of 9 variants avoid the kill switch in both periods",
+          "value": "7 of 9",
+          "passed": true
+        },
+        {
+          "check": "5b the four neighbours have a positive holdout return",
+          "value": "IV_none +1.1520, IV_dd +0.5319, EW_trend +1.5577, ERC_trend +0.3355",
+          "passed": true
+        }
+      ],
+      "sharpe_alarm": false
+    }
+  ]
+}
