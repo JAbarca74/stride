@@ -220,15 +220,21 @@ class AlpacaSource:
         self._clock = clock
 
     def _bars(self, symbol: str, start: date, end: date, adjustment: str) -> list[dict[str, Any]]:
+        return self._pages(
+            symbol,
+            {
+                "timeframe": "1Day",
+                "start": start.isoformat(),
+                "end": self._end_param(end),
+                "feed": "sip",
+                "adjustment": adjustment,
+                "limit": str(self.page_limit),
+            },
+        )
+
+    def _pages(self, symbol: str, params: dict[str, str]) -> list[dict[str, Any]]:
+        """Every bar for `params`, following `next_page_token`."""
         bars: list[dict[str, Any]] = []
-        params = {
-            "timeframe": "1Day",
-            "start": start.isoformat(),
-            "end": self._end_param(end),
-            "feed": "sip",
-            "adjustment": adjustment,
-            "limit": str(self.page_limit),
-        }
         while True:
             payload = _get_json(
                 self._session,
@@ -243,6 +249,48 @@ class AlpacaSource:
             if not token:
                 return bars
             params = {**params, "page_token": token}
+
+    def fetch_intraday(
+        self, symbol: str, start: datetime, end: datetime, timeframe: str = "30Min"
+    ) -> pd.DataFrame:
+        """Adjusted intraday SIP bars whose start lies in [`start`, `end`].
+
+        Columns `ts` (UTC bar start), open, high, low, close, volume, oldest first.
+        `end` is capped at `now - sip_delay` (the Basic plan refuses newer data), so
+        the newest bar returned may still be forming: callers keep only bars whose
+        end is older than that cap. Extended-hours bars are included.
+        """
+        if start.tzinfo is None or end.tzinfo is None:
+            raise ValueError("start and end must be timezone-aware")
+        columns = ["ts", "open", "high", "low", "close", "volume"]
+        latest = pd.Timestamp(self._clock()).tz_convert("UTC") - self.sip_delay
+        first = pd.Timestamp(start).tz_convert("UTC")
+        last = min(pd.Timestamp(end).tz_convert("UTC"), latest)
+        if last < first:
+            return pd.DataFrame(columns=columns)
+        bars = self._pages(
+            symbol,
+            {
+                "timeframe": timeframe,
+                "start": first.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end": last.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "feed": "sip",
+                "adjustment": "all",
+                "limit": str(self.page_limit),
+            },
+        )
+        frame = pd.DataFrame(
+            {
+                "ts": pd.to_datetime([bar["t"] for bar in bars], utc=True),
+                "open": [float(bar["o"]) for bar in bars],
+                "high": [float(bar["h"]) for bar in bars],
+                "low": [float(bar["l"]) for bar in bars],
+                "close": [float(bar["c"]) for bar in bars],
+                "volume": [round(float(bar["v"])) for bar in bars],
+            },
+            columns=columns,
+        )
+        return frame.drop_duplicates("ts", keep="last").sort_values("ts").reset_index(drop=True)
 
     def _end_param(self, end: date) -> str:
         """The last second of `end` in New York, capped at `now - sip_delay`.
