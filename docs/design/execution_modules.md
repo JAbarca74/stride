@@ -123,6 +123,8 @@ orders.submit_approved(broker, planned, decisions, conn)
 
 ## 2. `execution/ibkr_broker.py`
 
+> Superseded by [`ibkr_broker.md`](ibkr_broker.md) (v2, 2026-11-11), which follows the current `Broker` interface. Kept for history.
+
 ### 2a. Proposed API
 
 `IBKRBroker(Broker)` over `ib_async` (already the `ibkr` optional extra in `pyproject.toml`), talking to IB Gateway (SPEC 15).
