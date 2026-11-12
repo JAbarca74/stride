@@ -1,6 +1,6 @@
 # Risk-based allocation for the Monte Carlo universe: design
 
-Status: **proposal, not approved.** Nothing in this document is implemented. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
+Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phase 1 is built (section 11); no gate has been run and there is no allocation result yet. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
 
 Rules this work keeps:
 
@@ -136,3 +136,33 @@ In the order this design suggests testing them, each as its own design and pull 
 1. Approve the design: the 9 variants, the two set-ups of section 5, the periods and the two gates.
 2. Confirm that `EW`/`none` may be used as the reference of gate R2 (it is the null allocation of the same assets, in the same role as the null forecaster, not an index).
 3. Confirm the download of XLU, FXI, INDA, EWZ and UNG from Tiingo into the research database.
+
+## 11. As built
+
+### Phase 1: daily research data (2026-11-12)
+
+| Piece | File |
+| --- | --- |
+| Daily panel, as-of universe, data-quality table (pure) | `src/stride/forecast/daily.py` |
+| Download and report | `scripts/research/mc_daily_data.py` |
+| Tests | `tests/test_forecast_daily.py` |
+| Report of this run | `docs/results/mc_daily/` |
+
+Differences from section 2:
+
+- **All 20 assets were downloaded in full from Tiingo, not copied from `data/stride.db` and topped up.** Adjusted prices are rescaled at every dividend, so bars appended to an older copy would not line up with it. `data/stride.db` (read-only) gives the two crypto spot series and a cross-check.
+- The crypto spot proxies (`BTC-USD`, `ETH-USD`) are a copy and end on 2026-10-23; they are not topped up. They are only used in the labelled sensitivity run.
+
+What the data looks like (`data_quality.csv`, `universe_as_of.csv`):
+
+- 20 assets, 2007-01-03 to 2026-11-11, 4,997 sessions for the 12 that existed at the start. Later starts: DBA 2007-01-05, UUP 2007-03-01, UNG 2007-04-18, CPER 2011-11-15, INDA 2012-02-03, IBIT 2024-01-11, ETHA 2024-07-23.
+- No missing session inside any asset's own span, no bar on a non-session, no non-positive price.
+- The as-of universe (a full 252-session window) has 16 assets from 2008 to 2011, 17 at the end of 2012, 18 from 2013 to 2024 and 20 since 2025.
+- Largest one-day moves are between 4% (UUP) and 29% (SLV, 2026-01-30); none was removed. CPER has a run of 8 sessions with an unchanged close, the longest of the 20 (the others have at most 3).
+
+Cross-checks:
+
+- Against `data/stride.db` (same provider, so it only proves the download is the same series): the daily returns of the 15 shared assets are identical on every common day (`cross_check.csv`).
+- Against the Alpaca 30-minute bars of `data/mc_research.db`, an independent source, 2016 onward (`cross_check_intraday.csv`): the median gap between the two daily returns is 1 to 6 basis points per asset, expected because the last 30-minute bar is not the closing auction. 18 days in total differ by more than 1% (CPER 5, FXI 4, INDA 4, XLE 2, USO 2, DBA 1), the largest 3.5% (CPER, 2016-01-19). Nothing before 2016 has a second source.
+
+The existing simulator was not changed: `tests/test_forecast_daily.py` runs `standardize` and `simulate(..., n_slots=1)` on a daily panel and checks reproducibility and that the simulated risk follows the volatility of the data.
