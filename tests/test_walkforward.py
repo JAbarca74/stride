@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,6 +17,7 @@ from stride.forecast.summary import Forecast, Summary
 from stride.forecast.walkforward import (
     CostModel,
     Rule,
+    Trader,
     forecast_at,
     forecast_table,
     last_slot_rows,
@@ -290,3 +293,51 @@ def test_trading_metrics() -> None:
     assert 0.0 <= metrics["max_drawdown"] < 0.05
     assert metrics["killed"] == 0.0
     assert metrics["days_in_cash_share"] == 0.0
+
+
+def _drive(
+    trader: Trader, panel: ReturnPanel, said: dict[int, float], start: int, stop: int
+) -> None:
+    session_end = set(last_slot_rows(panel).tolist())
+    for row in range(start, stop):
+        trader.open_slot(panel, row)
+        closes = row in session_end
+        forecast = _signal(said[row]) if row in said else None
+        trader.decide(panel, row, forecast, closes_session=closes)
+        trader.close_slot(panel, row, session_end=closes)
+
+
+def test_trader_state_survives_a_json_round_trip_between_runs() -> None:
+    """The live job saves the trader after every run: it must continue exactly."""
+    panel = _panel(8, seed=3)
+    said = {1: 0.7, 8: 0.45, 20: 0.7, 29: 0.3, 36: 0.7}
+    costs = CostModel(np.array([5.0, 5.0]), _flat_fee)
+
+    def new() -> Trader:
+        return Trader(RULE, costs, initial_equity=1000.0, kill_switch_dd=0.20, size=2)
+
+    whole = new()
+    _drive(whole, panel, said, 0, len(panel))
+    first = new()
+    _drive(first, panel, said, 0, 21)  # stops with an order still pending
+    assert first.book.pending
+    restored = Trader.from_state(
+        json.loads(json.dumps(first.to_state())), RULE, costs, kill_switch_dd=0.20
+    )
+    restored.book.trades = list(first.book.trades)
+    _drive(restored, panel, said, 21, len(panel))
+    assert restored.to_state() == whole.to_state()
+    assert restored.book.trades == whole.book.trades
+    assert len(whole.book.trades) >= 3
+
+
+def test_trader_liquidate_stops_and_sells_everything_at_the_next_open() -> None:
+    panel = _panel(3, seed=1)
+    trader = Trader(RULE, NO_COSTS, initial_equity=1000.0, kill_switch_dd=0.20, size=2)
+    _drive(trader, panel, {0: 0.7}, 0, 4)
+    assert trader.book.shares[0] > 0
+    trader.liquidate(reason="KILL_SWITCH")
+    assert trader.stopped
+    _drive(trader, panel, {5: 0.9}, 4, 8)  # a new signal is ignored once stopped
+    assert trader.book.shares.sum() == 0.0
+    assert trader.book.trades[-1]["reason"] == "KILL_SWITCH"
