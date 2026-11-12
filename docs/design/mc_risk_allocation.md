@@ -1,6 +1,6 @@
 # Risk-based allocation for the Monte Carlo universe: design
 
-Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phase 1 is built (section 11); no gate has been run and there is no allocation result yet. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
+Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phases 1 and 2 are built (section 11). **Gate R1 is met** (`docs/design/mc_risk_calibration_results.md`); gate R2 has not been run and there is no allocation result yet. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
 
 Rules this work keeps:
 
@@ -166,3 +166,18 @@ Cross-checks:
 - Against the Alpaca 30-minute bars of `data/mc_research.db`, an independent source, 2016 onward (`cross_check_intraday.csv`): the median gap between the two daily returns is 1 to 6 basis points per asset, expected because the last 30-minute bar is not the closing auction. 18 days in total differ by more than 1% (CPER 5, FXI 4, INDA 4, XLE 2, USO 2, DBA 1), the largest 3.5% (CPER, 2016-01-19). Nothing before 2016 has a second source.
 
 The existing simulator was not changed: `tests/test_forecast_daily.py` runs `standardize` and `simulate(..., n_slots=1)` on a daily panel and checks reproducibility and that the simulated risk follows the volatility of the data.
+
+### Phase 2: gate R1 (2026-11-12)
+
+| Piece | File |
+| --- | --- |
+| Daily simulation, calibration cases, block-bootstrap frequency (pure) | `src/stride/forecast/daily_risk.py` |
+| The gate | `scripts/research/mc_daily_calibration.py` |
+| Tests | `tests/test_forecast_daily_risk.py` |
+| Results | `docs/design/mc_risk_calibration_results.md`, `docs/results/mc_daily/r1_*` |
+
+Gate R1 is met: pooled coverage of the 90% interval 0.894 to 0.902 at 5 and 20 sessions in both periods, and the 5-session loss of the equal-weight portfolio went beyond the simulated 5% and 1% quantiles in 4.4% to 5.1% and 1.6% of the evaluations.
+
+Settled before the run: the coverage check of section 6 pools all assets, as the 30-minute gate did; the asset-by-asset figures are reported (four cells outside the range at 20 sessions, none at 5).
+
+Findings that phases 3 and 4 must respect (details in the results document, section 5): the 1% tail was exceeded about 1.6 times as often as simulated; in the first days of a crash the realized loss was up to 2.9 times the simulated 1% quantile; and an equal-weight hold of the universe lost more than 20% over 20 sessions in 2008 and in 2020, so the kill switch result in those two years is the real test of the brakes.

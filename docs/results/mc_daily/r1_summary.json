@@ -1,0 +1,62 @@
+{
+  "seed": 20261112,
+  "every": 1,
+  "window_days": 252,
+  "n_paths": 2000,
+  "first_day": "2007-01-03",
+  "last_day": "2026-11-11",
+  "evaluations": 4740,
+  "gate": {
+    "passed": true,
+    "checks": [
+      {
+        "check": "coverage90 h=5 selection",
+        "value": 0.9020306563605398,
+        "limit": "0.87 to 0.93",
+        "passed": true
+      },
+      {
+        "check": "coverage90 h=20 selection",
+        "value": 0.900406131272108,
+        "limit": "0.87 to 0.93",
+        "passed": true
+      },
+      {
+        "check": "portfolio q05 exceedance h=5 selection",
+        "value": 0.05119152691968226,
+        "limit": "at most 0.075",
+        "passed": true
+      },
+      {
+        "check": "portfolio q01 exceedance h=5 selection",
+        "value": 0.016328331862312445,
+        "limit": "at most 0.02",
+        "passed": true
+      },
+      {
+        "check": "coverage90 h=5 holdout",
+        "value": 0.8962922092253366,
+        "limit": "0.87 to 0.93",
+        "passed": true
+      },
+      {
+        "check": "coverage90 h=20 holdout",
+        "value": 0.8944012441679626,
+        "limit": "0.87 to 0.93",
+        "passed": true
+      },
+      {
+        "check": "portfolio q05 exceedance h=5 holdout",
+        "value": 0.043654001616814875,
+        "limit": "at most 0.075",
+        "passed": true
+      },
+      {
+        "check": "portfolio q01 exceedance h=5 holdout",
+        "value": 0.01576394502829426,
+        "limit": "at most 0.02",
+        "passed": true
+      }
+    ]
+  }
+}
