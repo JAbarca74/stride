@@ -22,7 +22,14 @@ from stride.data.sources import SourceError
 from stride.forecast.config import McConfigError, load_mc_config
 from stride.forecast.walkforward import forecast_at as real_forecast_at
 from stride.reporting.alerts import Alert
-from stride.run_mc import Deps, McJob, closes_session, latest_ended_slot, main
+from stride.run_mc import (
+    Deps,
+    McJob,
+    closes_session,
+    forward_calibration,
+    latest_ended_slot,
+    main,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 UNIVERSE = ["QQQ", "IWM", "GLD"]
@@ -42,9 +49,9 @@ def _real_config() -> dict[str, Any]:
     return loaded
 
 
-def test_the_shipped_config_is_valid_and_disabled() -> None:
+def test_the_shipped_config_is_valid_and_paper_only() -> None:
     config = load_mc_config(ROOT / "config.paper_mc.yaml")
-    assert config.enabled is False  # the calibration gate was not met
+    assert isinstance(config.enabled, bool)  # the owner's switch; its value is not pinned
     assert config.mode == "paper"
     assert config.capital_usd == 1000
     assert config.kill_switch_dd == 0.20
@@ -464,3 +471,36 @@ def test_a_crash_in_the_middle_of_a_tick_leaves_nothing_half_written(
         assert a.execute(trades).fetchall() == b.execute(trades).fetchall()
         count = "SELECT COUNT(*) FROM events WHERE type = 'MC_TRADE'"
         assert a.execute(count).fetchone() == b.execute(count).fetchone()
+
+
+def test_forward_calibration_scores_matured_forecasts_only(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    for hour in (16, 17, 18, 19, 20, 21):
+        rig.tick(at(hour, 30))
+    for hour in (15, 16, 17, 18, 19, 20, 21):
+        rig.tick(at(hour, 30, day=11))
+    with rig.db() as conn:
+        table = forward_calibration(conn, UNIVERSE, at(21, 30, day=11))
+        audited = conn.execute("SELECT COUNT(DISTINCT slot_end) FROM mc_forecasts").fetchone()[0]
+    assert audited >= 10  # one audited forecast per hourly tick
+    by_horizon = {int(r["horizon"]): r for r in table.to_dict("records")}
+    assert set(by_horizon) >= {1, 7}  # 35 and 140 slots have not passed yet
+    assert 35 not in by_horizon
+    for horizon in (1, 7):
+        row = by_horizon[horizon]
+        assert row["cases"] > 0
+        assert 0.0 <= row["mean_p_up"] <= 1.0
+        assert row["skill_vs_null"] == pytest.approx(1.0 - row["brier"] / row["brier_null"])
+    # A steady uptrend that the model saw coming scores better than saying 50% about everything.
+    assert by_horizon[1]["skill_vs_null"] > 0
+    assert by_horizon[7]["cases"] < by_horizon[1]["cases"]  # later horizons mature later
+
+
+def test_forward_calibration_of_an_empty_audit(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.tick(at(16, 30))  # one slot: the audit exists but nothing has matured
+    with rig.db() as conn:
+        assert forward_calibration(conn, UNIVERSE, at(16, 30)).empty
+    lines: list[str] = []
+    assert rig.job.report(lines.append) == 0
+    assert "forward calibration: no audited forecast has matured yet" in lines

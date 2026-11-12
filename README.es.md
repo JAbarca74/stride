@@ -187,7 +187,7 @@ STRIDE está operando en **Fase 4 de Paper Trading** en dos instancias concurren
 - **STRIDE B** (`config.paper_b.yaml`): Núcleo tecnológico en QQQ a 1.5x + manga de compras en caídas de cripto.
 - **STRIDE DIP** (`config.paper_dip.yaml`): Núcleo en SPY + manga cripto.
 
-Una tercera instancia, experimental, **STRIDE MC** (`config.paper_mc.yaml`), simula miles de futuros por activo cada hora sobre un universo de 20 activos y opera solo cuando se concentran claramente al alza o a la baja, con pesos que salen de la simulación. Está fuera del veredicto de 40 días, usa una cuenta simulada (nunca envía órdenes) y está **construida pero desactivada**: no cumplió su puerta de calibración. Ver [`docs/handoff_montecarlo_estado.es.md`](docs/handoff_montecarlo_estado.es.md) (estado) y [`docs/design/mc_backtest_results.md`](docs/design/mc_backtest_results.md) (resultados, en inglés).
+Una tercera instancia, experimental, **STRIDE MC** (`config.paper_mc.yaml`), simula miles de futuros por activo cada hora sobre un universo de 20 activos y opera solo cuando se concentran claramente al alza o a la baja, con pesos que salen de la simulación. Está fuera del veredicto de 40 días, usa una cuenta simulada (nunca envía órdenes) y **corre como experimento de papel hacia adelante desde el 2026-11-12 aunque no cumplió su puerta de calibración** (decisión del dueño; el backtest no mostró ventaja demostrada). Ver [`docs/handoff_montecarlo_estado.es.md`](docs/handoff_montecarlo_estado.es.md) (estado) y [`docs/design/mc_backtest_results.md`](docs/design/mc_backtest_results.md) (resultados, en inglés).
 
 ### Evaluador Automático de Veredicto a 40 Días Bursátiles
 
@@ -375,7 +375,7 @@ stride/
 ├── config.yaml               # Configuración base de estrategia y riesgo
 ├── config.paper_b.yaml       # Configuración de Instancia Paper B (QQQ + dip)
 ├── config.paper_dip.yaml     # Configuración de Instancia Paper DIP (SPY + dip)
-├── config.paper_mc.yaml      # Configuración de Instancia Paper MC (cartera Monte Carlo, desactivada)
+├── config.paper_mc.yaml      # Configuración de Instancia Paper MC (cartera Monte Carlo, experimento de papel)
 ├── docs/                     # Especificaciones, arquitectura y diagramas
 │   ├── SPEC.md               # Especificación técnica oficial (fuente de verdad)
 │   ├── CONFIG.md             # Documentación exhaustiva de parámetros de config.yaml

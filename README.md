@@ -191,7 +191,7 @@ STRIDE is actively deployed in **Phase 4 Paper Forward-Testing** across two dist
 - **STRIDE B** (`config.paper_b.yaml`): QQQ tech core at 1.5x leverage + crypto dip sleeve.
 - **STRIDE DIP** (`config.paper_dip.yaml`): SPY market core + crypto dip sleeve.
 
-A third, experimental instance, **STRIDE MC** (`config.paper_mc.yaml`), simulates thousands of futures per asset every hour over a 20-asset universe and trades only when they concentrate clearly up or down, with weights from the simulation. It is outside the 40-day verdict below, runs on a simulated account (it never sends orders) and is **built but disabled**: its calibration gate was not met. See [`docs/handoff_montecarlo_estado.es.md`](docs/handoff_montecarlo_estado.es.md) (status, in Spanish) and [`docs/design/mc_backtest_results.md`](docs/design/mc_backtest_results.md) (results).
+A third, experimental instance, **STRIDE MC** (`config.paper_mc.yaml`), simulates thousands of futures per asset every hour over a 20-asset universe and trades only when they concentrate clearly up or down, with weights from the simulation. It is outside the 40-day verdict below, runs on a simulated account (it never sends orders) and **runs as a forward paper experiment since 2026-11-12 although its calibration gate was not met** (the owner's decision; the backtest showed no demonstrated edge). See [`docs/handoff_montecarlo_estado.es.md`](docs/handoff_montecarlo_estado.es.md) (status, in Spanish) and [`docs/design/mc_backtest_results.md`](docs/design/mc_backtest_results.md) (results).
 
 ### Automated 40-Trading-Day Final Verdict Evaluator
 
@@ -387,7 +387,7 @@ stride/
 ├── config.yaml               # Baseline strategy and risk configuration
 ├── config.paper_b.yaml       # Paper Instance B configuration (QQQ core + dip)
 ├── config.paper_dip.yaml     # Paper Instance DIP configuration (SPY core + dip)
-├── config.paper_mc.yaml      # Paper Instance MC configuration (Monte Carlo portfolio, disabled)
+├── config.paper_mc.yaml      # Paper Instance MC configuration (Monte Carlo portfolio, forward paper experiment)
 ├── docs/                     # Specifications, architecture, and SVG assets
 │   ├── SPEC.md               # Technical specification (single source of truth)
 │   ├── CONFIG.md             # Complete parameter reference for config.yaml
