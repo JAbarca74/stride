@@ -123,10 +123,16 @@ def test_the_30_minute_simulator_runs_on_the_daily_panel() -> None:
 
 def test_quality_table_counts_gaps_and_suspect_values() -> None:
     clean = _bars(DAYS, 1)
-    dirty = _bars(DAYS[10:], 2).drop([DAYS[20], DAYS[21]])
-    dirty.loc[DAYS[30], "close"] = float(np.asarray(dirty.loc[DAYS[29], "close"])) * 1.5
-    dirty.loc[DAYS[40:44], "close"] = dirty.loc[DAYS[39], "close"]
-    dirty.loc[pd.Timestamp("2024-03-02")] = dirty.loc[DAYS[39]]  # a Saturday
+    base = _bars(DAYS[10:], 2)
+    close = base["close"].to_numpy(dtype=float, copy=True)  # close[k] is the bar of DAYS[k + 10]
+    close[20] = close[19] * 1.5  # a 50% jump on DAYS[30]
+    close[30:34] = close[29]  # four unchanged closes, DAYS[40] to DAYS[43]
+    frame = pd.DataFrame({"open": base["open"].to_numpy(dtype=float), "close": close})
+    frame.index = DAYS[10:]
+    saturday = pd.DataFrame(
+        {"open": [close[29]], "close": [close[29]]}, index=pd.DatetimeIndex(["2024-03-02"])
+    )
+    dirty = pd.concat([frame.drop([DAYS[20], DAYS[21]]), saturday])
     table = quality_table({"CLEAN": clean, "DIRTY": dirty}, DAYS).set_index("symbol")
     assert table.loc["CLEAN", "bars"] == len(DAYS)
     assert table.loc["CLEAN", "missing_sessions"] == 0
