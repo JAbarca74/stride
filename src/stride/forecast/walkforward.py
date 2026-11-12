@@ -364,6 +364,7 @@ class Trader:
 
     @property
     def stopped(self) -> bool:
+        """Whether the kill switch stopped this account."""
         return self.book.stopped
 
     def open_slot(self, panel: ReturnPanel, row: int) -> None:
@@ -421,6 +422,7 @@ class Trader:
         ]
 
     def to_state(self) -> dict[str, Any]:
+        """The account as plain data (JSON-safe), to save between runs."""
         book = self.book
         return {
             "counter": self.counter,
@@ -454,6 +456,7 @@ class Trader:
         *,
         kill_switch_dd: float,
     ) -> Trader:
+        """Rebuild an account saved by `to_state`."""
         shares = np.array(state["shares"], dtype=float)
         trader = cls(
             rule,

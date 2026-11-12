@@ -19,6 +19,7 @@ For the formal mathematical specifications and architectural contracts, refer to
 - [Transaction Costs & Fees](#transaction-costs--fees)
 - [Market Data & Quality Checks](#market-data--quality-checks)
 - [Research Experiments](#research-experiments)
+- [Monte Carlo Instance (`config.paper_mc.yaml`)](#monte-carlo-instance-configpaper_mcyaml)
 
 ---
 
@@ -175,3 +176,41 @@ For the formal mathematical specifications and architectural contracts, refer to
 | `experiments.dd_scale_window` | `0` | trading days | Rolling lookback peak window for drawdown scaling (0 = all-time peak). | [SPEC §9](SPEC.md#9-backtest-protocol-and-robustness-framework) |
 | `experiments.rotation` | *(mapping)* | mapping | Parameters for Gayed & Bilello (2016) leverage rotation strategy (`underlying: SPY`, `sma: 200`, `multiple: 3`, `refuge: IEF`). | [SPEC §9](SPEC.md#9-backtest-protocol-and-robustness-framework) |
 | `experiments.allocation` | *(mapping)* | mapping | Parameters for systematic allocation searches (dual momentum, volatility managed, risk parity, crypto sleeve). | [SPEC §9](SPEC.md#9-backtest-protocol-and-robustness-framework) |
+
+---
+
+## Monte Carlo Instance (`config.paper_mc.yaml`)
+
+The Monte Carlo portfolio has its own small file, validated by `McConfig` (`src/stride/forecast/config.py`); it is not a copy of `config.yaml`. Commission and spread come from `config.yaml` (`costs`), so this instance pays what B and DIP pay. Design: [`docs/design/mc_forecast.md`](design/mc_forecast.md); results: [`docs/design/mc_backtest_results.md`](design/mc_backtest_results.md). Unknown keys are refused. Horizons are counted in session slots: 1 = 1 hour, 7 = 1 day, 35 = 5 days, 140 = 20 days.
+
+| Parameter | Value in the file | Unit | Description |
+| :-- | :-- | :-- | :-- |
+| `enabled` | `false` | boolean | `false` makes every tick of `python -m stride.run_mc` a no-op. It is `false` because the calibration gate was not met. |
+| `mode` | `paper` | string | Only `paper` is accepted; the instance never trades real money and never sends orders (the account is simulated). |
+| `capital_usd` | `1000` | USD | Simulated starting capital. |
+| `kill_switch_dd` | `0.20` | fraction | Drawdown from the peak, measured at a session close, that sells everything at the next open and stops the account for good (writes `KILL_SWITCH_MC`). |
+| `db_path` | `data/paper_mc.db` | path | Instance database (git-ignored; copied to the state repo by `scripts/save_state.sh`). |
+| `universe` | 20 ETFs | list of tickers | The assets approved on 2026-11-11 (`docs/design/mc_universe.md`). |
+| `groups`, `group_caps` | `us_equity` 0.40, `metals` 0.35, `crypto` 0.30 | mapping, fractions | Joint cap on the combined weight of correlated assets. |
+| `forecast.window_days` | `252` | trading days | History used to simulate (63, 126 and 252 were tested). |
+| `forecast.generator` | `drift` | `drift` or `analog` | How direction enters the simulation. |
+| `forecast.drift_shrink` | `0.5` | fraction | Share of the window's mean return kept in the simulated paths (0 = no direction). |
+| `forecast.n_paths`, `n_paths_risk` | `2000`, `1000` | count | Simulated futures per asset; joint paths for the portfolio loss cap in analog mode. |
+| `forecast.order_usd` | `250` | USD | Typical order, which sets the round-trip cost the forecast subtracts. |
+| `forecast.seed` | `20261112` | integer | Base seed; the seed of each evaluation derives from it and the slot time. |
+| `decision.horizon` | `140` | slots | Decision horizon (must be 1, 7, 35 or 140). |
+| `decision.confirm_horizon` | `7` | slots | Horizon whose probability must not point down to enter. |
+| `decision.p_enter` | `0.65` | probability | Enter when the probability of a gain after costs reaches this. |
+| `decision.p_exit` | `0.55` | probability | Leave when the probability of any gain falls to this (must be below `p_enter`: hysteresis). |
+| `decision.k_cost` | `1.0` | multiple | The net expected gain must be at least this many times the round-trip cost. |
+| `decision.p_confirm` | `0.50` | probability | Minimum probability of a gain at `confirm_horizon` to enter. |
+| `weights.kappa` | `0.25` | fraction | Kelly fraction: weight = kappa x expected gain / variance of the simulated outcome. |
+| `weights.max_weight` | `0.25` | fraction of equity | Cap per asset. |
+| `weights.max_total` | `1.0` | fraction of equity | Cap on invested capital (1.0 = no leverage). |
+| `weights.risk_horizon`, `risk_quantile`, `max_portfolio_loss` | `35`, `0.01`, `0.08` | slots, probability, fraction | The loss exceeded in `risk_quantile` of the joint simulated paths over `risk_horizon` slots must stay below `max_portfolio_loss` of equity; weights are scaled down until it does. |
+| `weights.min_order_usd` | `150` | USD | Targets below this are dropped (the weakest signals first): the 0.35 USD commission floor would eat them. |
+| `history_days` | `400` | calendar days | Days of 30-minute bars kept; older ones are deleted. Must cover `forecast.window_days`. |
+| `catchup_slots` | `14` | slots | After an outage, only the latest missed slots are decided (all are replayed for fills and equity). |
+| `download_budget_s` | `120` | seconds | A tick stops downloading bars after this long and continues at the next one (the first 400 days take 20 to 80 s per symbol). |
+
+Turning it on: set `enabled: true` and merge to `main`; the next tick of the Actions loop starts the account. Stopping it by hand: create a file named `KILL_SWITCH_MC` (or `KILL_SWITCH` for every instance) in the repository folder.

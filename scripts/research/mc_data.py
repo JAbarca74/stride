@@ -59,6 +59,7 @@ def load_env(path: Path) -> None:
 
 
 def main() -> None:
+    """Download the 30-minute history of the universe."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=REPO_ROOT / "data" / "mc_research.db")
     parser.add_argument("--start", default="2016-01-01")

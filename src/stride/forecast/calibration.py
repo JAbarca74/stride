@@ -64,6 +64,8 @@ def coverage(low: FloatArray, high: FloatArray, outcome: FloatArray) -> float:
 
 @dataclass(frozen=True)
 class SkillInterval:
+    """A Brier skill with the 95% interval of its bootstrap."""
+
     skill: float
     low: float
     high: float

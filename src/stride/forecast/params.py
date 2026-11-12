@@ -44,14 +44,17 @@ class ForecastParams:
 
     @property
     def window_steps(self) -> int:
+        """The window length in session slots."""
         return self.window_days * SLOTS_PER_DAY
 
     @property
     def vol_span_steps(self) -> int:
+        """The span of the volatility filter in session slots."""
         return self.vol_span_days * SLOTS_PER_DAY
 
     @property
     def mean_block_steps(self) -> float:
+        """The mean length of a resampled run in session slots."""
         return self.mean_block_days * SLOTS_PER_DAY
 
 

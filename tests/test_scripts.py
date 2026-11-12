@@ -91,5 +91,11 @@ def test_actions_run_uses_state_repo_and_never_live_keys() -> None:
     assert "IBKR" not in workflow and "LIVE_CONFIRM" not in workflow
     assert "--phase auto" in _text("actions_loop.sh")
     assert "push -q --force" in _text("save_state.sh")
+    # The Monte Carlo instance rides on the same loop: its database is saved, and a failed
+    # tick of it never fails the run (B and DIP do not depend on it).
+    loop = _text("actions_loop.sh")
+    assert "python -m stride.run_mc --config config.paper_mc.yaml ||" in loop
+    assert "FAILED=1" not in next(line for line in loop.splitlines() if "run_mc" in line)
+    assert "data/paper_mc.db" in _text("save_state.sh")
     setup = _text("setup_actions.ps1")
     assert "--private" in setup and "IBKR" in setup and "never copied" in setup

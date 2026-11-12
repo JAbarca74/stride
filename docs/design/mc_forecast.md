@@ -1,6 +1,6 @@
 # Monte Carlo portfolio (`paper_mc`): forecast and decision design
 
-Phase 2 of `docs/handoff_montecarlo.es.md`. Status: **design, waiting for the owner's approval before any code**. It builds on `docs/design/mc_universe.md` (20 assets, approved 2026-11-11 together with: bearish signal = cash only, cost model = IBKR Pro Tiered).
+Phase 2 of `docs/handoff_montecarlo.es.md`. Status: **approved by the owner on 2026-11-11 and implemented in phases 3 to 6; the calibration gate of section 8 was not met** (`docs/design/mc_backtest_results.md`). Section 11 records how it was built and where it differs. It builds on `docs/design/mc_universe.md` (20 assets, approved 2026-11-11 together with: bearish signal = cash only, cost model = IBKR Pro Tiered).
 
 Nothing here changes B, DIP, `execution/orders.py`, `risk/guard.py`, `risk/leverage.py` or the kill switch code. All numbers below are **starting values or pre-registered candidates**; the final ones are chosen by the walk-forward of phase 5 and then live in `config.paper_mc.yaml`.
 
@@ -118,3 +118,57 @@ All pure. `run_daily.py` gets an hourly phase that only runs for a config with t
 1. Approve this design, in particular: realistic thresholds (55-65%, not 80%), the 20-day horizon as a candidate, at most 6 positions of at least 150 USD, and the go/no-go gate.
 2. Approve option (b), shadow fills on intraday bars.
 3. The targets are handed to `execution/orders.py` in the form it already accepts. If that turns out to need any change in `orders.py` or `guard.py`, work stops and the change is proposed first.
+
+
+## 11. As built (2026-11-12)
+
+What was implemented in phases 3 to 6 and where it differs from the design above. Outcome of the evaluation: `docs/design/mc_backtest_results.md`.
+
+### Where the code is
+
+| Piece | File |
+| --- | --- |
+| 30-minute bars from Alpaca | `AlpacaSource.fetch_intraday` in `src/stride/data/sources.py` |
+| Storage, incremental update, slots | `src/stride/data/intraday.py` (table `intraday_bars`) |
+| Parameters | `src/stride/forecast/params.py` (`ForecastParams`, `DecisionParams`, `WeightParams`) |
+| Slot panel, volatility filter | `src/stride/forecast/returns.py` |
+| Path simulation | `src/stride/forecast/simulate.py` |
+| Path statistics | `src/stride/forecast/summary.py` |
+| Entry/exit rule | `src/stride/forecast/decide.py` |
+| Weights and limits | `src/stride/forecast/weights.py` |
+| Calibration measures | `src/stride/forecast/calibration.py` |
+| Walk-forward and the `Trader` | `src/stride/forecast/walkforward.py` |
+| Instance config model | `src/stride/forecast/config.py` |
+| Hourly job | `src/stride/run_mc.py` |
+| Instance config | `config.paper_mc.yaml` |
+| Research scripts | `scripts/research/mc_data.py`, `mc_evaluate.py`, `mc_diagnostics.py` |
+
+### Differences from the design
+
+- **Paths.** 2,000 paths per asset instead of 5,000 (speed of the walk-forward; the sampling error of a probability is about 1 point). In the drift generator the same paths feed the decision and the portfolio loss cap; in the analog generator each asset has its own 2,000 paths and 1,000 drift-free joint paths feed the cap.
+- **Analog generator.** The nearest 10% of the past moments of the same slot (state: 1-day and 5-day return in volatility units, volatility against the window average) give the start of each path; the run then continues as the plain bootstrap. It conditions the first run (about 2 days) only.
+- **Seeds.** `seed_for(base, row)` in the backtest; in the live job the salt is the slot end time, so a seed does not depend on how the panel is cut.
+- **Evaluation points.** Stage A weekly (every 5th session) at two slots; stage B every slot.
+- **Selection of the rule.** Best return over drawdown on 2017-2022 among runs whose kill switch did not fire.
+- **Sells with a zero target.** A held asset whose target weight falls to 0 without an exit signal (below the minimum order, or squeezed by a cap) is sold with the reason `MC_DROP`.
+- **Guard limits reproduced inside the `Trader`, not by calling `risk/guard.py`.** The 12 orders a day, no buy and sell of one asset on the same day, no shorts. `risk/guard.py`, `risk/leverage.py`, `execution/orders.py` and the kill switch decision are protected modules and were not touched; their daily-bar semantics do not fit hourly shadow fills. The drawdown kill switch is implemented in the `Trader` (measured at a session close, sells everything at the next open, stops for good) and writes the `KILL_SWITCH_MC` file through the existing `execution/kill_switch_file.fire`.
+- **Paper execution (decision (b) of section 7) was built as a dedicated simulated ledger, not by extending `ShadowBroker`.** The `Trader` keeps cash, shares and pending orders in the instance database (`mc_state`) and fills at the slot open with the spread and commission of `config.yaml`. The same object runs the backtest, so paper and backtest cannot drift apart. `tests/test_run_mc.py` checks that a job that missed ticks and replayed them ends in exactly the same account as one that ran continuously.
+- **Costs.** `config.yaml` costs (IBKR Pro Tiered, 5 bps per side, 10 bps for crypto), as B and DIP.
+- **Data safeguards of the job.** A slot is used only when at least 80% of the universe has its closing bar; a move above 25% in one slot is treated as bad data and stops the tick; the first download (400 days, 20 to 80 s per symbol on the Basic plan) is spread over several ticks by a time budget (`download_budget_s`, oldest symbols first); the bars are kept for `history_days` and older ones are deleted.
+- **Instance file.** `config.paper_mc.yaml` is a small standalone file validated by `McConfig` (not a copy of `config.yaml`); `mode` can only be `paper`; `enabled: false` makes every tick a no-op.
+- **Alerts.** A new alert kind `INFO` (`src/stride/reporting/alerts.py`) carries the summary at each close; `KILL_SWITCH`, `RUN_FAILED` and `DATA_FAILED` are used as in the other instances.
+- **State.** `scripts/save_state.sh` saves `data/paper_mc.db` to the state repo together with B and DIP, and `scripts/actions_loop.sh` calls `python -m stride.run_mc` after the two daily instances at every tick. A failing MC tick never fails the run.
+
+### Decisions taken by the owner
+
+| Date | Decision |
+| --- | --- |
+| 2026-11-11 | The 20 assets of `docs/design/mc_universe.md` |
+| 2026-11-11 | Bearish signal = cash only (no inverse funds) |
+| 2026-11-11 | Cost model = IBKR Pro Tiered, as B and DIP |
+| 2026-11-11 | Design approved, including the calibration gate (no paper trading without it) and shadow fills on intraday bars |
+| 2026-11-12 | Work through to the end and leave it running; the gate was not met, so the instance is built but disabled (see the results document) |
+
+### How to turn it on or off
+
+`enabled: true` in `config.paper_mc.yaml`, merged to `main`: the next tick of the Actions loop starts the account with 1,000 simulated USD (the first ticks only download history). `enabled: false` stops it; the database and the trades stay. To stop it by hand at any time, create a file named `KILL_SWITCH_MC` (or `KILL_SWITCH` for every instance) in the repository folder: the account sells everything at the next slot open and does not trade again. Status: `python -m stride.run_mc --config config.paper_mc.yaml --report`.

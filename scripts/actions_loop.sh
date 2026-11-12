@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The paper run on GitHub Actions: ticks every 5 minutes for DURATION seconds.
 # One tick = `run_daily --phase auto` for both instances (the job itself decides,
-# in New York time, which phase is due), then the databases go to the state repo.
+# in New York time, which phase is due), then `run_mc` for the Monte Carlo portfolio
+# (its own hourly job), then the databases go to the state repo.
 # Needs: .venv or an active Python with stride installed, and STATE_DIR (a clone
 # of the private state repo). Used by .github/workflows/paper.yml.
 
@@ -21,6 +22,10 @@ while [ "$(date +%s)" -lt "$END" ]; do
             FAILED=1
         fi
     done
+    # The Monte Carlo paper portfolio (docs/design/mc_forecast.md): a no-op while its config
+    # says `enabled: false`. It never marks the run as failed: it alerts by itself, and B
+    # and DIP must not depend on an experiment.
+    python -m stride.run_mc --config config.paper_mc.yaml || echo "tick failed: config.paper_mc.yaml"
     bash "$ROOT/scripts/save_state.sh" || FAILED=1
     # next 5-minute boundary plus 20 seconds, so a tick never lands before a window opens
     sleep $(( 300 - $(date +%s) % 300 + 20 ))

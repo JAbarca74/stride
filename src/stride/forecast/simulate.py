@@ -120,6 +120,7 @@ def analog_weights(
 
     def trailing(length: int) -> FloatArray:
         # Sum of the `length` returns ending at each position t >= length - 1.
+        """Sums of the last `length` scaled returns, in volatility units."""
         sums = np.full(steps, np.nan)
         sums[length - 1 :] = total[length:] - total[:-length]
         scaled_sums: FloatArray = sums / np.sqrt(length * average)

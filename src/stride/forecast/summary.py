@@ -61,6 +61,7 @@ def _spread(values: Summary, valid: np.ndarray, size: int) -> Summary:
     """Place per-valid-asset statistics into arrays of `size`, NaN elsewhere."""
 
     def place(array: FloatArray) -> FloatArray:
+        """An array of `size` with the values of the valid assets, NaN elsewhere."""
         out = np.full(size, np.nan)
         out[valid] = array
         return out
@@ -118,6 +119,7 @@ def run_forecast(
         seed_sequence: np.random.SeedSequence,
         start_weights: FloatArray | None = None,
     ) -> FloatArray:
+        """Simulate `n_paths` futures for `data` with the shared settings."""
         return simulate(
             data,
             recent_slot,
