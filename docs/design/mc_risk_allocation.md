@@ -1,0 +1,138 @@
+# Risk-based allocation for the Monte Carlo universe: design
+
+Status: **proposal, not approved.** Nothing in this document is implemented. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
+
+Rules this work keeps:
+
+- `config.paper_mc.yaml` is not changed and the running `paper_mc` experiment is not touched (a parameter change restarts it). Its behaviour must stay bit-identical: new code goes in new files, and no existing function of `src/stride/forecast/` changes what it returns.
+- No protected module is touched (`risk/leverage.py`, `risk/guard.py`, the kill switch, `execution/orders.py`, `execution/ibkr_broker.py`), no value of `config.yaml`, `config.paper_b.yaml` or `config.paper_dip.yaml`.
+- `data/stride.db` is opened read-only.
+- No number is promised. Every figure quoted below is a past measurement taken from the results document; everything else is a test still to be run.
+
+## 1. The idea and what it cannot do
+
+The evaluation found that the simulation cannot tell which asset will go up, and that its risk interval is calibrated. The current rule uses the unreliable number (the expected gain) both to decide and to size, and it sat in cash a large part of the time (18% to 100% of the sessions, depending on the rule) while an equal-weight buy-and-hold of the same assets made +33% and +54% in the two periods, with drawdowns of 28% and 11%.
+
+The proposal is to stop forecasting direction: hold the universe, and use the simulation only for what it does well, which is sizing by risk and keeping the portfolio away from the 20% kill switch.
+
+Limits that must be stated before any test:
+
+1. **Risk allocation creates no edge.** Its return is the return of the assets it holds. What it can change is how much of that return is kept per unit of drawdown, and how often the kill switch fires.
+2. **No leverage.** With `max_total` at 1.0, volatility targeting can only scale exposure down. Risk parity moves weight toward the low-volatility assets (UUP, TLT, XLU), and without leverage that lowers portfolio volatility and probably return. Leverage is not proposed: `risk/leverage.py` is protected and the instance has no margin.
+3. **Risk weights ignore expected return.** Assets with a negative measured carry get weight like any other (natural gas: annualized log return of -0.42 in the 2023-2026 period, TLT lost money in both periods). A brake (section 4) is the only pre-registered answer to that.
+4. **Per-asset calibration is not portfolio calibration.** The 85% to 91% coverage was measured asset by asset, on 30-minute data since 2016. The portfolio loss cap depends on the simulated correlations, which have not been tested, and neither has anything in 2008. Testing both is the first gate (section 6).
+5. **The universe was chosen in 2026.** A test of that list on 2007 onward has a hindsight bias (all 20 survived and are liquid today). It cannot be removed, only stated.
+
+## 2. Data: the daily history
+
+`data/stride.db` (table `prices`, adjusted daily bars, Tiingo, 2007-01-03 to 2026-10-23) has 15 of the 20 assets:
+
+| Available from | Assets |
+| --- | --- |
+| 2007-01 | QQQ, IWM, XLE, XLV, EFA, TLT, GLD, SLV, USO, VNQ, DBA |
+| 2007-03 | UUP |
+| 2011-11 | CPER |
+| 2024-01, 2024-07 | IBIT, ETHA |
+| missing | XLU, FXI, INDA, EWZ, UNG |
+
+- The five missing symbols are downloaded from Tiingo (data-only key, already allowed) into a separate research database, `data/mc_daily_research.db` (git-ignored by `*.db`), together with a copy of the 15 and a top-up to the current date. `data/stride.db` is not written.
+- **As-of universe.** An asset joins when it has a full history window, as in the 30-minute evaluation. In 2008 the portfolio therefore holds at most 16 assets (no CPER, INDA, IBIT, ETHA).
+- **Crypto.** The main test uses IBIT and ETHA only since they exist. `BTC-USD` and `ETH-USD` (Coinbase, since 2015 and 2016) are used only in one labelled sensitivity run as proxies; a spot price is not the ETF.
+- **Grid.** One step per NYSE session, close to close. The existing `simulate()` and `standardize()` already accept `n_slots=1`, so the same filtered bootstrap runs on daily returns without changing them. `run_forecast` and `ForecastParams` assume 7 slots per day and are not used by the daily research.
+
+## 3. Allocators (pre-registered)
+
+All take the joint simulated paths at the risk horizon (20 sessions, 2,000 paths, 252-day window, drift shrink 0: the null model, no direction).
+
+| Id | Weights before limits |
+| --- | --- |
+| `EW` | equal weight: the null allocation, the reference the others must beat |
+| `IV` | inverse of the simulated 20-day standard deviation of each asset |
+| `ERC` | equal risk contribution, from the covariance of the joint simulated paths |
+
+Limits applied to every allocator, taken from the current instance and not tuned: 25% per asset, the three group caps, total at most 100%, simulated 5-day loss (1% tail) at most 8% of equity, minimum order 150 USD, rebalance band 20%.
+
+Rebalance: weights are recomputed on the first session of each month; between rebalances the only changes are reductions forced by the loss cap or by a brake. Fills at the next session open with the commission and spread of `config.yaml` (read, not changed).
+
+Two ablations, one run each, to learn whether the simulation earns its place:
+
+- `IV` with a plain 60-day trailing volatility instead of the simulated one.
+- The selected variant without the portfolio loss cap.
+
+## 4. Brakes (pre-registered)
+
+| Id | Rule |
+| --- | --- |
+| `none` | always hold |
+| `trend` | an asset is held only while its close is above its 200-day average (the `TREND_FILTER` idea of the SPEC, checked at the monthly rebalance) |
+| `dd` | exposure is multiplied by `1 - drawdown / 0.15`, floored at 0: the portfolio is in cash before the 20% kill switch |
+
+The grid is 3 allocators x 3 brakes = **9 variants**, plus the 2 ablations and 1 crypto-proxy run. No other variant is added after seeing results; if one is, the document says so and it is reported as exploratory.
+
+## 5. The 1,000 USD problem (owner decision 1)
+
+With 1,000 USD and a 150 USD minimum order the account holds at most 6 positions. A risk-weighted portfolio of 20 assets cannot exist at that size: the minimum order would drop the smallest weights, which under `IV` and `ERC` are the most volatile assets, leaving an arbitrary low-volatility portfolio. Two set-ups are proposed, both run:
+
+- **`U20` at 10,000 USD**: the full universe. It measures the allocation itself.
+- **`S6` at 1,000 USD**: one asset per class, fixed in advance by a rule and not by results: the asset with the lowest spread measured in `docs/design/mc_universe.md` in each of six classes (US equity, international equity, bonds and dollar, metals, energy and agriculture, real estate). It measures what the real account size allows.
+
+The difference between the two is the price of the commission floor. Which one would go to paper, and with what simulated capital, is the owner's decision after the results.
+
+## 6. Tests and gates
+
+Walk-forward only, with the anti-look-ahead test of the existing suite extended to the daily panel.
+
+- **Selection period:** 2008-01-01 to 2016-12-31 (2007 is the warm-up). It contains 2008 and 2011.
+- **Holdout:** 2017-01-01 to the last bar, read once. Caveat: the equal-weight buy-and-hold result of this period is already known from the 30-minute evaluation, so `EW`/`none` is not blind; the other variants are.
+
+**Gate R1, risk calibration on daily data (before any allocation result is looked at).**
+
+1. Per asset: the simulated 90% interval contains the outcome 87% to 93% of the time at 5 and 20 sessions, in each period.
+2. Portfolio: for the `EW` weights, the realized 5-day loss exceeds the simulated 5% quantile in at most 7.5% of the evaluations and the simulated 1% quantile in at most 2%, in each period, with block-bootstrap intervals by calendar month.
+3. The same exceedance frequencies for 2008-2009 and for 2020 are reported apart. They do not gate, because the samples are small, but a failure there is stated in the verdict.
+
+If R1 fails, the loss cap is not a trustworthy control and the work stops there with that finding.
+
+**Gate R2, allocation.** The variant is selected on the selection period only (best return over maximum drawdown among runs whose kill switch did not fire). It passes if, on the holdout:
+
+1. the 20% kill switch did not fire, in either period;
+2. net return after costs is positive in both periods;
+3. total costs are below 1% of starting capital per year;
+4. return over maximum drawdown is at least that of `EW`/`none` with the same costs. This is the null allocation of the same assets, not an index;
+5. robustness: at least 6 of the 9 variants avoid the kill switch in both periods, and the selected variant's neighbours (same allocator with the other brakes, same brake with the other allocators) all have a positive holdout return.
+
+The SPEC alarm applies: an out-of-sample Sharpe above 1.5 is audited as a probable error. All 9 variants are published, not only the selected one. If R2 fails, the result is that risk allocation does not improve on holding this universe, and nothing goes to paper.
+
+## 7. Phases, one pull request each
+
+| Phase | Content | Ends with |
+| --- | --- | --- |
+| 0 | this design | owner approval |
+| 1 | daily research data: `scripts/research/mc_daily_data.py`, the research database, a daily `ReturnPanel` builder, data-quality report, tests | data ready, no result |
+| 2 | gate R1: `scripts/research/mc_daily_calibration.py`, results in `docs/results/mc_daily/` | R1 verdict |
+| 3 | pure module `src/stride/forecast/risk_weights.py` (`EW`, `IV`, `ERC`, brakes), with hypothesis tests: weights never negative, never above the caps, sum at most 1, every step only lowers a weight | module, no result |
+| 4 | gate R2: the daily walk-forward of the 9 variants, `docs/design/mc_risk_results.md` | R2 verdict |
+| 5 | only if R1 and R2 pass and the owner approves: a new paper instance (section 8) | separate design |
+
+## 8. How it could reach paper (owner decision 2, not now)
+
+It cannot be a change to `config.paper_mc.yaml` while the forward experiment runs (evaluation at 40 sessions, about 2027-01-11). The options, to be decided after phase 4:
+
+- a fourth, separate instance with its own config and database, added to the loop the way `paper_mc` was, with daily decisions (one evaluation after the close, fills at the next open);
+- or wait for the `paper_mc` verdict and replace its rule then.
+
+## 9. Other ways to more profit, and where they stand
+
+In the order this design suggests testing them, each as its own design and pull request, all on the daily history:
+
+1. **Risk allocation** (this document).
+2. **Cross-sectional ranking** (results section 8, item 3): relative strength between the 20 assets as a tilt on the risk weights. It reuses phases 1 and 3; its test is a rank correlation between the score and the next-month return, with the same selection and holdout.
+3. **Cost of execution** (item 4): at 1,000 USD the 0.35 USD minimum commission weighs more than any forecast measured so far. This is an owner decision on the cost model or the capital of a new instance, not a modelling task; section 5 measures its size.
+4. **Sizing with calibrated quantities only** (item 5): made unnecessary by this design if R2 passes, since no expected gain is used.
+5. **One-day mean reversion** (item 6): needs the 30-minute data and belongs next to the DIP work, not here.
+
+## 10. Open points for the owner
+
+1. Approve the design: the 9 variants, the two set-ups of section 5, the periods and the two gates.
+2. Confirm that `EW`/`none` may be used as the reference of gate R2 (it is the null allocation of the same assets, in the same role as the null forecaster, not an index).
+3. Confirm the download of XLU, FXI, INDA, EWZ and UNG from Tiingo into the research database.
