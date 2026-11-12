@@ -372,3 +372,54 @@ def test_client_errors_are_not_retried(sleeps: list[float]) -> None:
         source.fetch("SPY", date(2026, 10, 15), date(2026, 10, 16))
     assert session.calls == 1
     assert sleeps == []
+
+
+def _intraday_bar(stamp: str, close: float) -> dict[str, Any]:
+    return {**_alpaca_bar("2026-10-16", close), "t": stamp}
+
+
+def test_alpaca_intraday_requests_adjusted_30min_sip_bars_and_follows_pages() -> None:
+    pages: list[dict[str, Any]] = [
+        {"bars": [_intraday_bar("2026-10-16T14:00:00Z", 590.0)], "next_page_token": "abc"},
+        {"bars": [_intraday_bar("2026-10-16T13:30:00Z", 589.0)], "next_page_token": None},
+    ]
+    session = PagedSession(pages)
+    frame = _alpaca(session).fetch_intraday(
+        "qqq", datetime(2026, 10, 16, 13, 30, tzinfo=UTC), datetime(2026, 10, 16, 20, 0, tzinfo=UTC)
+    )
+    first = session.calls[0]
+    assert first["url"] == "https://data.alpaca.markets/v2/stocks/QQQ/bars"
+    assert first["params"]["timeframe"] == "30Min"
+    assert first["params"]["feed"] == "sip"
+    assert first["params"]["adjustment"] == "all"
+    assert first["params"]["start"] == "2026-10-16T13:30:00Z"
+    assert first["params"]["end"] == "2026-10-16T20:00:00Z"
+    assert session.calls[1]["params"]["page_token"] == "abc"
+    assert FAKE_KEY not in str(first["params"])
+    assert list(frame.columns) == ["ts", "open", "high", "low", "close", "volume"]
+    assert frame["ts"].tolist() == [
+        pd.Timestamp("2026-10-16T13:30:00Z"),
+        pd.Timestamp("2026-10-16T14:00:00Z"),
+    ]
+    assert frame["close"].tolist() == [589.0, 590.0]
+
+
+def test_alpaca_intraday_end_stays_outside_the_recent_sip_window() -> None:
+    session = PagedSession([{"bars": []}])
+    frame = _alpaca(session).fetch_intraday("QQQ", NOW - pd.Timedelta(hours=2), NOW)
+    assert session.calls[0]["params"]["end"] == "2026-10-19T20:14:00Z"  # NOW - 16 minutes
+    assert frame.empty
+
+
+def test_alpaca_intraday_skips_the_request_when_nothing_is_published_yet() -> None:
+    session = PagedSession([])
+    frame = _alpaca(session).fetch_intraday("QQQ", NOW - pd.Timedelta(minutes=5), NOW)
+    assert frame.empty
+    assert session.calls == []
+
+
+def test_alpaca_intraday_rejects_naive_times() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _alpaca(PagedSession([])).fetch_intraday(
+            "QQQ", datetime(2026, 10, 16, 13, 30), datetime(2026, 10, 16, 20, 0)
+        )
