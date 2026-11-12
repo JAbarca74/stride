@@ -1,0 +1,63 @@
+# STRIDE paper instance MC: the Monte Carlo portfolio (docs/design/mc_forecast.md).
+#
+# A small standalone file, not a copy of config.yaml: this instance has nothing to do
+# with the daily strategy. Commission and spread come from config.yaml (what B and DIP
+# pay). Every number below is a parameter; none is hardcoded in the job.
+# Run it with:  python -m stride.run_mc --config config.paper_mc.yaml
+# Status:       python -m stride.run_mc --config config.paper_mc.yaml --report
+#
+# enabled: false  ->  every tick of the job is a no-op.
+# It is false because the calibration gate of docs/design/mc_forecast.md section 8 was NOT
+# met (docs/design/mc_backtest_results.md): no forecaster beat the null model out of
+# sample. Setting it to true is the owner's decision; the values below are the rule that
+# won the selection period (2017-2022), unchanged by the holdout.
+
+enabled: false
+mode: paper                  # this instance never trades real money (any other value is refused)
+capital_usd: 1000            # simulated starting capital
+kill_switch_dd: 0.20         # drawdown from the peak, at a session close: sell all, stop for good
+db_path: data/paper_mc.db    # git-ignored; the state repo keeps a copy (scripts/save_state.sh)
+
+# The 20 assets approved on 2026-11-11 (docs/design/mc_universe.md).
+universe: [QQQ, IWM, XLE, XLV, XLU, EFA, FXI, INDA, EWZ, TLT, GLD, SLV, CPER, USO, UNG, DBA, VNQ, UUP, IBIT, ETHA]
+
+# Joint caps on the weight of correlated assets (fraction of equity).
+groups:
+  us_equity: [QQQ, IWM]
+  metals: [GLD, SLV, CPER]
+  crypto: [IBIT, ETHA]
+group_caps:
+  us_equity: 0.40
+  metals: 0.35
+  crypto: 0.30
+
+forecast:                    # how the futures are simulated (design section 3)
+  window_days: 252           # history used, in trading days (63, 126 or 252 were tested)
+  generator: drift           # drift | analog
+  drift_shrink: 0.5          # share of the window drift that is kept (0 = no direction at all)
+  n_paths: 2000              # simulated futures per asset
+  n_paths_risk: 1000         # joint paths for the portfolio loss cap (analog generator)
+  order_usd: 250             # typical order: sets the round-trip cost the forecast subtracts
+  seed: 20261112             # the seed of each evaluation is derived from it and the slot time
+
+decision:                    # when to enter and leave (design section 5); horizons in slots
+  horizon: 140               # decision horizon: 140 slots = 20 trading days (35 = 5 days, 7 = 1 day)
+  confirm_horizon: 7         # the 1-day horizon must not point down to enter
+  p_enter: 0.65              # enter when P(gain after costs) reaches this
+  p_exit: 0.55               # leave when P(any gain) falls to this (hysteresis gap of 0.10)
+  k_cost: 1.0                # the net expected gain must be at least k_cost x the round-trip cost
+  p_confirm: 0.50            # minimum P(gain) at the 1-day horizon to enter
+
+weights:                     # dynamic weights and risk limits (design section 6)
+  kappa: 0.25                # Kelly fraction: weight = kappa x edge / variance
+  max_weight: 0.25           # per asset
+  max_total: 1.0             # no leverage, no margin
+  risk_horizon: 35           # horizon of the portfolio loss check (5 days)
+  risk_quantile: 0.01        # the loss exceeded in 1% of the joint simulated paths ...
+  max_portfolio_loss: 0.08   # ... must stay below 8% of equity
+  min_order_usd: 150         # smaller targets are dropped (the commission floor would eat them)
+
+history_days: 400            # calendar days of 30-minute bars kept (older ones are deleted)
+catchup_slots: 14            # after an outage, only the latest 14 missed slots are decided
+download_budget_s: 120        # a tick stops downloading after this long and goes on at the next one
+#                            (Alpaca takes 20-80 s per symbol for the first 400 days, ~1 s for the daily top-up)

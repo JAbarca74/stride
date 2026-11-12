@@ -106,17 +106,25 @@ _COSTS: CostModel | None = None
 
 
 def build_costs() -> CostModel:
+    """The cost model of `config.yaml` for the universe."""
     cfg = load_config(REPO_ROOT / "config.yaml")
     spreads = np.array([spread_bps(symbol, cfg) for symbol in UNIVERSE])
     return CostModel(spreads, lambda shares, price: commission(shares, price, cfg))
 
 
+def _ns(index: pd.DatetimeIndex) -> np.ndarray:
+    """Nanoseconds since the epoch (UTC for tz-aware indexes), whatever the index unit."""
+    naive = index.tz_convert("UTC").tz_localize(None) if index.tz is not None else index
+    return naive.to_numpy(dtype="datetime64[ns]").astype("int64")
+
+
 def save_panel(panel: ReturnPanel, path: Path) -> None:
+    """Save the slot panel as an .npz so the workers can load it."""
     np.savez(
         path,
         symbols=np.array(panel.symbols),
-        end=panel.end.asi8,
-        day=panel.day.asi8,
+        end=_ns(panel.end),
+        day=_ns(panel.day),
         slot=panel.slot,
         open=panel.open,
         close=panel.close,
@@ -125,11 +133,12 @@ def save_panel(panel: ReturnPanel, path: Path) -> None:
 
 
 def load_panel(path: Path) -> ReturnPanel:
+    """Load a panel saved by `save_panel`."""
     with np.load(path) as data:
         return ReturnPanel(
             tuple(str(s) for s in data["symbols"]),
-            pd.DatetimeIndex(data["end"], tz="UTC"),
-            pd.DatetimeIndex(data["day"]),
+            pd.DatetimeIndex(data["end"].astype("datetime64[ns]"), tz="UTC"),
+            pd.DatetimeIndex(data["day"].astype("datetime64[ns]")),
             data["slot"],
             data["open"],
             data["close"],
@@ -138,12 +147,14 @@ def load_panel(path: Path) -> ReturnPanel:
 
 
 def init_worker(panel_path: str) -> None:
+    """Load the panel and the costs once in each worker process."""
     global _PANEL, _COSTS  # noqa: PLW0603
     _PANEL = load_panel(Path(panel_path))
     _COSTS = build_costs()
 
 
 def params_for(window: int, generator: str, shrink: float, paths: int = 2000) -> ForecastParams:
+    """Simulation parameters for a window, generator and drift shrink."""
     return ForecastParams(
         window_days=window,
         generator="analog" if generator == "analog" else "drift",
@@ -188,12 +199,14 @@ def split_period(panel: ReturnPanel) -> tuple[np.ndarray, np.ndarray]:
 
 
 def quality_rows(panel: ReturnPanel, every: int) -> list[int]:
+    """Panel rows for stage A: every `every`-th session at the evaluation slots."""
     codes = pd.factorize(panel.day)[0]
     keep = (codes % every == 0) & np.isin(panel.slot, EVAL_SLOTS)
     return [int(r) for r in np.flatnonzero(keep)]
 
 
 def run_quality(executor: ProcessPoolExecutor, panel: ReturnPanel, every: int) -> pd.DataFrame:
+    """Stage A: every forecaster at every evaluation row, in parallel."""
     rows = quality_rows(panel, every)
     chunks = [rows[i : i + CHUNK] for i in range(0, len(rows), CHUNK)]
     tasks = []
@@ -259,6 +272,7 @@ def quality_metrics(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def gate_row(row: pd.Series) -> dict[str, Any]:
+    """The three gate tests for one forecaster and horizon on the holdout."""
     gap_ok = bool(row["bins_checked"] > 0 and row["max_bin_gap"] <= MAX_BIN_GAP)
     cov_ok = bool(COVERAGE_RANGE[0] <= row["coverage90"] <= COVERAGE_RANGE[1])
     skill_ok = bool(row["skill_low"] > 0)
@@ -289,12 +303,14 @@ def choose_forecasters(metrics: pd.DataFrame) -> dict[int, str]:
 
 
 def parse_forecaster(name: str) -> ForecastParams:
+    """Simulation parameters from a name such as `drift05_252`."""
     key, window = name.rsplit("_", 1)
     _, generator, shrink = next(f for f in FORECASTERS if f[0] == key)
     return params_for(int(window), generator, shrink)
 
 
 def make_rules(horizon: int) -> list[Rule]:
+    """The six trading rules of one decision horizon."""
     rules = []
     for p_enter in (0.55, 0.60, 0.65):
         for kappa in (0.25, 0.5):
@@ -322,6 +338,7 @@ def trade_period(
     horizon: int,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    """Stage B for one period: all rules over the same stream of forecasts."""
     rows = np.flatnonzero(mask)
     start, stop = int(rows[0]), int(rows[-1]) + 1
     if limit is not None:
@@ -334,6 +351,7 @@ def trade_period(
     current: dict[str, Any] = {"row": -1, "value": None}
 
     def lookup(row: int) -> Forecast | None:
+        """The next forecast of the stream (rows are asked for in order)."""
         while current["row"] < row:
             current["row"] += 1
             current["value"] = next(forecasts)
@@ -369,6 +387,7 @@ def fmt(frame: pd.DataFrame, digits: int = 3) -> str:
 
 
 def main() -> None:
+    """Run stages A and B and write the outputs."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=REPO_ROOT / "data" / "mc_research.db")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "reports" / "mc_eval")

@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&amp;logoColor=black" alt="Ruff"></a>
   <img src="https://img.shields.io/badge/types-mypy%20strict-2A6DB2" alt="mypy strict">
-  <img src="https://img.shields.io/badge/tests-791%20passed-0A9EDC?logo=pytest&amp;logoColor=white" alt="791 tests passing">
+  <img src="https://img.shields.io/badge/tests-897%20passed-0A9EDC?logo=pytest&amp;logoColor=white" alt="897 tests passing">
   <a href="https://github.com/JAbarca74/stride/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
   <a href="https://github.com/JAbarca74/stride/stargazers"><img src="https://img.shields.io/github/stars/JAbarca74/stride?style=flat&amp;logo=github&amp;label=Stars" alt="GitHub stars"></a>
   <a href="https://github.com/JAbarca74/stride/network/members"><img src="https://img.shields.io/github/forks/JAbarca74/stride?style=flat&amp;logo=github&amp;label=Forks" alt="GitHub forks"></a>
@@ -60,7 +60,7 @@ Most open-source trading bots on GitHub suffer from critical flaws: **look-ahead
 | **Leverage Engine** | Fixed or uncontrolled broker margin | Static multiplier | **Dynamic 5-Limit Minimum**: Kelly bound, target volatility, leverage cap, broker cap, capital limit |
 | **Emergency Circuit Breakers** | None (wipes accounts during gaps) | Manual or external scripts | **Dual-Brake System**: Automatic $-20\%$ de-leverage + automatic $-40\%$ emergency broker liquidation |
 | **Broker Ledger Sync** | Assumed accurate | Periodic reconciliation | **Dual-Day Halt**: Freezes trading safely if local ledger diverges from broker on 2 consecutive days |
-| **Type Safety & Quality** | Untyped, unlinted | Mixed typing | **`mypy --strict`**, **Ruff**, **791 automated tests**, Hypothesis property-based invariants |
+| **Type Safety & Quality** | Untyped, unlinted | Mixed typing | **`mypy --strict`**, **Ruff**, **897 automated tests**, Hypothesis property-based invariants |
 | **Credential Security** | Plaintext in scripts or logs | Config files | **Pydantic `SecretStr`**: Zero secrets logged, printed, or committed; automated CI credential audits |
 | **Live Automation** | Manual clicking or brittle loops | Heavy daemon infrastructure | **Self-contained 4-phase daily cycle**: Windows Task Scheduler / Linux cron with daily Telegram audit reports |
 
@@ -191,6 +191,8 @@ STRIDE is actively deployed in **Phase 4 Paper Forward-Testing** across two dist
 - **STRIDE B** (`config.paper_b.yaml`): QQQ tech core at 1.5x leverage + crypto dip sleeve.
 - **STRIDE DIP** (`config.paper_dip.yaml`): SPY market core + crypto dip sleeve.
 
+A third, experimental instance, **STRIDE MC** (`config.paper_mc.yaml`), simulates thousands of futures per asset every hour over a 20-asset universe and trades only when they concentrate clearly up or down, with weights from the simulation. It is outside the 40-day verdict below, runs on a simulated account (it never sends orders) and is **built but disabled**: its calibration gate was not met. See [`docs/handoff_montecarlo_estado.es.md`](docs/handoff_montecarlo_estado.es.md) (status, in Spanish) and [`docs/design/mc_backtest_results.md`](docs/design/mc_backtest_results.md) (results).
+
 ### Automated 40-Trading-Day Final Verdict Evaluator
 
 At the end of each evening run, `Runner.evening()` checks the accumulated history. Once an instance completes **40 stored trading days** in its `equity` table, STRIDE automatically executes the Phase 4 Verdict Evaluator comparing strategy performance against the $SPY$ benchmark:
@@ -245,14 +247,14 @@ pip install -e ".[dev]"
 
 ### 2. Run the Test Suite (Offline, Zero Keys Needed)
 
-Validate your local environment immediately. STRIDE's 791 automated tests execute in seconds without network calls:
+Validate your local environment immediately. STRIDE's 897 automated tests run offline, without keys or network calls:
 
 ```bash
 pytest
 ```
 
 ```text
-======================= 791 passed in 4.82s =======================
+======================= 897 passed =======================
 ```
 
 ---
@@ -385,6 +387,7 @@ stride/
 ├── config.yaml               # Baseline strategy and risk configuration
 ├── config.paper_b.yaml       # Paper Instance B configuration (QQQ core + dip)
 ├── config.paper_dip.yaml     # Paper Instance DIP configuration (SPY core + dip)
+├── config.paper_mc.yaml      # Paper Instance MC configuration (Monte Carlo portfolio, disabled)
 ├── docs/                     # Specifications, architecture, and SVG assets
 │   ├── SPEC.md               # Technical specification (single source of truth)
 │   ├── CONFIG.md             # Complete parameter reference for config.yaml
@@ -396,8 +399,10 @@ stride/
 │   ├── execution/            # Broker adapters (Alpaca paper, SimBroker)
 │   ├── backtest/             # Event-driven backtesting engine & performance metrics
 │   ├── reporting/            # HTML reports, Telegram alerts, Phase 4 verdict
-│   └── run_daily.py          # Daily job runner & phase orchestrator
-├── tests/                    # 791 unit, integration, and Hypothesis property tests
+│   ├── forecast/             # Pure Monte Carlo forecast, weights and walk-forward (paper_mc)
+│   ├── run_daily.py          # Daily job runner & phase orchestrator
+│   └── run_mc.py             # Hourly job of the Monte Carlo instance
+├── tests/                    # 897 unit, integration, and Hypothesis property tests
 └── scripts/                  # Automated Windows & Linux deployment scripts
 ```
 

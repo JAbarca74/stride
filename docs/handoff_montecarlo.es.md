@@ -2,6 +2,8 @@
 
 Copia todo lo que está debajo de la línea y pégalo como primer mensaje de un chat nuevo de Claude Code abierto en la carpeta `Documentos\stride\stride`.
 
+> Estado a 2026-11-12: las fases 1 a 6 están hechas; ver `docs/handoff_montecarlo_estado.es.md` (qué existe, resultado, decisiones pendientes) y `docs/design/mc_backtest_results.md`.
+
 ---
 
 Eres el orquestador y revisor de un proyecto nuevo dentro de STRIDE (repo JAbarca74/stride). Háblame en español; el código, los commits y los PR van en inglés. Lee primero `CLAUDE.md`, `AGENTS.md`, `docs/SPEC.md`, `docs/handoff_prompt.es.md` (cómo corre la prueba paper) y este archivo.

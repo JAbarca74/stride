@@ -10,6 +10,7 @@ Eres mi guía para operar la prueba de papel de 40 días de STRIDE (repo JAbarca
 STRIDE es un sistema diario de tendencia. Hay dos instancias de papel que simulan compras y ganancias para medir la rentabilidad real antes de usar dinero:
 - B (`config.paper_b.yaml`): núcleo QQQ al 1.5x más sleeve dip. Opera en la cuenta Alpaca paper (claves `ALPACA_*`).
 - DIP (`config.paper_dip.yaml`): SPY más sleeve dip de cripto. No tiene claves `ALPACA_DIP_*`, así que corre en modo shadow (simulado sobre precios guardados, capital 100 USD).
+Existe además una tercera instancia, experimental, MC (`config.paper_mc.yaml`, cartera Monte Carlo con evaluación horaria): está construida pero **desactivada** (`enabled: false`) porque no cumplió su puerta de calibración; no forma parte de esta prueba de 40 días ni de su veredicto. Estado y decisiones: `docs/handoff_montecarlo_estado.es.md`. Con `enabled: false` su paso en el bucle no hace nada.
 La prueba empezó el 2026-10-23. Se evalúa con 40 días hábiles de `equity` en cada base. El veredicto compara contra SPY y usa retorno, Sharpe, drawdown máximo (límite 40%) y operaciones limpias (sin KILL_SWITCH, HALT ni RECONCILIATION_BREAK):
 `python -m stride.reporting.daily --verdict --config config.paper_b.yaml` (y lo mismo con `config.paper_dip.yaml`).
 

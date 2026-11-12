@@ -1,6 +1,6 @@
 # Monte Carlo portfolio (`paper_mc`): asset universe
 
-Phase 1 of `docs/handoff_montecarlo.es.md`. Status: **proposal, waiting for the owner's approval**. Nothing here changes code, configs or the B and DIP instances.
+Phase 1 of `docs/handoff_montecarlo.es.md`. Status: **approved by the owner on 2026-11-11** (the 20 assets below, bearish signal = cash only, cost model = IBKR Pro Tiered like B and DIP). Nothing here changes code, configs or the B and DIP instances.
 
 ## How the data was collected
 
@@ -88,11 +88,11 @@ UUP is the weakest member by this test (6.5% volatility): it is in the list beca
 | FXE | -0.96 with UUP; USD 7M traded a day |
 | SH, PSQ, TBF | inverse funds: open owner decision, see below |
 
-## Open decisions for the owner
+## Decisions of the owner (2026-11-11)
 
-1. Approve or edit the list of 20.
-2. Bearish signal: cash only (recommended to start: an inverse fund is the mirror of an asset the simulation already covers, and SH and TBF are thin) or also SH and PSQ.
-3. Cost model for `paper_mc`: IBKR Pro Tiered as in B and DIP (recommended, conservative) or Alpaca's zero commission.
+1. Approve or edit the list of 20. **Approved as proposed.**
+2. Bearish signal: cash only (recommended to start: an inverse fund is the mirror of an asset the simulation already covers, and SH and TBF are thin) or also SH and PSQ. **Decided: cash only.**
+3. Cost model for `paper_mc`: IBKR Pro Tiered as in B and DIP (recommended, conservative) or Alpaca's zero commission. **Decided: IBKR Pro Tiered.**
 
 ## Appendix: all 48 candidates
 

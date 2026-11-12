@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.12+">
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&amp;logoColor=black" alt="Ruff"></a>
   <img src="https://img.shields.io/badge/types-mypy%20strict-2A6DB2" alt="mypy strict">
-  <img src="https://img.shields.io/badge/tests-791%20passed-0A9EDC?logo=pytest&amp;logoColor=white" alt="791 tests passing">
+  <img src="https://img.shields.io/badge/tests-897%20passed-0A9EDC?logo=pytest&amp;logoColor=white" alt="897 tests passing">
   <a href="https://github.com/JAbarca74/stride/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
   <a href="https://github.com/JAbarca74/stride/stargazers"><img src="https://img.shields.io/github/stars/JAbarca74/stride?style=flat&amp;logo=github&amp;label=Stars" alt="GitHub stars"></a>
   <a href="https://github.com/JAbarca74/stride/network/members"><img src="https://img.shields.io/github/forks/JAbarca74/stride?style=flat&amp;logo=github&amp;label=Forks" alt="GitHub forks"></a>
@@ -59,7 +59,7 @@ La mayoría de los bots de trading de código abierto sufren de fallos críticos
 | **Motor de Apalancamiento** | Fijo o margen de broker descontrolado | Multiplicadores estáticos | **Mínimo Dinámico de 5 Límites**: Kelly fraccional, objetivo de volatilidad, tope de apalancamiento, límite de broker y límite de capital |
 | **Frenos de Emergencia** | Inexistentes (quiebran cuentas en caídas repentinas) | Scripts manuales o externos | **Sistema de Doble Freno**: Desapalancamiento automático al $-20\%$ + Liquidación de emergencia en broker al $-40\%$ |
 | **Sincronización con Broker** | Se asume precisa sin verificar | Conciliación periódica | **Halt por Doble Jornada**: Congela operaciones de forma segura si la contabilidad local difiere del broker 2 días seguidos |
-| **Tipado y Calidad** | Sin tipos, sin linter | Tipado parcial | **`mypy --strict`**, **Ruff**, **791 tests automáticos**, pruebas de propiedades invariantes con Hypothesis |
+| **Tipado y Calidad** | Sin tipos, sin linter | Tipado parcial | **`mypy --strict`**, **Ruff**, **897 tests automáticos**, pruebas de propiedades invariantes con Hypothesis |
 | **Seguridad de Secretos** | Texto plano en código o logs | Archivos de configuración expuestos | **Pydantic `SecretStr`**: Cero secretos registrados, impresos o comiteados; auditoría CI continua |
 | **Automatización Diaria** | Clics manuales o bucles frágiles | Servicios pesados complejos | **Ciclo diario de 4 fases auto-contenido**: Programador de Tareas de Windows / cron en Linux con reportes ejecutivos vía Telegram |
 
@@ -187,6 +187,8 @@ STRIDE está operando en **Fase 4 de Paper Trading** en dos instancias concurren
 - **STRIDE B** (`config.paper_b.yaml`): Núcleo tecnológico en QQQ a 1.5x + manga de compras en caídas de cripto.
 - **STRIDE DIP** (`config.paper_dip.yaml`): Núcleo en SPY + manga cripto.
 
+Una tercera instancia, experimental, **STRIDE MC** (`config.paper_mc.yaml`), simula miles de futuros por activo cada hora sobre un universo de 20 activos y opera solo cuando se concentran claramente al alza o a la baja, con pesos que salen de la simulación. Está fuera del veredicto de 40 días, usa una cuenta simulada (nunca envía órdenes) y está **construida pero desactivada**: no cumplió su puerta de calibración. Ver [`docs/handoff_montecarlo_estado.es.md`](docs/handoff_montecarlo_estado.es.md) (estado) y [`docs/design/mc_backtest_results.md`](docs/design/mc_backtest_results.md) (resultados, en inglés).
+
 ### Evaluador Automático de Veredicto a 40 Días Bursátiles
 
 Al completarse **40 días hábiles de negociación** registrados en la tabla `equity`, `Runner.evening()` ejecuta automáticamente el evaluador de veredicto final frente al índice $SPY$:
@@ -241,7 +243,7 @@ pip install -e ".[dev]"
 
 ### 2. Ejecutar Pruebas (Completamente Offline)
 
-Los 791 tests automatizados de STRIDE se ejecutan en segundos sin necesidad de claves ni conexión a red:
+Los 897 tests automatizados de STRIDE se ejecutan sin necesidad de claves ni conexión a red:
 
 ```bash
 pytest
@@ -373,6 +375,7 @@ stride/
 ├── config.yaml               # Configuración base de estrategia y riesgo
 ├── config.paper_b.yaml       # Configuración de Instancia Paper B (QQQ + dip)
 ├── config.paper_dip.yaml     # Configuración de Instancia Paper DIP (SPY + dip)
+├── config.paper_mc.yaml      # Configuración de Instancia Paper MC (cartera Monte Carlo, desactivada)
 ├── docs/                     # Especificaciones, arquitectura y diagramas
 │   ├── SPEC.md               # Especificación técnica oficial (fuente de verdad)
 │   ├── CONFIG.md             # Documentación exhaustiva de parámetros de config.yaml
@@ -384,8 +387,10 @@ stride/
 │   ├── execution/            # Adaptadores de broker (Alpaca paper, SimBroker)
 │   ├── backtest/             # Motor event-driven de backtesting y métricas
 │   ├── reporting/            # Reportes HTML, alertas Telegram y veredicto Fase 4
-│   └── run_daily.py          # Orquestador del ciclo diario
-├── tests/                    # 791 pruebas unitarias, de integración y de propiedades
+│   ├── forecast/             # Pronóstico Monte Carlo puro, pesos y walk-forward (paper_mc)
+│   ├── run_daily.py          # Orquestador del ciclo diario
+│   └── run_mc.py             # Trabajo horario de la instancia Monte Carlo
+├── tests/                    # 897 pruebas unitarias, de integración y de propiedades
 └── scripts/                  # Scripts de automatización para Windows y Linux
 ```
 
