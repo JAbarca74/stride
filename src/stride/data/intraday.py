@@ -69,7 +69,6 @@ class IntradaySource(Protocol):
         self, symbol: str, start: datetime, end: datetime, timeframe: str = "30Min"
     ) -> pd.DataFrame:
         """Bars with columns ts (UTC), open, high, low, close, volume."""
-        ...
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
