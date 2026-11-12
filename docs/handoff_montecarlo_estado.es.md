@@ -1,4 +1,4 @@
-# Estado del módulo Monte Carlo (`paper_mc`) a 2026-11-12
+# Estado del módulo Monte Carlo (`paper_mc`): activado el 2026-11-12
 
 Documento para el dueño y para quien analice el proyecto después (por ejemplo Fable): qué se construyó, qué resultó, qué está pendiente de decidir y qué probar para ganar más. El código, los commits y los PR están en inglés; este documento y el prompt de traspaso (`docs/handoff_montecarlo.es.md`) están en español.
 
@@ -6,7 +6,7 @@ Documento para el dueño y para quien analice el proyecto después (por ejemplo 
 
 - Se construyeron las 6 fases pedidas: universo de 20 activos, diseño, datos de 30 minutos, módulo de simulación, evaluación walk-forward y la instancia `paper_mc` con su trabajo horario.
 - **La puerta de calibración que el dueño aprobó (sin calibración no hay papel) no se cumplió.** En la validación (2023 a noviembre de 2026) ningún pronosticador supera al modelo "sin dirección" (el nulo) en ningún horizonte; la única ganancia estadísticamente clara fue mínima, a 1 hora y en 2017-2022, y no se repitió. Lo que sí funciona es el modelo de riesgo: el intervalo simulado del 90% contiene el resultado entre el 85% y el 91% de las veces.
-- Por eso **la instancia está construida, probada y desactivada** (`enabled: false` en `config.paper_mc.yaml`). Con `false` cada tick del bucle no hace nada y no puede afectar a B ni a DIP. Activarla es una decisión tuya (sección 5).
+- La instancia se dejó primero desactivada y **el dueño decidió activarla de todos modos (2026-11-12)** como experimento de papel hacia adelante: `enabled: true` en `config.paper_mc.yaml`. Es una cuenta simulada (nunca envía órdenes ni usa dinero real). Con la evidencia del backtest la expectativa debe ser modesta; por eso los criterios para juzgarla se fijaron antes de ver resultados (sección 5).
 - Qué se puede hacer con lo aprendido para ganar más: sección 6.
 
 Detalle de los números: `docs/design/mc_backtest_results.md`. Diseño y "tal como se construyó": `docs/design/mc_forecast.md`. Universo: `docs/design/mc_universe.md`.
@@ -23,6 +23,7 @@ Detalle de los números: `docs/design/mc_backtest_results.md`. Diseño y "tal co
 | Cuenta simulada, la misma en backtest y en papel | clase `Trader` en `src/stride/forecast/walkforward.py` |
 | Trabajo horario | `src/stride/run_mc.py` |
 | Configuración de la instancia | `config.paper_mc.yaml` (cada parámetro comentado) |
+| Prompt para operar y vigilar el experimento en un chat nuevo | `docs/handoff_montecarlo_operacion.es.md` |
 | Scripts de investigación | `scripts/research/mc_data.py`, `mc_evaluate.py`, `mc_diagnostics.py` |
 | Pruebas | `tests/test_forecast.py`, `test_walkforward.py`, `test_intraday.py`, `test_run_mc.py` |
 
@@ -48,11 +49,40 @@ Detalle de los números: `docs/design/mc_backtest_results.md`. Diseño y "tal co
 
 Cifras sin promesa: son resultados medidos en datos pasados, no una expectativa.
 
-## 5. Decisiones que quedan en tus manos
+## 5. El experimento hacia adelante: cómo se juzga, se vigila y se para
 
-1. **¿Activar `paper_mc` de todos modos?** No lo recomiendo con este modelo: la puerta que tú aprobaste no se cumple y la evidencia no muestra ventaja sobre estar invertido. Si lo quieres como experimento de papel (no cuesta dinero; mediría hacia adelante, que es la prueba más limpia), el cambio es una línea: `enabled: true` en `config.paper_mc.yaml`, en un PR a `main`. El siguiente tick del bucle arranca la cuenta con 1.000 USD simulados (los primeros ticks solo descargan historia, unos 10-25 minutos en total). Para pararla a mano: crear un archivo `KILL_SWITCH_MC` en la carpeta del repositorio.
-2. **¿Cambiar el método o el objetivo?** Las ideas de la sección 6 usan lo que sí se demostró (el riesgo se modela bien) en lugar de lo que no (la dirección).
-3. **Costos de `paper_mc`.** Hoy son los de IBKR como B y DIP (decisión del 2026-11-11). Alpaca no cobra comisión; con 1.000 USD el mínimo de 0,35 USD por orden pesa más que cualquier pronóstico, así que esta decisión mueve más el resultado que mejorar el modelo.
+**Estado.** Activada el 2026-11-12 (PR a `main`). La cuenta arranca (1.000 USD simulados, todo en efectivo) en el primer tick de GitHub Actions que corra con este código: el bucle actual la recoge cuando termina el run en curso y despacha el siguiente. Los primeros ticks solo descargan la historia (unos 10 a 25 minutos en total, repartidos por el presupuesto de descarga) y después opera cada hora de la sesión.
+
+**Criterios fijados antes de ver resultados.** Se evalúa a las 40 sesiones bursátiles (hasta el 2027-01-11 si arranca el 2026-11-12), con los mismos números que se usan para B y DIP donde aplica. Es un éxito solo si se cumplen **todos**:
+
+1. El interruptor del 20% no se activó.
+2. El retorno neto de costos es positivo.
+3. Los costos totales (comisión más spread) son menos del 3% del capital inicial.
+4. La calibración hacia adelante no es peor que el nulo: la habilidad de Brier de los pronósticos ya "maduros" a 5 días (`python -m stride.run_mc --report`, línea `forward calibration`) es mayor o igual a cero.
+
+Si no se cumplen, se para (`enabled: false`) y se pasa a las ideas de la sección 6. No se cambian parámetros mientras corre: cambiarlos reinicia el experimento. No se compara con ningún índice (decisión del dueño); el 3 y el 4 son los que protegen contra confundir suerte con ventaja.
+
+**Cómo vigilarla.**
+- Telegram: un resumen (`INFO`) al cierre de cada sesión, y alertas `KILL_SWITCH`, `DATA_FAILED` y `RUN_FAILED` si algo falla.
+- Estado a mano: `python -m stride.run_mc --config config.paper_mc.yaml --report` sobre la base del repositorio de estado (clonar `stride-state` en una carpeta temporal, copiar `data/paper_mc.db` a `data/` y ejecutar el comando). Muestra capital, posiciones, últimas operaciones y la calibración hacia adelante.
+- Los runs de GitHub Actions: el paso del bucle de MC nunca marca el run como fallido, así que un fallo de MC se ve en Telegram y en la tabla `runs` de la base (fase `mc`, estado `error` o `no_data`).
+
+**Qué guarda `data/paper_mc.db`** (para analizarla después):
+
+| Tabla | Contenido |
+| --- | --- |
+| `intraday_bars` | barras de 30 minutos de la sesión regular de los 20 activos, últimos 400 días |
+| `mc_equity` | por franja: capital, efectivo, exposición y caída desde el máximo |
+| `mc_trades` | cada operación simulada: franja, activo, lado, monto, precio, comisión, spread y razón (`MC_ENTER`, `MC_EXIT`, `MC_RESIZE`, `MC_DROP`, `KILL_SWITCH`, `KILL_SWITCH_FILE`) |
+| `mc_forecasts` | auditoría de cada pronóstico horario: probabilidad de subir, de ganar después de costos, media, desviación y ganancia esperada, por activo y horizonte |
+| `mc_state` | la cuenta guardada (JSON), la última franja procesada, cuándo arrancó |
+| `runs`, `events` | una fila por tick (fase `mc`) y un evento por operación |
+
+**Cómo pararla.** Tres formas, de menos a más drástica: `enabled: false` en `config.paper_mc.yaml` y PR a `main` (la base y las operaciones quedan); crear un archivo `KILL_SWITCH_MC` en la carpeta del repositorio (vende todo en la siguiente franja y no vuelve a operar); o desactivar el workflow completo en la pestaña Actions (esto para también a B y DIP).
+
+**Decisiones que siguen en tus manos.**
+1. Los costos de `paper_mc` son los de IBKR como B y DIP (decisión del 2026-11-11). Alpaca no cobra comisión; con 1.000 USD el mínimo de 0,35 USD por orden pesa más que cualquier pronóstico, así que esta decisión mueve más el resultado que mejorar el modelo.
+2. Si el experimento no cumple los criterios, o antes, si prefieres cambiar el método hacia las ideas de la sección 6.
 
 ## 6. Qué probar para ganar más (en orden de valor esperado)
 
@@ -74,7 +104,7 @@ python scripts/research/mc_diagnostics.py  # estadísticas por activo y comprar-
 python -m stride.run_mc --config config.paper_mc.yaml --report   # estado de la cuenta
 ```
 
-Las claves de Alpaca (de papel) se leen de `.env`; el módulo nunca opera dinero real (`mode` solo admite `paper`) y nunca envía órdenes a un bróker: la cuenta es simulada.
+Las claves de Alpaca (de papel) se leen de `.env`; el módulo nunca opera dinero real (`mode` solo admite `paper`) y nunca envía órdenes a un bróker: la cuenta es simulada. `--report` además calcula la calibración hacia adelante (`forward calibration`).
 
 ## 8. Reglas que se respetaron
 

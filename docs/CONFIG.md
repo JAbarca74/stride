@@ -185,7 +185,7 @@ The Monte Carlo portfolio has its own small file, validated by `McConfig` (`src/
 
 | Parameter | Value in the file | Unit | Description |
 | :-- | :-- | :-- | :-- |
-| `enabled` | `false` | boolean | `false` makes every tick of `python -m stride.run_mc` a no-op. It is `false` because the calibration gate was not met. |
+| `enabled` | `true` | boolean | `false` makes every tick of `python -m stride.run_mc` a no-op. It is `true` since 2026-11-12 by the owner's decision, although the calibration gate was not met (a forward paper experiment on a simulated account). |
 | `mode` | `paper` | string | Only `paper` is accepted; the instance never trades real money and never sends orders (the account is simulated). |
 | `capital_usd` | `1000` | USD | Simulated starting capital. |
 | `kill_switch_dd` | `0.20` | fraction | Drawdown from the peak, measured at a session close, that sells everything at the next open and stops the account for good (writes `KILL_SWITCH_MC`). |
@@ -213,4 +213,4 @@ The Monte Carlo portfolio has its own small file, validated by `McConfig` (`src/
 | `catchup_slots` | `14` | slots | After an outage, only the latest missed slots are decided (all are replayed for fills and equity). |
 | `download_budget_s` | `120` | seconds | A tick stops downloading bars after this long and continues at the next one (the first 400 days take 20 to 80 s per symbol). |
 
-Turning it on: set `enabled: true` and merge to `main`; the next tick of the Actions loop starts the account. Stopping it by hand: create a file named `KILL_SWITCH_MC` (or `KILL_SWITCH` for every instance) in the repository folder.
+Turning it off: set `enabled: false` and merge to `main` (the database and the trades stay). Turning it on again: `true`. Stopping it by hand: create a file named `KILL_SWITCH_MC` (or `KILL_SWITCH` for every instance) in the repository folder.

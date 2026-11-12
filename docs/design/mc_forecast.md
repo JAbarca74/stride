@@ -1,6 +1,6 @@
 # Monte Carlo portfolio (`paper_mc`): forecast and decision design
 
-Phase 2 of `docs/handoff_montecarlo.es.md`. Status: **approved by the owner on 2026-11-11 and implemented in phases 3 to 6; the calibration gate of section 8 was not met** (`docs/design/mc_backtest_results.md`). Section 11 records how it was built and where it differs. It builds on `docs/design/mc_universe.md` (20 assets, approved 2026-11-11 together with: bearish signal = cash only, cost model = IBKR Pro Tiered).
+Phase 2 of `docs/handoff_montecarlo.es.md`. Status: **approved by the owner on 2026-11-11 and implemented in phases 3 to 6; the calibration gate of section 8 was not met and the owner chose to run the instance anyway (2026-11-12)** (`docs/design/mc_backtest_results.md`). Section 11 records how it was built and where it differs. It builds on `docs/design/mc_universe.md` (20 assets, approved 2026-11-11 together with: bearish signal = cash only, cost model = IBKR Pro Tiered).
 
 Nothing here changes B, DIP, `execution/orders.py`, `risk/guard.py`, `risk/leverage.py` or the kill switch code. All numbers below are **starting values or pre-registered candidates**; the final ones are chosen by the walk-forward of phase 5 and then live in `config.paper_mc.yaml`.
 
@@ -155,8 +155,9 @@ What was implemented in phases 3 to 6 and where it differs from the design above
 - **Paper execution (decision (b) of section 7) was built as a dedicated simulated ledger, not by extending `ShadowBroker`.** The `Trader` keeps cash, shares and pending orders in the instance database (`mc_state`) and fills at the slot open with the spread and commission of `config.yaml`. The same object runs the backtest, so paper and backtest cannot drift apart. `tests/test_run_mc.py` checks that a job that missed ticks and replayed them ends in exactly the same account as one that ran continuously.
 - **Costs.** `config.yaml` costs (IBKR Pro Tiered, 5 bps per side, 10 bps for crypto), as B and DIP.
 - **Data safeguards of the job.** A slot is used only when at least 80% of the universe has its closing bar; a move above 25% in one slot is treated as bad data and stops the tick; the first download (400 days, 20 to 80 s per symbol on the Basic plan) is spread over several ticks by a time budget (`download_budget_s`, oldest symbols first); the bars are kept for `history_days` and older ones are deleted.
-- **Instance file.** `config.paper_mc.yaml` is a small standalone file validated by `McConfig` (not a copy of `config.yaml`); `mode` can only be `paper`; `enabled: false` makes every tick a no-op.
+- **Instance file.** `config.paper_mc.yaml` is a small standalone file validated by `McConfig` (not a copy of `config.yaml`); `mode` can only be `paper`; `enabled: false` makes every tick a no-op (it is `true` since 2026-11-12).
 - **Alerts.** A new alert kind `INFO` (`src/stride/reporting/alerts.py`) carries the summary at each close; `KILL_SWITCH`, `RUN_FAILED` and `DATA_FAILED` are used as in the other instances.
+- **Forward check.** `python -m stride.run_mc --report` also scores the audited forecasts (table `mc_forecasts`) that have matured against what happened (Brier skill against the null model per horizon), the live counterpart of the walk-forward stage A; the criteria to judge the forward test are in `docs/handoff_montecarlo_estado.es.md`, section 5.
 - **State.** `scripts/save_state.sh` saves `data/paper_mc.db` to the state repo together with B and DIP, and `scripts/actions_loop.sh` calls `python -m stride.run_mc` after the two daily instances at every tick. A failing MC tick never fails the run.
 
 ### Decisions taken by the owner
@@ -167,8 +168,10 @@ What was implemented in phases 3 to 6 and where it differs from the design above
 | 2026-11-11 | Bearish signal = cash only (no inverse funds) |
 | 2026-11-11 | Cost model = IBKR Pro Tiered, as B and DIP |
 | 2026-11-11 | Design approved, including the calibration gate (no paper trading without it) and shadow fills on intraday bars |
-| 2026-11-12 | Work through to the end and leave it running; the gate was not met, so the instance is built but disabled (see the results document) |
+| 2026-11-12 | Work through to the end and leave it running |
+| 2026-11-12 | The gate was not met (see the results document); the instance was left disabled and the owner was asked |
+| 2026-11-12 | The owner answered "activate anyway": `enabled: true`, as a forward paper experiment on a simulated account |
 
 ### How to turn it on or off
 
-`enabled: true` in `config.paper_mc.yaml`, merged to `main`: the next tick of the Actions loop starts the account with 1,000 simulated USD (the first ticks only download history). `enabled: false` stops it; the database and the trades stay. To stop it by hand at any time, create a file named `KILL_SWITCH_MC` (or `KILL_SWITCH` for every instance) in the repository folder: the account sells everything at the next slot open and does not trade again. Status: `python -m stride.run_mc --config config.paper_mc.yaml --report`.
+`enabled: true` in `config.paper_mc.yaml` (the value since 2026-11-12), merged to `main`: the next tick of the Actions loop starts the account with 1,000 simulated USD (the first ticks only download history). `enabled: false` stops it; the database and the trades stay. To stop it by hand at any time, create a file named `KILL_SWITCH_MC` (or `KILL_SWITCH` for every instance) in the repository folder: the account sells everything at the next slot open and does not trade again. Status: `python -m stride.run_mc --config config.paper_mc.yaml --report`.

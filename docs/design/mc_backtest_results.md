@@ -4,14 +4,14 @@ Phase 5 of `docs/handoff_montecarlo.es.md`. Run on 2026-11-12 with the code of t
 
 ## 1. Verdict
 
-**The calibration gate of `docs/design/mc_forecast.md` section 8 is not met, so `paper_mc` is built but disabled** (`enabled: false` in `config.paper_mc.yaml`).
+**The calibration gate of `docs/design/mc_forecast.md` section 8 is not met.** The instance was first built disabled; on 2026-11-12 the owner decided to run it anyway as a forward paper experiment (`enabled: true` in `config.paper_mc.yaml`; a simulated account, no order reaches a broker). The numbers below are why the expectation should be modest, and the forward test is how it will be judged (`docs/handoff_montecarlo_estado.es.md`, section 5).
 
 - **Direction has no demonstrated edge.** No forecaster (12 tested: 3 history windows x two drift strengths and two analog variants) beats the null model, the forecaster with no direction at all, in the Brier score. In the holdout (2023 to November 2026) none has a 95% interval above zero at any horizon from 1 hour to 20 days. Of the 96 forecaster x period x horizon cells only 3 have one, all of them full-drift forecasters at the 1-hour horizon in the selection period (+0.011 to +0.013); the same forecasters score +0.001 in the holdout, and an edge at 1 hour is smaller than the cost of any trade. The best forecaster at 5 days is statistically indistinguishable from the null (skill -0.002, 95% interval [-0.006, +0.001]); at 20 days it is clearly worse (-0.011, [-0.022, -0.0002]).
 - **Risk is well modeled.** The simulated 90% interval contains the outcome 85% to 91% of the time at every horizon for the 126- and 252-day windows (83% to 89% for the 63-day one), so the volatility, tail and slot-of-the-day model works. The 5-day probabilities are honest where they are mostly used: when the model said 54% the outcome was 54%, and when it said 61% the outcome was 63%. What the model cannot do is tell *which* assets will go up.
 - **The trading rules built on those probabilities are erratic, not robust.** Across 12 rules the 4-year holdout ranges from -20% to +32% in total return, neighbouring rules differ by tens of points, and 12 of the 24 runs hit the 20% kill switch (section 5). The rule that won the selection period (`H140_p65_k0.25`) returned +32% in the holdout, but its neighbour with a slightly lower threshold (`p60`) returned +29% and the next one (`p55`) lost 19%: that spread is noise-sized, not skill-sized.
 - **Being invested explains most of it.** An equal-weight buy-and-hold of the same assets, with the same costs, made +33% (2017-2022) and +54% (holdout) (section 6). The selected rule beat it in the selection period (+68%) and lagged it in the holdout (+32%, with a deeper drawdown: 17.5% against 11.2%).
 
-Recommendation: do not enable the current model. Section 8 lists what the evidence suggests trying next; the infrastructure (30-minute data, the `Trader`, the hourly job, the walk-forward) is reusable for any new forecaster.
+Recommendation at the time of the evaluation: do not enable the current model (the owner overrode it, see above). Section 8 lists what the evidence suggests trying next; the infrastructure (30-minute data, the `Trader`, the hourly job, the walk-forward) is reusable for any new forecaster.
 
 ## 2. What was run
 

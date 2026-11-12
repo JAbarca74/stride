@@ -248,6 +248,51 @@ def _event(conn: sqlite3.Connection, kind: str, detail: str) -> None:
     store.record_event(conn, kind, detail)
 
 
+def forward_calibration(
+    conn: sqlite3.Connection, universe: Sequence[str], asof: datetime
+) -> pd.DataFrame:
+    """The audited forecasts that have matured, against what happened (live counterpart of stage A).
+
+    One row per horizon with the cases, the Brier score of the probabilities of an increase
+    that the account saw, the Brier score of the null model (always 50%), and the skill
+    against it. Cases of neighbouring hours overlap, so the figures are indicative; the
+    walk-forward in `docs/design/mc_backtest_results.md` is the reference.
+    """
+    columns = ["horizon", "cases", "brier", "brier_null", "skill_vs_null", "mean_p_up", "freq_up"]
+    audit = pd.read_sql_query(
+        "SELECT slot_end, symbol, horizon, p_up FROM mc_forecasts WHERE p_up IS NOT NULL", conn
+    )
+    if audit.empty:
+        return pd.DataFrame(columns=columns)
+    grid, slots = slot_inputs(conn, universe, asof)
+    panel = build_panel(slots, grid)
+    row_of = {stamp.strftime("%Y-%m-%dT%H:%M:%SZ"): row for row, stamp in enumerate(panel.end)}
+    column_of = {symbol: column for column, symbol in enumerate(panel.symbols)}
+    by_horizon: dict[int, list[tuple[float, float]]] = {}
+    for slot_end, symbol, horizon, p_up in zip(
+        audit["slot_end"].tolist(),
+        audit["symbol"].tolist(),
+        audit["horizon"].tolist(),
+        audit["p_up"].tolist(),
+        strict=True,
+    ):
+        row, column = row_of.get(slot_end), column_of.get(symbol)
+        if row is None or column is None or row + int(horizon) >= len(panel):
+            continue
+        first, last = panel.close[row, column], panel.close[row + int(horizon), column]
+        if np.isfinite(first) and np.isfinite(last) and first > 0:
+            by_horizon.setdefault(int(horizon), []).append((float(p_up), float(last > first)))
+    out = []
+    for horizon in sorted(by_horizon):
+        said = np.array([p for p, _ in by_horizon[horizon]])
+        up = np.array([u for _, u in by_horizon[horizon]])
+        brier = float(np.mean((said - up) ** 2))
+        null = float(np.mean((0.5 - up) ** 2))
+        skill = 1.0 - brier / null if null > 0 else 0.0
+        out.append((horizon, len(said), brier, null, skill, float(said.mean()), float(up.mean())))
+    return pd.DataFrame(out, columns=columns)
+
+
 class McJob:
     """One tick of the Monte Carlo paper instance."""
 
@@ -600,6 +645,16 @@ class McJob:
                 " ORDER BY id DESC LIMIT 10"
             ):
                 out("  trade " + " | ".join(str(x) for x in line))
+            forward = forward_calibration(conn, self.config.universe, self.deps.now())
+            if forward.empty:
+                out("forward calibration: no audited forecast has matured yet")
+            for case in forward.itertuples(index=False):
+                out(
+                    f"forward calibration, horizon {case.horizon} slots: {case.cases} cases, "
+                    f"P(up) said {case.mean_p_up:.3f}, happened {case.freq_up:.3f}, "
+                    f"Brier {case.brier:.4f} against {case.brier_null:.4f} for the null, "
+                    f"skill {case.skill_vs_null:+.4f}"
+                )
         finally:
             conn.close()
         return 0
