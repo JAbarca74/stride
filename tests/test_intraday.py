@@ -14,6 +14,7 @@ from stride.data.intraday import (
     regular_session,
     session_slots,
     slot_bars,
+    slot_inputs,
     update_intraday,
     upsert_intraday,
 )
@@ -210,3 +211,21 @@ def test_slot_bars_skips_slots_without_trades() -> None:
 
 def test_slot_bars_empty() -> None:
     assert slot_bars(_bars(OPEN, 0)).empty
+
+
+def test_slot_inputs_cut_the_grid_at_asof_and_start_at_the_earliest_bar() -> None:
+    conn = _conn()
+    upsert_intraday(conn, "AAA", _bars(OPEN, 13), "fake", NOW)
+    upsert_intraday(conn, "BBB", _bars(OPEN + timedelta(days=1), 13), "fake", NOW)
+    asof = datetime(2026, 10, 16, 15, 30, tzinfo=UTC)  # the first two slots of day 2 have ended
+    grid, slots = slot_inputs(conn, ["AAA", "BBB"], asof)
+    assert list(grid.columns) == ["day", "slot", "end"]
+    assert len(grid) == SLOTS_PER_DAY + 2
+    assert grid["end"].iloc[-1] == pd.Timestamp("2026-10-16T15:00:00Z")
+    assert len(slots["AAA"]) == SLOTS_PER_DAY  # listed on day 1 only
+    assert slots["BBB"]["slot"].tolist() == [0, 1]  # no slot is built from half its bars
+
+
+def test_slot_inputs_need_stored_bars() -> None:
+    with pytest.raises(ValueError, match="no intraday bars"):
+        slot_inputs(_conn(), ["AAA"], NOW)
