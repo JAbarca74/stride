@@ -1,0 +1,59 @@
+# STRIDE paper instance RISK: risk allocation with a trend brake (docs/design/mc_risk_paper.md).
+#
+# A small standalone file, not a copy of config.yaml. Commission and spread come from
+# config.yaml (what B and DIP pay). Every number below is a parameter; none is hardcoded
+# in the job.
+# Run it with:  python -m stride.run_risk --config config.paper_risk.yaml
+# Status:       python -m stride.run_risk --config config.paper_risk.yaml --report
+# Self-check:   python -m stride.run_risk --config config.paper_risk.yaml --verify
+#
+# enabled: false  ->  every tick of the job is a no-op.
+# The values are the variant gate R2 selected (IV_trend on the 20 assets with 10,000
+# simulated USD, docs/design/mc_risk_results.md), exactly as it was measured. Do not tune
+# them once the instance runs: changing them restarts the experiment. Judging criteria:
+# docs/design/mc_risk_paper.md, section 6. Turning it on is the owner's decision, in its
+# own pull request.
+
+enabled: false
+mode: paper                  # this instance never trades real money (any other value is refused)
+capital_usd: 10000           # simulated starting capital (not the size of the real account)
+kill_switch_dd: 0.20         # drawdown from the peak, at a close: sell all, stop for good
+db_path: data/paper_risk.db  # git-ignored
+
+# The 20 assets approved on 2026-11-11 (docs/design/mc_universe.md).
+universe: [QQQ, IWM, XLE, XLV, XLU, EFA, FXI, INDA, EWZ, TLT, GLD, SLV, CPER, USO, UNG, DBA, VNQ, UUP, IBIT, ETHA]
+
+# Joint caps on the weight of correlated assets (fraction of equity).
+groups:
+  us_equity: [QQQ, IWM]
+  metals: [GLD, SLV, CPER]
+  crypto: [IBIT, ETHA]
+group_caps:
+  us_equity: 0.40
+  metals: 0.35
+  crypto: 0.30
+
+allocation:                  # how the weights are set (design section 2)
+  allocator: IV              # EW | IV | ERC: inverse of the simulated 20-session volatility
+  brake: trend               # none | trend | dd: an asset is held only above its average
+  trend_days: 200            # closes in that average
+  dd_floor: 0.15             # only used by the dd brake
+
+simulation:                  # the daily futures, with no direction
+  window_days: 252           # history used, in sessions
+  vol_span_days: 60          # EWMA span of the volatility filter
+  mean_block_days: 2.0       # mean length of a resampled run
+  n_paths: 2000              # joint simulated futures per session
+  seed: 20261112             # the seed of a session derives from it and the session date
+
+limits:
+  max_weight: 0.25           # per asset
+  max_total: 1.0             # no leverage, no margin
+  risk_horizon: 5            # sessions of the portfolio loss check
+  risk_quantile: 0.01        # the loss exceeded in 1% of the joint simulated paths ...
+  max_portfolio_loss: 0.08   # ... must stay below 8% of equity
+  min_order_usd: 150         # smaller monthly targets and orders are dropped
+
+history_days: 500            # calendar days of daily bars downloaded before the first session
+min_fresh_share: 0.8         # a session is processed once this share of the held universe has its bar
+sanity_move: 0.40            # a one-day move above this is bad data: the tick stops (largest real one: 28.5%)
