@@ -54,11 +54,11 @@ stride-data = "stride.data.update:main"
 alpaca = ["alpaca-py>=0.44.0"]
 ibkr = ["ib_async>=1.0"]
 dev = [
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.17.1",
-    "mypy>=2.4.0",
+    "ruff>=0.17.4",
+    "mypy>=2.4.1",
     "pandas-stubs",
     "hypothesis",
     "types-PyYAML",
