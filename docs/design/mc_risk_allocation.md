@@ -1,6 +1,6 @@
 # Risk-based allocation for the Monte Carlo universe: design
 
-Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phases 1 to 3 are built (section 11). **Gate R1 is met** (`docs/design/mc_risk_calibration_results.md`); gate R2 has not been run and there is no allocation result yet. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
+Status: **approved by the owner on 2026-11-12** (the design, `EW`/`none` as the reference of gate R2 and the Tiingo download). Phases 1 to 4 are built (section 11). **Gate R1 is met** (`docs/design/mc_risk_calibration_results.md`) and **gate R2 is met** in both set-ups, with the caveats of `docs/design/mc_risk_results.md`. Phase 5 (a paper instance) is not started: it needs its own design and the owner's approval. It follows `docs/design/mc_backtest_results.md` section 8 (items 1 and 2) and `docs/handoff_montecarlo_estado.es.md` section 6.
 
 Rules this work keeps:
 
@@ -197,3 +197,20 @@ Points the design left open, settled here before any allocation result exists:
 - **`ERC` method.** Cyclical coordinate descent on the covariance of the joint simulated paths, rescaled to sum to 1. The hypothesis test checks that every risk contribution equals 1/n.
 - **`trend` needs 200 closes.** An asset with fewer is not held by the `trend` variants.
 - **The `dd` brake has an absorbing end.** At a drawdown of 15% its exposure is zero, and a portfolio in cash cannot recover its drawdown, so a `dd` variant that reaches 15% stays in cash for good. That is the rule as pre-registered (it is in cash before the 20% kill switch); phase 4 reports whether and when it happens instead of changing the rule.
+
+### Phase 4: gate R2 (2026-11-12)
+
+| Piece | File |
+| --- | --- |
+| Daily walk-forward of the variants (the account is the existing `Trader`, driven unchanged) | `src/stride/forecast/risk_walkforward.py` |
+| The runs and the gate | `scripts/research/mc_risk_evaluate.py` |
+| Tests | `tests/test_risk_walkforward.py` |
+| Results | `docs/design/mc_risk_results.md`, `docs/results/mc_risk/` |
+
+Gate R2 is met in both set-ups. `U20` selects `IV_trend` (+35.5% and +63.9% in the two periods, drawdowns of 8.8% and 9.3%). `S6` selects `IV_dd`, which passes the checks and ended in cash on 2022-09-27 with +8.4% in the holdout: a pass of the letter of the gate, not a success.
+
+What the runs showed beyond the gate: the trend brake is what survives 2008, 2020 and 2022 (12 of 12 trend runs positive, none killed; 6 of the other 24 killed); sizing with the simulated volatility was no better than a plain 60-day one; the simulated loss cap never bound for the selected variants; and in 2023-2026 the selected variant made less than staying invested.
+
+Settled before the full run, after a smoke test on four months of 2008: the minimum order applies to the monthly targets and to each order, and a brake that shrinks a held position below it does not sell the whole position.
+
+`S6` is QQQ, EFA, TLT, GLD, USO, VNQ: the lowest spread measured in `docs/design/mc_universe.md` in each of the six classes.
