@@ -1,6 +1,6 @@
 # Paper instance for the risk-allocation result (`paper_risk`): design
 
-Status: **proposal, not approved. Nothing here is implemented.** Phase 5 of `docs/design/mc_risk_allocation.md`. It follows gates R1 and R2 (`docs/design/mc_risk_calibration_results.md`, `docs/design/mc_risk_results.md`).
+Status: **approved by the owner on 2026-11-12. Phase 5.1 is built (section 9): the instance exists and is disabled (`enabled: false`). It is not wired into the loop (phase 5.2) and not running (phase 5.3, the owner's go-ahead).** Phase 5 of `docs/design/mc_risk_allocation.md`. It follows gates R1 and R2 (`docs/design/mc_risk_calibration_results.md`, `docs/design/mc_risk_results.md`).
 
 Rules this work keeps:
 
@@ -87,3 +87,29 @@ Not a criterion, and stated so: the sign of the return. Over six months it is no
 3. **Judge at 120 sessions with the four criteria of section 6**, or other criteria, fixed now.
 4. **The dividend rule of section 4.**
 5. Changing `scripts/actions_loop.sh` and `scripts/save_state.sh`, which B and DIP also go through.
+
+## 9. As built
+
+### Phase 5.1: the instance, disabled (2026-11-12)
+
+| Piece | File |
+| --- | --- |
+| Config model | `src/stride/risk_paper/config.py` |
+| Daily job (tick, report, self-check) | `src/stride/risk_paper/job.py` |
+| Entry point | `src/stride/run_risk.py` (`python -m stride.run_risk`) |
+| Instance config, `enabled: false` | `config.paper_risk.yaml` |
+| State and one shared session step for backtest and job | `RiskTrader.to_state` / `from_state` and `step_session` in `src/stride/forecast/risk_walkforward.py` |
+| Tests | `tests/test_run_risk.py` |
+
+`run_risk_trading` now goes through `step_session`; the 114 runs of `docs/results/mc_risk/risk_runs.csv` were regenerated after the change and are identical. No other existing file changes; `scripts/actions_loop.sh` and `scripts/save_state.sh` are not touched until phase 5.2.
+
+Where it differs from the sections above, or settles what they left open:
+
+- **Seed.** The seed of a session derives from the config seed and the session date (`session_seed`), so it does not depend on how much history the panel holds. The research runs used the panel row instead; the two are different random draws of the same simulation, so the paper account is not a bit-for-bit continuation of `risk_runs.csv`.
+- **Dividends (section 4).** The job does not watch the download for a revision. At the end of each tick it saves, per asset, the day and close of the last bar it used; at the next tick it compares that close with what the database now holds for the same day, and multiplies the shares held by `old / new` when they differ. That survives a tick that fails between the download and the save. Event `DIVIDEND_ADJUST`.
+- **Criterion 4 (section 6).** `python -m stride.run_risk --verify` replays the account from its first session with the stored bars and compares the equity day by day. Without a dividend the replay is exact. After one, the stored history is rescaled, so share counts and per-share commissions differ by cents: the check passes when the largest gap is within 0.1%. A liquidation by a kill-switch file is not replayed.
+- **Kill-switch file.** A `KILL_SWITCH_RISK` or `KILL_SWITCH` file is acted on after the sessions of the tick are replayed, so the sells fill at the next open, never at an open that had passed when the file was written.
+- **History.** The first day of history is fixed at the first run (`history_days` before it) and nothing is deleted, so the replay can always be redone.
+- **Tables** in `data/paper_risk.db`: `risk_equity` (per session), `risk_trades` (fills), `risk_log` (per session: rebalance, brake factors, simulated loss quantiles and weights of what is held), `risk_paper_state`, and the shared `prices`, `runs` (phase `risk`), `events`.
+
+Checked on real data, outside the repository's instance: two sessions (2026-11-10 and 2026-11-11) in a temporary folder with Tiingo prices and no alerts. The account started in cash, bought the 9 assets above their 200-day average at the open of 2026-11-11 (53% invested, 6.20 USD of costs) and the replay matched exactly. That is a check of the plumbing, not a result.

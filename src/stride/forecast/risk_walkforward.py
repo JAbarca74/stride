@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -217,6 +218,42 @@ class RiskTrader:
                 failed.add(order.asset)
         self.backlog = failed
 
+    def to_state(self) -> dict[str, Any]:
+        """The account and the allocation state as plain data (JSON-safe).
+
+        The decision log and the held weights are not part of it: a live job saves
+        them as they happen and clears them.
+        """
+        return {
+            "trader": self.trader.to_state(),
+            "base": [float(x) for x in self.base],
+            "scale": float(self.scale),
+            "month": None if self.month is None else list(self.month),
+            "backlog": sorted(int(x) for x in self.backlog),
+        }
+
+    @classmethod
+    def from_state(
+        cls,
+        state: dict[str, Any],
+        rule: RiskRule,
+        costs: CostModel,
+        *,
+        kill_switch_dd: float,
+    ) -> RiskTrader:
+        """Rebuild an account saved by `to_state`."""
+        base = np.array(state["base"], dtype=float)
+        out = cls(rule, costs, initial_equity=1.0, kill_switch_dd=kill_switch_dd, size=len(base))
+        out.trader = Trader.from_state(
+            state["trader"], out.trader.rule, costs, kill_switch_dd=kill_switch_dd
+        )
+        out.base = base
+        out.scale = float(state["scale"])
+        month = state["month"]
+        out.month = None if month is None else (int(month[0]), int(month[1]))
+        out.backlog = {int(x) for x in state["backlog"]}
+        return out
+
     def result(self, panel: ReturnPanel) -> RiskResult:
         """The account's history as tables."""
         book = self.trader.book
@@ -230,6 +267,39 @@ class RiskTrader:
             index=pd.DatetimeIndex(log["day"]),
         )
         return RiskResult(self.rule, trading, log, held)
+
+
+def step_session(
+    panel: ReturnPanel,
+    row: int,
+    traders: Sequence[RiskTrader],
+    params: DailyRiskParams,
+    seed: int,
+    *,
+    decide: bool = True,
+) -> None:
+    """One session for every trader: fills at its open, the decision after its close
+    (unless `decide` is False), then equity and the kill switch.
+
+    The backtest and the live job both go through this function, so they cannot
+    drift apart. The simulation is shared by all traders and reads rows up to `row`.
+    """
+    if ALLOCATION_HORIZON not in params.horizons:
+        raise ValueError(f"params.horizons must contain {ALLOCATION_HORIZON}")
+    alloc_index = params.horizons.index(ALLOCATION_HORIZON)
+    for trader in traders:
+        trader.trader.open_slot(panel, row)
+    if decide:
+        valid, paths = simulate_joint(panel, row, params, seed)
+        for trader in traders:
+            horizon = trader.rule.limits.risk_horizon
+            if horizon not in params.horizons:
+                raise ValueError(f"risk_horizon {horizon} is not simulated")
+            trader.decide(
+                panel, row, valid, paths[alloc_index], paths[params.horizons.index(horizon)]
+            )
+    for trader in traders:
+        trader.trader.close_slot(panel, row, session_end=True)
 
 
 def run_risk_trading(
@@ -251,19 +321,6 @@ def run_risk_trading(
         raise ValueError("need 0 <= start < stop <= len(panel)")
     if ALLOCATION_HORIZON not in params.horizons:
         raise ValueError(f"params.horizons must contain {ALLOCATION_HORIZON}")
-    alloc_index = params.horizons.index(ALLOCATION_HORIZON)
     for row in range(start, stop):
-        for trader in traders:
-            trader.trader.open_slot(panel, row)
-        if row + 1 < stop:
-            valid, paths = simulate_joint(panel, row, params, seed_for(base_seed, row))
-            for trader in traders:
-                horizon = trader.rule.limits.risk_horizon
-                if horizon not in params.horizons:
-                    raise ValueError(f"risk_horizon {horizon} is not simulated")
-                trader.decide(
-                    panel, row, valid, paths[alloc_index], paths[params.horizons.index(horizon)]
-                )
-        for trader in traders:
-            trader.trader.close_slot(panel, row, session_end=True)
+        step_session(panel, row, traders, params, seed_for(base_seed, row), decide=row + 1 < stop)
     return [trader.result(panel) for trader in traders]
