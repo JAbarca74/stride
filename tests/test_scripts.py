@@ -97,5 +97,15 @@ def test_actions_run_uses_state_repo_and_never_live_keys() -> None:
     assert "python -m stride.run_mc --config config.paper_mc.yaml ||" in loop
     assert "FAILED=1" not in next(line for line in loop.splitlines() if "run_mc" in line)
     assert "data/paper_mc.db" in _text("save_state.sh")
+    # So does the risk-allocation instance, after B, DIP and the Monte Carlo one.
+    assert "python -m stride.run_risk --config config.paper_risk.yaml ||" in loop
+    assert "FAILED=1" not in next(line for line in loop.splitlines() if "run_risk" in line)
+    assert (
+        loop.index("stride.run_daily") < loop.index("stride.run_mc") < loop.index("stride.run_risk")
+    )
+    assert loop.index("stride.run_risk") < loop.index("save_state.sh")
+    assert "data/paper_risk.db" in _text("save_state.sh")
+    for name in ("config.paper_mc.yaml", "config.paper_risk.yaml"):
+        assert (ROOT / name).is_file()
     setup = _text("setup_actions.ps1")
     assert "--private" in setup and "IBKR" in setup and "never copied" in setup

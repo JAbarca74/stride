@@ -81,6 +81,7 @@ class RiskPaperConfig(_Section):
     history_days: Annotated[int, Field(ge=60)]  # calendar days of daily bars kept before the start
     min_fresh_share: Fraction  # share of the held universe that must have the newest bar
     sanity_move: Fraction  # a one-day move above this is treated as bad data
+    retry_minutes: Annotated[int, Field(ge=1)]  # wait after a tick that found no bar or failed
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

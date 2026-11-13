@@ -6,7 +6,8 @@ name: Paper run
 # missed the morning window every day. The crons only restart the chain if it breaks.
 # The state (SQLite databases, HALT / KILL_SWITCH files) lives in a private repo.
 # Each tick also calls the Monte Carlo instance (config.paper_mc.yaml, python -m stride.run_mc):
-# a no-op while its config says `enabled: false`, and it never fails the run.
+# a no-op while its config says `enabled: false`, and it never fails the run. The same holds
+# for the risk-allocation instance (config.paper_risk.yaml, python -m stride.run_risk).
 # To stop the loop: disable this workflow in the Actions tab.
 
 on:

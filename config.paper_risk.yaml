@@ -57,3 +57,4 @@ limits:
 history_days: 500            # calendar days of daily bars downloaded before the first session
 min_fresh_share: 0.8         # a session is processed once this share of the held universe has its bar
 sanity_move: 0.40            # a one-day move above this is bad data: the tick stops (largest real one: 28.5%)
+retry_minutes: 30            # after a tick that found no bar or failed, wait this long (the data key is shared with B and DIP)

@@ -10,7 +10,7 @@ cd "$ROOT"
 : "${STATE_DIR:?STATE_DIR is not set}"
 
 mkdir -p "$STATE_DIR/data"
-for DB in data/paper_b.db data/paper_dip.db data/paper_mc.db; do
+for DB in data/paper_b.db data/paper_dip.db data/paper_mc.db data/paper_risk.db; do
     # the backup file is not byte-stable, so copy only when the source itself changed
     SUM="$(sha256sum "$DB" 2>/dev/null | cut -d' ' -f1 || true)"
     if [ -f "$DB" ] && [ "$SUM" != "$(cat "$DB.saved" 2>/dev/null || true)" ]; then
