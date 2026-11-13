@@ -52,7 +52,7 @@ stride-data = "stride.data.update:main"
 
 [project.optional-dependencies]
 alpaca = ["alpaca-py>=0.44.0"]
-ibkr = ["ib_async>=1.0"]
+ibkr = ["ib_async>=2.1.0"]
 dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
