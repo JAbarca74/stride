@@ -99,6 +99,15 @@ _SCHEMA = (
         weights    TEXT NOT NULL
     )
     """,
+    # A session processed without the bar of an asset (it was not published yet, within
+    # `min_fresh_share`). The bar may arrive later; `verify` replays the session without it.
+    """
+    CREATE TABLE IF NOT EXISTS risk_missing (
+        day    TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        PRIMARY KEY (day, symbol)
+    )
+    """,
 )
 # Not `risk_state`: data/store.py already has a table of that name with other columns.
 STATE_TABLE = "risk_paper_state"
@@ -167,6 +176,12 @@ def _now_iso(moment: datetime) -> str:
 def session_seed(base: int, day: pd.Timestamp) -> int:
     """The seed of a session: it depends on the date only, not on how the panel is cut."""
     return seed_for(base, int(day.strftime("%Y%m%d")))
+
+
+def _without_bar(panel: ReturnPanel, row: int) -> list[int]:
+    """Assets with a history whose bar of session `row` is not in the panel."""
+    absent = ~np.isfinite(panel.open[row]) & np.isfinite(panel.close[row])
+    return [int(asset) for asset in np.flatnonzero(absent)]
 
 
 def build_costs(root: Path, universe: list[str]) -> CostModel:
@@ -284,16 +299,24 @@ class RiskJob:
 
         The first symbol of the universe is the probe: if its bar of `target` is not
         published yet, nothing else is requested and the result is False (one request
-        instead of one per symbol while the job waits for the provider).
+        instead of one per symbol while the job waits for the provider). If the probe
+        fails, the tick fails with that one request. A symbol that already has the bar
+        of `target` (an earlier attempt of this session stored it) is not asked again.
         """
         source = self.deps.source(self.root)
         failed: list[str] = []
         for number, symbol in enumerate(self.config.universe):
+            newest = store.last_price_date(conn, symbol)
+            if newest is not None and newest >= target:
+                continue
             try:
                 update_symbol(conn, source, PlanItem(symbol, source.name, start), target)
             except SourceError as exc:
+                if number == 0:
+                    raise SourceError(f"no bars for {symbol} ({exc})") from None
                 failed.append(f"{symbol} ({exc})")
-            if number == 0 and not failed:
+                continue
+            if number == 0:
                 newest = store.last_price_date(conn, symbol)
                 if newest is None or newest < target:
                     return False
@@ -462,6 +485,11 @@ class RiskJob:
                 )
             )
         inner.book.trades.clear()
+        for asset in _without_bar(panel, row):
+            conn.execute(
+                "INSERT OR IGNORE INTO risk_missing (day, symbol) VALUES (?, ?)",
+                (day, panel.symbols[asset]),
+            )
         return events
 
     def _process(self, conn: sqlite3.Connection, now: datetime, target: date) -> str:
@@ -590,6 +618,10 @@ class RiskJob:
         dividend the stored history is rescaled, so share counts and per-share
         commissions differ slightly from the ones of the day: the gap is then small
         but not zero. A liquidation by a `KILL_SWITCH` file is not replayed.
+
+        A session that was processed before the bar of an asset was published
+        (`risk_missing`) is replayed without that bar, the way the job saw it, even
+        if the bar is in the database now.
         """
         if not self.db.exists():
             out("STRIDE RISK: no database yet")
@@ -605,6 +637,10 @@ class RiskJob:
                 return 1
             panel = self._panel(conn, date.fromisoformat(start), date.fromisoformat(last))
             recorded = dict(conn.execute("SELECT day, equity FROM risk_equity").fetchall())
+            late: dict[str, list[int]] = {}
+            for day, symbol in conn.execute("SELECT day, symbol FROM risk_missing"):
+                if symbol in panel.symbols:
+                    late.setdefault(str(day), []).append(panel.symbols.index(symbol))
         finally:
             conn.close()
         trader = RiskTrader(
@@ -619,14 +655,22 @@ class RiskJob:
         for row in range(len(panel)):
             if panel.day[row] < pd.Timestamp(first):
                 continue
+            day = panel.day[row].date().isoformat()
+            hidden = late.get(day, []) if row > 0 else []
+            kept = [a[row, hidden].copy() for a in (panel.open, panel.close, panel.ret)]
+            if hidden:  # the session as the job saw it: no open, the previous close
+                panel.open[row, hidden] = np.nan
+                panel.close[row, hidden] = panel.close[row - 1, hidden]
+                panel.ret[row, hidden] = 0.0
             step_session(
                 panel, row, [trader], params, session_seed(cfg.simulation.seed, panel.day[row])
             )
-            day = panel.day[row].date().isoformat()
             if day in recorded:
                 replayed = trader.trader.equity_now(panel, row)[0]
                 worst = max(worst, abs(replayed / float(recorded[day]) - 1.0))
                 sessions += 1
+            for array, values in zip((panel.open, panel.close, panel.ret), kept, strict=True):
+                array[row, hidden] = values  # later sessions saw the bar that arrived
         ok = sessions > 0 and worst <= VERIFY_TOLERANCE
         out(
             f"STRIDE RISK: replay of {sessions} session(s) from {first} to {last}: largest "
