@@ -6,7 +6,7 @@ import json
 import shutil
 import sqlite3
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +128,7 @@ class FakeSource:
     ) -> None:
         self.payer, self.ex_day, self.dividend = payer, ex_day, dividend
         self.failing: set[str] = set()
+        self.calls = 0
         self.missing: dict[str, date] = {}  # symbol -> a day whose bar is not published
         self.frames: dict[str, pd.DataFrame] = {}
         for number, symbol in enumerate(UNIVERSE):
@@ -142,6 +143,7 @@ class FakeSource:
             )
 
     def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+        self.calls += 1
         if symbol in self.failing:
             raise SourceError(f"fake source down for {symbol}")
         frame = self.frames[symbol]
@@ -366,16 +368,51 @@ def test_a_dividend_is_reinvested_not_lost(tmp_path: Path) -> None:
 def test_a_tick_waits_until_most_of_the_bars_are_published(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     rig.tick(DAYS[0])
-    for symbol in ("QQQ", "IWM", "GLD"):
+    for symbol in ("IWM", "GLD", "TLT"):
         rig.source.missing[symbol] = DAYS[1]
     assert rig.tick(DAYS[1]) == 0
     assert "no data: only 1 of 4 assets" in rig.lines[-1]
     assert rig.state("last_day") == DAYS[0].isoformat()
     assert rig.statuses()[-1] == "no_data"
     rig.source.missing.clear()
-    assert rig.tick(DAYS[1]) == 0
+    assert rig.tick(moment=evening(DAYS[1]) + timedelta(minutes=31)) == 0
     assert rig.state("last_day") == DAYS[1].isoformat()
     assert len(rig.trades()) > 0
+
+
+def test_waiting_for_the_bar_costs_one_request_and_is_not_repeated_every_tick(
+    tmp_path: Path,
+) -> None:
+    """The data key is shared with B and DIP: a job that waits must not spend it."""
+    rig = Rig(tmp_path)
+    rig.tick(DAYS[0])
+    rig.source.missing["QQQ"] = DAYS[1]  # the probe: the first symbol of the universe
+    before = rig.source.calls
+    assert rig.tick(DAYS[1]) == 0
+    assert f"no data: the bar of {DAYS[1]} is not published yet" in rig.lines[-1]
+    assert rig.source.calls == before + 1  # one request, not one per symbol
+    for minutes in (5, 10, 25):
+        assert rig.tick(moment=evening(DAYS[1]) + timedelta(minutes=minutes)) == 0
+        assert rig.lines[-1].endswith("waiting to retry")
+    assert rig.source.calls == before + 1  # the ticks in between ask for nothing
+    assert rig.statuses().count("no_data") == 1
+    rig.source.missing.clear()
+    assert rig.tick(moment=evening(DAYS[1]) + timedelta(minutes=31)) == 0
+    assert rig.state("last_day") == DAYS[1].isoformat()
+    # An up-to-date job asks for nothing either.
+    after = rig.source.calls
+    assert rig.tick(moment=evening(DAYS[1]) + timedelta(minutes=40)) == 0
+    assert rig.source.calls == after
+
+
+def test_a_failed_tick_is_not_repeated_every_five_minutes(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.source.failing.add("IWM")
+    assert rig.tick(DAYS[0]) == 2
+    alerts = len(rig.recorder.alerts)
+    assert rig.tick(moment=evening(DAYS[0]) + timedelta(minutes=5)) == 0
+    assert rig.lines[-1].endswith("waiting to retry")
+    assert len(rig.recorder.alerts) == alerts  # no second alert for the same failure
 
 
 def test_bad_data_and_a_source_failure_stop_the_tick(tmp_path: Path) -> None:
@@ -393,7 +430,7 @@ def test_bad_data_and_a_source_failure_stop_the_tick(tmp_path: Path) -> None:
     assert down.recorder.alerts[-1].kind == "DATA_FAILED"
     assert down.state("trader") is None
     down.source.failing.clear()
-    assert down.tick(DAYS[0]) == 0  # the next tick recovers
+    assert down.tick(moment=evening(DAYS[0]) + timedelta(minutes=31)) == 0  # a later tick recovers
 
 
 def test_the_kill_switch_file_liquidates_and_stops(tmp_path: Path) -> None:

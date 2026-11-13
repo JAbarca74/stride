@@ -1,6 +1,6 @@
 # Paper instance for the risk-allocation result (`paper_risk`): design
 
-Status: **approved by the owner on 2026-11-12. Phase 5.1 is built (section 9): the instance exists and is disabled (`enabled: false`). It is not wired into the loop (phase 5.2) and not running (phase 5.3, the owner's go-ahead).** Phase 5 of `docs/design/mc_risk_allocation.md`. It follows gates R1 and R2 (`docs/design/mc_risk_calibration_results.md`, `docs/design/mc_risk_results.md`).
+Status: **approved by the owner on 2026-11-12. Phases 5.1 and 5.2 are built (section 9): the instance exists, is wired into the loop and is disabled (`enabled: false`), so every tick is a no-op. It is not running: turning it on is phase 5.3, the owner's go-ahead.** Phase 5 of `docs/design/mc_risk_allocation.md`. It follows gates R1 and R2 (`docs/design/mc_risk_calibration_results.md`, `docs/design/mc_risk_results.md`).
 
 Rules this work keeps:
 
@@ -113,3 +113,20 @@ Where it differs from the sections above, or settles what they left open:
 - **Tables** in `data/paper_risk.db`: `risk_equity` (per session), `risk_trades` (fills), `risk_log` (per session: rebalance, brake factors, simulated loss quantiles and weights of what is held), `risk_paper_state`, and the shared `prices`, `runs` (phase `risk`), `events`.
 
 Checked on real data, outside the repository's instance: two sessions (2026-11-10 and 2026-11-11) in a temporary folder with Tiingo prices and no alerts. The account started in cash, bought the 9 assets above their 200-day average at the open of 2026-11-11 (53% invested, 6.20 USD of costs) and the replay matched exactly. That is a check of the plumbing, not a result.
+
+### Phase 5.2: wired into the loop, still disabled (2026-11-12)
+
+| Piece | File |
+| --- | --- |
+| One line after the Monte Carlo one; a failing tick prints a line and never fails the run | `scripts/actions_loop.sh` |
+| `data/paper_risk.db` saved to the state repo with the others | `scripts/save_state.sh` |
+| A comment only; no step, key or permission changes | `.github/workflows/paper.yml` |
+| Operating notes in Spanish | `docs/handoff_riesgo_operacion.es.md` |
+| Tests | `tests/test_scripts.py`, `tests/test_run_risk.py` |
+
+The workflow needed nothing else: it already writes `DATA_API_KEY` to `.env`, restores every file of `data/` and every `KILL_SWITCH*` file from the state repo.
+
+One addition to the job, found while wiring it. The loop ticks every 5 minutes, and the first version asked the provider for all 20 assets at every tick while it waited for the bar of the day. The data key is shared with B and DIP and the provider limits requests per hour, so:
+
+- the first asset of the universe is a probe: if its bar of the day is not published, nothing else is requested (one request instead of 20);
+- after a tick that found no bar or failed, the job waits `retry_minutes` (30, a new parameter of `config.paper_risk.yaml`) before asking again. The ticks in between print `waiting to retry` and request nothing. A failure therefore alerts once per wait, not every 5 minutes.

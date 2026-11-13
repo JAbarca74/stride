@@ -215,7 +215,18 @@ class RiskJob:
             if last is not None and date.fromisoformat(last) >= target:
                 out("STRIDE RISK: up to date")
                 return 0
+            attempt = _read_state(conn, "last_attempt")
+            retry = timedelta(minutes=self.config.retry_minutes)
+            if attempt is not None and pd.Timestamp(now) - pd.Timestamp(attempt) < retry:
+                # The price provider is shared with B and DIP and limits requests per
+                # hour: a tick that found no bar or failed is not repeated every 5 minutes.
+                out("STRIDE RISK: waiting to retry")
+                return 0
             started = _now_iso(now)
+
+            def waiting() -> None:
+                with conn:
+                    _write_state(conn, "last_attempt", started)
 
             def record(status: str, detail: str) -> None:
                 store.record_run(
@@ -235,6 +246,7 @@ class RiskJob:
             except (RiskRunError, SourceError, CredentialError) as exc:
                 conn.rollback()
                 record("error", str(exc))
+                waiting()
                 self.alert(
                     "DATA_FAILED" if isinstance(exc, SourceError) else "RUN_FAILED", str(exc)
                 )
@@ -244,10 +256,14 @@ class RiskJob:
                 conn.rollback()
                 logger.exception("the RISK tick failed")
                 record("error", f"{type(exc).__name__}: {exc}")
+                waiting()
                 self.alert("RUN_FAILED", f"unexpected {type(exc).__name__}; see the log")
                 out(f"STRIDE RISK: unexpected error: {type(exc).__name__}")
                 return 2
-            record("no_data" if detail.startswith("no data") else "ok", detail)
+            no_data = detail.startswith("no data")
+            record("no_data" if no_data else "ok", detail)
+            if no_data:
+                waiting()
             out(f"STRIDE RISK: {detail}")
             return 0
         finally:
@@ -263,17 +279,27 @@ class RiskJob:
             _write_state(conn, "history_start", start.isoformat())
         return start
 
-    def _download(self, conn: sqlite3.Connection, start: date, target: date) -> None:
-        """Bring every symbol up to `target`; a revised history is downloaded again in full."""
+    def _download(self, conn: sqlite3.Connection, start: date, target: date) -> bool:
+        """Bring every symbol up to `target`; a revised history is downloaded again in full.
+
+        The first symbol of the universe is the probe: if its bar of `target` is not
+        published yet, nothing else is requested and the result is False (one request
+        instead of one per symbol while the job waits for the provider).
+        """
         source = self.deps.source(self.root)
         failed: list[str] = []
-        for symbol in self.config.universe:
+        for number, symbol in enumerate(self.config.universe):
             try:
                 update_symbol(conn, source, PlanItem(symbol, source.name, start), target)
             except SourceError as exc:
                 failed.append(f"{symbol} ({exc})")
+            if number == 0 and not failed:
+                newest = store.last_price_date(conn, symbol)
+                if newest is None or newest < target:
+                    return False
         if failed:
             raise SourceError("no bars for " + ", ".join(failed))
+        return True
 
     def _panel(self, conn: sqlite3.Connection, start: date, target: date) -> ReturnPanel:
         bars = {s: store.read_prices(conn, s, start, target) for s in self.config.universe}
@@ -441,7 +467,8 @@ class RiskJob:
     def _process(self, conn: sqlite3.Connection, now: datetime, target: date) -> str:
         cfg = self.config
         start = self._history_start(conn, target)
-        self._download(conn, start, target)
+        if not self._download(conn, start, target):
+            return f"no data: the bar of {target} is not published yet"
         panel = self._panel(conn, start, target)
         if len(panel) == 0:
             return "no data: no session in the history window"
