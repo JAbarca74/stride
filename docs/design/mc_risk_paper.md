@@ -1,6 +1,6 @@
 # Paper instance for the risk-allocation result (`paper_risk`): design
 
-Status: **approved by the owner on 2026-11-12. Phases 5.1 and 5.2 are built (section 9): the instance exists, is wired into the loop and is disabled (`enabled: false`), so every tick is a no-op. It is not running: turning it on is phase 5.3, the owner's go-ahead.** Phase 5 of `docs/design/mc_risk_allocation.md`. It follows gates R1 and R2 (`docs/design/mc_risk_calibration_results.md`, `docs/design/mc_risk_results.md`).
+Status: **approved by the owner on 2026-11-12. Phases 5.1 to 5.3 are done (section 9): the instance is wired into the loop and was enabled on 2026-11-13 (`enabled: true`) on the owner's go-ahead. It is a simulated account; it is judged at 120 sessions by the criteria of section 6.** Phase 5 of `docs/design/mc_risk_allocation.md`. It follows gates R1 and R2 (`docs/design/mc_risk_calibration_results.md`, `docs/design/mc_risk_results.md`).
 
 Rules this work keeps:
 
@@ -130,3 +130,10 @@ One addition to the job, found while wiring it. The loop ticks every 5 minutes, 
 
 - the first asset of the universe is a probe: if its bar of the day is not published, nothing else is requested (one request instead of 20);
 - after a tick that found no bar or failed, the job waits `retry_minutes` (30, a new parameter of `config.paper_risk.yaml`) before asking again. The ticks in between print `waiting to retry` and request nothing. A failure therefore alerts once per wait, not every 5 minutes.
+
+### Phase 5.3: enabled (2026-11-13)
+
+`enabled: true` in `config.paper_risk.yaml`, on the owner's go-ahead. The account starts with 10,000 simulated USD, in cash, at the first tick of the paper loop that runs this code after the daily bar of a session is due (18:00 New York): that tick downloads the history of the 20 assets and decides; the first fills are written the next session. From that first session, 120 sessions is about six months.
+
+To stop it: `enabled: false` (the database and the trades stay), or a `KILL_SWITCH_RISK` file. Operating notes: `docs/handoff_riesgo_operacion.es.md`.
+

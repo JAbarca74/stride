@@ -4,9 +4,9 @@ Notas para el dueño y para quien retome el proyecto en un chat nuevo. El códig
 
 ## 1. Estado
 
-- La instancia está construida y **desactivada** (`enabled: false` en `config.paper_risk.yaml`). Mientras siga así, cada tick del bucle es un no-op: no baja datos, no crea base y no envía alertas.
+- La instancia está **activada desde el 2026-11-13** (`enabled: true` en `config.paper_risk.yaml`), por decisión del dueño. Arranca con 10.000 USD simulados, todo en efectivo, en el primer tick del bucle que corra con este código después de las 18:00 de Nueva York de un día hábil: ese tick baja el historial y decide, y las primeras compras se registran en la sesión siguiente.
 - Está conectada al bucle de GitHub Actions (`scripts/actions_loop.sh`), después de B, DIP y MC, y su base se guarda con las demás (`scripts/save_state.sh`). Un fallo suyo nunca marca el run como fallido.
-- Activarla es decisión del dueño y va en un PR propio (fase 5.3): cambiar `enabled: false` por `enabled: true` y fusionar a `main`.
+- Con `enabled: false` cada tick es un no-op: no baja datos y no envía alertas; la base y las operaciones quedan.
 
 Es una cuenta simulada. Nunca envía órdenes a un bróker ni usa dinero real (`mode` solo admite `paper`).
 
