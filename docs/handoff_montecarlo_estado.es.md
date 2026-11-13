@@ -133,3 +133,6 @@ Se probó la idea 1 de la sección 6 con el historial diario desde 2007 (idea 2)
 Cifras sin promesa: son resultados medidos en datos pasados con ejecuciones simuladas.
 
 Decisiones que quedan en tus manos: si se quiere una instancia de papel con `IV_trend` y 10.000 USD simulados (necesita su propio diseño y tu aprobación; no se empezó), y qué hacer con la cuenta de 1.000 USD, donde la selección fijada de antemano no sirvió.
+
+**Actualización del 2026-11-13.** El dueño aprobó la instancia de papel y se activó: `paper_risk` (`config.paper_risk.yaml`, `python -m stride.run_risk`), con `IV_trend`, los 20 activos y 10.000 USD simulados. Corre en el mismo bucle, después de B, DIP y MC, y no cambia nada de ellas. Se juzga a las 120 sesiones con los cuatro criterios de `docs/design/mc_risk_paper.md`, sección 6. Cómo vigilarla y pararla: `docs/handoff_riesgo_operacion.es.md`.
+
