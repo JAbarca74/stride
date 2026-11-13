@@ -26,7 +26,7 @@ All code, comments, commit messages, docs and pull requests are in **English**.
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev]"
-pytest
+pytest -n auto          # in parallel (about 2 min on 12 cores); plain `pytest` runs serially (about 6 min)
 ruff check . && ruff format --check .
 mypy src
 ```
