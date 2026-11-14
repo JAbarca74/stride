@@ -137,6 +137,8 @@ One addition to the job, found while wiring it. The loop ticks every 5 minutes, 
 
 To stop it: `enabled: false` (the database and the trades stay), or a `KILL_SWITCH_RISK` file. Operating notes: `docs/handoff_riesgo_operacion.es.md`.
 
+**Start, as observed (checked on 2026-11-14 from the state repository).** The first tick ran on 2026-11-13 at 17:50 New York, before the 18:00 cut, so the account's first session is **2026-11-12** (`first_day`). The tick at 18:00 processed 2026-11-13: 9 buys at that open (6.10 USD of costs, 53% invested, equity 9,992.82 USD), and `--verify` replayed both sessions with a zero gap. The 120 sessions of section 6 count from 2026-11-12.
+
 ### Review fixes (2026-11-13)
 
 A code review of `src/stride/risk_paper/`, `src/stride/forecast/risk_walkforward.py` and `src/stride/run_risk.py` after the instance was enabled. No parameter of `config.paper_risk.yaml` changes, and the rule, the fills and the account are untouched: `step_session` and `RiskTrader` are not modified.
