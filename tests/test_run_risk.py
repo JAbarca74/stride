@@ -480,3 +480,59 @@ def test_the_job_never_reads_a_later_bar(tmp_path: Path) -> None:
         other.tick(day)
     pd.testing.assert_series_equal(one.equity(), other.equity())
     pd.testing.assert_frame_equal(one.trades(), other.trades())
+
+
+def test_verify_replays_a_session_with_the_bars_it_had(tmp_path: Path) -> None:
+    """A bar that arrives after its session was processed must not break the self-check:
+    the replay sees that session the way the job saw it, without the late bar."""
+    rig = Rig(tmp_path, min_fresh_share=0.7)  # 3 of the 4 assets are enough
+    for day in DAYS[:4]:
+        assert rig.tick(day) == 0
+    held = json.loads(rig.state("trader"))["trader"]["shares"]
+    assert held[UNIVERSE.index("GLD")] > 0  # the late asset is one the account holds
+    rig.source.missing["GLD"] = DAYS[4]
+    assert rig.tick(DAYS[4]) == 0
+    assert rig.state("last_day") == DAYS[4].isoformat()
+    with rig.conn() as conn:
+        assert conn.execute("SELECT day, symbol FROM risk_missing").fetchall() == [
+            (DAYS[4].isoformat(), "GLD")
+        ]
+    rig.source.missing.clear()  # the provider publishes it the next day
+    for day in DAYS[5:9]:
+        assert rig.tick(day) == 0
+    with rig.conn() as conn:
+        late = conn.execute(
+            "SELECT COUNT(*) FROM prices WHERE symbol = 'GLD' AND date = ?", (DAYS[4].isoformat(),)
+        ).fetchone()[0]
+    assert late == 1
+    lines: list[str] = []
+    assert rig.job().verify(lines.append) == 0
+    assert "replay of 9 session(s)" in lines[-1]
+    assert "0.000000%" in lines[-1]
+
+
+def test_a_failing_probe_costs_one_request(tmp_path: Path) -> None:
+    """The data key is shared: when the first symbol fails, the others are not asked."""
+    rig = Rig(tmp_path)
+    rig.tick(DAYS[0])
+    rig.source.failing.add("QQQ")
+    before = rig.source.calls
+    assert rig.tick(DAYS[1]) == 2
+    assert rig.source.calls == before + 1
+    assert rig.recorder.alerts[-1].kind == "DATA_FAILED"
+    assert "QQQ" in rig.lines[-1]
+
+
+def test_a_retry_asks_only_for_the_bars_still_missing(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.tick(DAYS[0])
+    for symbol in ("IWM", "GLD", "TLT"):
+        rig.source.missing[symbol] = DAYS[1]
+    before = rig.source.calls
+    assert rig.tick(DAYS[1]) == 0
+    assert "no data: only 1 of 4 assets" in rig.lines[-1]
+    assert rig.source.calls == before + 4
+    rig.source.missing.clear()
+    assert rig.tick(moment=evening(DAYS[1]) + timedelta(minutes=31)) == 0
+    assert rig.state("last_day") == DAYS[1].isoformat()
+    assert rig.source.calls == before + 4 + 3  # QQQ already has the bar of the day

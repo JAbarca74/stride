@@ -137,3 +137,20 @@ One addition to the job, found while wiring it. The loop ticks every 5 minutes, 
 
 To stop it: `enabled: false` (the database and the trades stay), or a `KILL_SWITCH_RISK` file. Operating notes: `docs/handoff_riesgo_operacion.es.md`.
 
+### Review fixes (2026-11-13)
+
+A code review of `src/stride/risk_paper/`, `src/stride/forecast/risk_walkforward.py` and `src/stride/run_risk.py` after the instance was enabled. No parameter of `config.paper_risk.yaml` changes, and the rule, the fills and the account are untouched: `step_session` and `RiskTrader` are not modified.
+
+Fixed, each with its test in `tests/test_run_risk.py`:
+
+- **Self-check and late bars.** A session is processed once 80% of the assets have their bar (section 5). The bar of a late asset arrives with the next download, and `--verify` then replayed that session with a bar the job never saw: the gap is the weight of the asset times its move of the day, which can pass the 0.1% tolerance and fail criterion 4 for no fault of the job. The job now writes the assets without a bar of each session to a new table, `risk_missing`, and `--verify` replays that session without them. Sessions processed before this change have no such record.
+- **Requests to the shared data key.** When the probe symbol failed, the other 19 were still requested before the tick failed; and every retry asked again for the symbols that already had the bar of the day. Now a failing probe costs one request, and a retry asks only for the bars still missing.
+
+Found and not changed:
+
+- **The first tick does not wait for 18:00 New York.** An account created earlier in the day takes the previous session as its first one, decides on that close and fills at the open of the current session when its bar is processed. This is the catch-up path every missed session goes through, not a look-ahead, but sections 3 and 9 (phase 5.3) describe a start after 18:00.
+- A provider correction of a single close is handled like a dividend (the shares are rescaled). The effect is the weight times the correction.
+- Events, the kill-switch file and the summary alert are written after the session is committed; a failure there is reported as a failed tick although the session is saved.
+- A stopped account still downloads and simulates every session.
+- `runs.date` is the UTC date of the tick (as in `paper_mc`), not the New York date.
+
