@@ -63,6 +63,7 @@ Mensajes normales del job: `up to date` (nada nuevo que procesar), `waiting to r
 | `risk_equity` | por sesión: capital, efectivo, exposición y caída desde el máximo |
 | `risk_trades` | cada operación simulada: día, activo, lado, monto, precio, comisión, spread y razón (`RISK_ENTER`, `RISK_EXIT`, `RISK_REDUCE`, `RISK_RESIZE`, `KILL_SWITCH`, `KILL_SWITCH_FILE`) |
 | `risk_log` | por sesión: si hubo rebalanceo, factores de freno, pérdida simulada (5% y 1%) de lo que se mantiene y sus pesos |
+| `risk_missing` | por sesión: los activos cuya barra aún no estaba publicada cuando se procesó (para que `--verify` repita la sesión tal como la vio el job) |
 | `risk_paper_state` | la cuenta guardada (JSON), la última sesión procesada, cuándo arrancó |
 | `runs`, `events` | una fila por tick que hizo algo (fase `risk`) y un evento por operación o ajuste |
 
