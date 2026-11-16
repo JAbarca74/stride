@@ -113,6 +113,19 @@ def _allowed_switch(
     return before > 0 and abs(net_change) < config.execution.rebalance_band * before
 
 
+def max_order_usd(side: Side, equity: float, config: StrideConfig) -> float:
+    """The largest order the guard approves (owner decision, 2026-11-16).
+
+    `execution.max_order_pct_equity` of equity, except a buy in an account that
+    never borrows (`risk.allow_margin: false`): such a buy is already bounded by the
+    cash, so its limit is the whole equity. Splitting it would only send the same
+    position as several same-day orders, each paying the minimum commission.
+    Sells keep the limit."""
+    if side == "buy" and not config.risk.allow_margin:
+        return equity
+    return config.execution.max_order_pct_equity * equity
+
+
 def check_order(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -> GuardDecision:
     """Every veto that applies to `order` in `ctx` (SPEC 7, step 3)."""
     underlying = underlying_map(config)
@@ -136,7 +149,7 @@ def check_order(order: ProposedOrder, ctx: GuardContext, config: StrideConfig) -
     if (
         not math.isfinite(ctx.equity)
         or not ctx.equity > 0
-        or order.notional > config.execution.max_order_pct_equity * ctx.equity
+        or order.notional > max_order_usd(order.side, ctx.equity, config)
     ):
         reasons.append(ORDER_TOO_LARGE)
     if len(ctx.approved_today) >= config.execution.max_orders_per_day:

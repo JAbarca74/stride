@@ -27,6 +27,7 @@ from stride.risk.guard import (
     check_liquidation,
     check_order,
     check_orders,
+    max_order_usd,
     multiple_map,
     underlying_map,
 )
@@ -74,8 +75,24 @@ def test_veto_short() -> None:
 
 
 def test_veto_order_above_60_percent_of_equity() -> None:
-    assert _reasons(_buy(notional=600.01)) == (ORDER_TOO_LARGE,)
-    assert _reasons(_buy(notional=600.0)) == ()
+    held = replace(CTX, positions_usd={**CTX.positions_usd, "SPY": 2_000.0})
+    assert _reasons(_sell(notional=600.01), held) == (ORDER_TOO_LARGE,)
+    assert _reasons(_sell(notional=600.0), held) == ()
+
+
+def test_a_buy_without_margin_is_limited_by_equity_not_60_percent() -> None:
+    """Owner decision 2026-11-16: an account that never borrows is bounded by its
+    cash, so a buy is limited to the whole equity, not split at 60%."""
+    assert not CONFIG.risk.allow_margin
+    assert _reasons(_buy(notional=900.0)) == ()
+    assert _reasons(_buy(notional=1_000.0)) == ()
+    assert _reasons(_buy(notional=1_000.01)) == (ORDER_TOO_LARGE,)
+    margin = CONFIG.model_copy(
+        update={"risk": CONFIG.risk.model_copy(update={"allow_margin": True})}
+    )
+    assert check_order(_buy(notional=600.01), CTX, margin).reasons == (ORDER_TOO_LARGE,)
+    assert max_order_usd("sell", 1_000.0, CONFIG) == pytest.approx(600.0)
+    assert max_order_usd("buy", 1_000.0, CONFIG) == 1_000.0
 
 
 def test_veto_13th_order_of_the_day() -> None:
@@ -215,7 +232,7 @@ def test_approved_orders_always_respect_every_rule(  # noqa: PLR0917
     remaining = dict(held)
     sides: dict[str, set[str]] = {}
     for order in ok:
-        assert order.notional <= CONFIG.execution.max_order_pct_equity * equity
+        assert order.notional <= max_order_usd(order.side, equity, CONFIG)
         assert mapping[order.symbol] not in blocked
         if order.side == "sell":  # never short
             assert order.notional <= remaining.get(order.symbol, 0.0) + 0.01

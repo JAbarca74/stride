@@ -135,6 +135,7 @@ class PlannedOrder:
     switch: bool
     asset: str
     rule: str
+    opens: bool = False  # a buy of a symbol the account does not hold: an entry, never a resize
 
 
 @dataclass
@@ -202,8 +203,9 @@ def plan_orders(
         diff = target - positions_usd.get(target_symbol, 0.0)
         if abs(diff) < minimum or (not switching and abs(diff) < band * target):
             continue
+        opens = diff > 0 and not positions_usd.get(target_symbol, 0.0) > 0
         order = PlannedOrder(
-            target_symbol, "buy" if diff > 0 else "sell", abs(diff), switching, asset, rule
+            target_symbol, "buy" if diff > 0 else "sell", abs(diff), switching, asset, rule, opens
         )
         (buys if diff > 0 else sells).append(order)
     return sorted(sells, key=lambda o: -o.notional) + sorted(buys, key=lambda o: -o.notional)
@@ -223,16 +225,18 @@ def skip_costly_resizes(
     correction is not worth its cost. Buys and sells are treated alike; skipping
     only buys ratcheted the exposure down (seen with Fixed pricing on real data).
     Never skipped: entries, pyramid adds, exits and stops (signal rules), a sell
-    that closes the position (`targets` has no dollars for its symbol), and switch
-    legs. Large resizes such as the drawdown deleveraging are cheap per dollar and
-    go through."""
+    that closes the position (`targets` has no dollars for its symbol), switch
+    legs, and a buy of a symbol not held (`opens`): an entry that did not fill, for
+    example, is still labelled HOLD the next day, and skipping it for cost would
+    leave the position unopened for good (seen in paper DIP, 2026-10 to 11). Large
+    resizes such as the drawdown deleveraging are cheap per dollar and go through."""
     limit = config.execution.max_resize_cost_pct
     targets = targets or {}
     kept, skipped = [], []
     for order in orders:
         price = prices.get(order.symbol, math.nan)
         closes = order.side == "sell" and targets.get(order.symbol, 0.0) <= 0
-        resize = order.rule == HOLD and not order.switch and not closes
+        resize = order.rule == HOLD and not order.switch and not closes and not order.opens
         if resize and price > 0 and order.notional > 0:
             fee = commission(order.notional / price, price, config)
             rate = fee / order.notional + spread_bps(order.symbol, config) / BPS
@@ -247,15 +251,17 @@ def split_orders(
     orders: Sequence[PlannedOrder], equity: float, config: StrideConfig
 ) -> list[PlannedOrder]:
     """PROVISIONAL (owner decision on PR #56, question A). Split every order above
-    `max_order_pct_equity` x equity into equal parts that fit, so a large exit (a
-    stop included) or a first unit worth more than 60% of equity is not vetoed
-    forever. Each part still goes through the guard and counts towards the daily
-    order limit; sells come first, so exits get the slots before entries."""
-    cap = config.execution.max_order_pct_equity * equity * (1 - 1e-9)
-    if not cap > 0:
-        return list(orders)
+    the guard's size limit (`guard.max_order_usd`) into equal parts that fit, so a
+    large exit (a stop included) or a first unit worth more than 60% of equity is
+    not vetoed forever. Each part still goes through the guard and counts towards
+    the daily order limit; sells come first, so exits get the slots before entries.
+    A buy in an account without margin is limited by the cash, not split."""
     out = []
     for order in orders:
+        cap = guard.max_order_usd(order.side, equity, config) * (1 - 1e-9)
+        if not cap > 0:
+            out.append(order)
+            continue
         parts = max(1, math.ceil(order.notional / cap))
         out += [replace(order, notional=order.notional / parts)] * parts
     return out

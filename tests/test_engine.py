@@ -232,7 +232,8 @@ def test_every_approved_order_passed_the_guard_limits() -> None:
     approved = orders[orders["approved"]]
     equity = result.equity["equity"]
     for _, order in approved.iterrows():
-        assert order["notional"] <= CONFIG.execution.max_order_pct_equity * equity[order["date"]]
+        limit = guard.max_order_usd(order["side"], equity[order["date"]], CONFIG)
+        assert order["notional"] <= limit
     assert (approved.groupby("date").size() <= CONFIG.execution.max_orders_per_day).all()
     vetoed = orders[~orders["approved"]]
     assert vetoed["order_id"].isna().all()  # a vetoed order never reaches the broker
