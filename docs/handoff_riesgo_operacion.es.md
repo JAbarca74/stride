@@ -4,7 +4,9 @@ Notas para el dueño y para quien retome el proyecto en un chat nuevo. El códig
 
 ## 1. Estado
 
-- La instancia está **activada desde el 2026-11-13** (`enabled: true` en `config.paper_risk.yaml`), por decisión del dueño. Arranca con 10.000 USD simulados, todo en efectivo, en el primer tick del bucle que corra con este código después de las 18:00 de Nueva York de un día hábil: ese tick baja el historial y decide, y las primeras compras se registran en la sesión siguiente.
+- La instancia está **activada desde el 2026-11-13** (`enabled: true` en `config.paper_risk.yaml`), por decisión del dueño, con 10.000 USD simulados, todo en efectivo.
+- **Arranque real (verificado el 2026-11-14 sobre la base de `stride-state`).** El primer tick corrió el 2026-11-13 a las 17:50 de Nueva York (22:50 UTC), antes de las 18:00, así que tomó como primera sesión la del **2026-11-12** (`first_day`) y decidió con ese cierre. A las 18:00 procesó la del 2026-11-13: 9 compras a la apertura de ese día (QQQ, IWM, XLE, XLV, EFA, INDA, USO, VNQ, UUP), 6,10 USD de costos, 53% invertido, capital 9.992,82 USD. `--verify` repitió las 2 sesiones con diferencia 0. Las 120 sesiones del juicio se cuentan desde el 2026-11-12.
+- El job no espera a las 18:00 en su primer tick (ver `docs/design/mc_risk_paper.md`, "Review fixes"). No es una lectura del futuro: la orden decidida con el cierre del 12 se llena a la apertura del 13, como cualquier sesión que se pone al día.
 - Está conectada al bucle de GitHub Actions (`scripts/actions_loop.sh`), después de B, DIP y MC, y su base se guarda con las demás (`scripts/save_state.sh`). Un fallo suyo nunca marca el run como fallido.
 - Con `enabled: false` cada tick es un no-op: no baja datos y no envía alertas; la base y las operaciones quedan.
 
