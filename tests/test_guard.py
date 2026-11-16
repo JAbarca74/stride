@@ -9,6 +9,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from stride.config import load_config
+from stride.risk import guard
 from stride.risk.guard import (
     DATA_FAILED,
     HALTED,
@@ -27,7 +28,6 @@ from stride.risk.guard import (
     check_liquidation,
     check_order,
     check_orders,
-    max_order_usd,
     multiple_map,
     underlying_map,
 )
@@ -91,8 +91,8 @@ def test_a_buy_without_margin_is_limited_by_equity_not_60_percent() -> None:
         update={"risk": CONFIG.risk.model_copy(update={"allow_margin": True})}
     )
     assert check_order(_buy(notional=600.01), CTX, margin).reasons == (ORDER_TOO_LARGE,)
-    assert max_order_usd("sell", 1_000.0, CONFIG) == pytest.approx(600.0)
-    assert max_order_usd("buy", 1_000.0, CONFIG) == 1_000.0
+    assert guard.max_order_usd("sell", 1_000.0, CONFIG) == pytest.approx(600.0)
+    assert guard.max_order_usd("buy", 1_000.0, CONFIG) == 1_000.0
 
 
 def test_veto_13th_order_of_the_day() -> None:
@@ -232,7 +232,7 @@ def test_approved_orders_always_respect_every_rule(  # noqa: PLR0917
     remaining = dict(held)
     sides: dict[str, set[str]] = {}
     for order in ok:
-        assert order.notional <= max_order_usd(order.side, equity, CONFIG)
+        assert order.notional <= guard.max_order_usd(order.side, equity, CONFIG)
         assert mapping[order.symbol] not in blocked
         if order.side == "sell":  # never short
             assert order.notional <= remaining.get(order.symbol, 0.0) + 0.01
