@@ -1,6 +1,6 @@
 # DIP at 100 USD: the split order and the crypto that is never bought (design)
 
-Status: **tested on 2026-11-16; no run met the five criteria** (section 7). The owner approved option C and the guard change for it; the code is on an open pull request, not merged. It follows a review of the paper databases on 2026-11-15, asked for by the owner.
+Status: **tested on 2026-11-16; no run met the five criteria** (section 7). The owner approved option C and the guard change for it, and then decided to apply it anyway (PR #115, merged): V3 is the paper behaviour from the next session on. It follows a review of the paper databases on 2026-11-15, asked for by the owner.
 
 Rules this work keeps:
 
@@ -114,7 +114,7 @@ Run with `scripts/research/dip_costs.py` (on the open pull request of the code c
 - `V1` is identical to `V0`. In the backtest every entry fills, so the case it fixes (an entry that did not fill and is then labelled HOLD) never occurs. It happened in paper only because the morning phase did not run in October.
 - `V2` and `V3` return 2.6 points more over the period and pay 0.34 USD less, with the same drawdown, but hold 0.006 points more cash on average.
 
-By section 4 the result is that nothing changes. The criterion is not adjusted after seeing the result. Applying the code anyway is the owner's decision.
+By section 4 the result is that nothing changes. The criterion is not adjusted after seeing the result. The owner decided to apply the code anyway (PR #115); this is recorded as the owner's decision, not as a pass.
 
 **Observed, not part of the test (exploratory).** The account held 30% cash on average and skipped 1,729 resizes for cost over the period. At 100 USD the 0.5% cost rule (`execution.max_resize_cost_pct`) leaves far more money idle than the split order ever cost. It is a parameter of `config.paper_dip.yaml`, and testing it would need its own design with criteria fixed in advance.
 
