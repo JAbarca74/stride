@@ -1,6 +1,6 @@
 # DIP at 100 USD: the split order and the crypto that is never bought (design)
 
-Status: **proposal, not approved** (2026-11-16). Nothing is built or changed. It follows a review of the paper databases on 2026-11-15, asked for by the owner.
+Status: **tested on 2026-11-16; no run met the five criteria** (section 7). The owner approved option C and the guard change for it; the code is on an open pull request, not merged. It follows a review of the paper databases on 2026-11-15, asked for by the owner.
 
 Rules this work keeps:
 
@@ -92,3 +92,29 @@ If no run meets all five, the result is that the current behaviour is the cheape
 1. Approve the test of section 4 and its five criteria.
 2. Option A, B or C for the split.
 3. Whether a fix that passes is applied to the running paper account of DIP. It changes its behaviour from that day; the account's history stays.
+
+## 7. Result (2026-11-16)
+
+Run with `scripts/research/dip_costs.py` (on the open pull request of the code change, `fix/dip-split-and-missed-entries`) on a copy of the DIP price database, 2017-01-03 to 2026-11-13, 100 USD plus 20 USD a month (2,360 USD deposited), IBKR Tiered costs. `V0` reproduces the engine before the change: run on the golden test data, it gives the old golden curve exactly (final equity 18,226.69). Outputs: `docs/results/dip_costs/`.
+
+| | `V0` | `V1` | `V2` | `V3` |
+| --- | --- | --- | --- | --- |
+| Time-weighted return | +957.1% | +957.1% | +959.7% | +959.7% |
+| CAGR | 27.02% | 27.02% | 27.05% | 27.05% |
+| Maximum drawdown | 25.486% | 25.486% | 25.486% | 25.486% |
+| Costs (USD) | 75.93 | 75.93 | 75.59 | 75.59 |
+| Costs, % of deposits per year | 0.326% | 0.326% | 0.325% | 0.325% |
+| Average cash share | 30.156% | 30.156% | 30.162% | 30.162% |
+| Orders | 147 | 147 | 146 | 146 |
+| Resizes skipped for cost | 1,729 | 1,729 | 1,729 | 1,729 |
+| Kill switch | no | no | no | no |
+
+**No run meets all five criteria.** All four pass 1, 2, 4 and 5. Criterion 3 (a lower average cash share) fails in each:
+
+- `V1` is identical to `V0`. In the backtest every entry fills, so the case it fixes (an entry that did not fill and is then labelled HOLD) never occurs. It happened in paper only because the morning phase did not run in October.
+- `V2` and `V3` return 2.6 points more over the period and pay 0.34 USD less, with the same drawdown, but hold 0.006 points more cash on average.
+
+By section 4 the result is that nothing changes. The criterion is not adjusted after seeing the result. Applying the code anyway is the owner's decision.
+
+**Observed, not part of the test (exploratory).** The account held 30% cash on average and skipped 1,729 resizes for cost over the period. At 100 USD the 0.5% cost rule (`execution.max_resize_cost_pct`) leaves far more money idle than the split order ever cost. It is a parameter of `config.paper_dip.yaml`, and testing it would need its own design with criteria fixed in advance.
+
