@@ -218,7 +218,7 @@ def test_splice_keeps_spot_returns_and_has_no_jump_at_switch() -> None:
 def test_splice_drops_weekend_spot_bars() -> None:
     spot = _spot()
     spliced = splice_spot_with_etf(spot, _etf(spot), "IBIT", TRADING_DAYS)
-    assert not pd.DatetimeIndex(spliced.index).dayofweek.isin([5, 6]).any()
+    assert not pd.DatetimeIndex(spliced.index).day_of_week.isin([5, 6]).any()
 
 
 def test_splice_converts_spot_volume_to_etf_shares() -> None:

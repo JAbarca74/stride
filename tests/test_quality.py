@@ -88,7 +88,7 @@ def test_expected_days_are_the_last_nyse_trading_days() -> None:
     assert len(days) == 300
     assert days[-1] == pd.Timestamp(EVAL)
     assert pd.Timestamp("2025-11-27") not in days  # Thanksgiving 2025
-    assert not days.dayofweek.isin([5, 6]).any()
+    assert not days.day_of_week.isin([5, 6]).any()
 
 
 def test_missing_trading_day_fails() -> None:
