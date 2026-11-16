@@ -11,6 +11,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from stride.backtest.engine import PlannedOrder, split_orders
 from stride.config import load_config
 from stride.data import store
 from stride.execution import orders
@@ -170,7 +171,24 @@ def test_costly_hold_resize_is_skipped() -> None:
 def test_large_orders_are_split() -> None:
     plan = orders.plan({"SPY": 900.0}, positions_usd={}, rules={"SPY": "ENTRY_HH55"},
                        prev_close={"SPY": 500.0}, equity=1_000.0, config=CONFIG)  # fmt: skip
-    assert [o.notional for o in plan.orders] == [450.0, 450.0]
+    assert [o.notional for o in plan.orders] == [900.0]  # a buy without margin: not split
+    exit_ = orders.plan({}, positions_usd={"SPY": 900.0}, rules={"SPY": "EXIT_LL20"},
+                        prev_close={"SPY": 500.0}, equity=1_000.0, config=CONFIG)  # fmt: skip
+    assert [o.notional for o in exit_.orders] == [450.0, 450.0]  # sells keep the 60% split
+
+
+def test_a_missed_entry_labelled_hold_is_not_skipped_for_cost() -> None:
+    """Seen in paper DIP: an entry that never filled is labelled HOLD the next day,
+    and a 10 USD buy fails the cost rule; it is an entry, so it is kept."""
+    plan = orders.plan({"IBIT": 10.0, "SPY": 80.0}, positions_usd={"SPY": 80.0},
+                       rules={"IBIT": "HOLD", "SPY": "HOLD"}, prev_close={"IBIT": 40.0,
+                       "SPY": 750.0}, equity=100.0, config=CONFIG)  # fmt: skip
+    assert [(o.symbol, o.side) for o in plan.orders] == [("IBIT", "buy")]
+    assert plan.skipped == []
+    topup = orders.plan({"IBIT": 20.0}, positions_usd={"IBIT": 10.0}, rules={"IBIT": "HOLD"},
+                        prev_close={"IBIT": 40.0}, equity=100.0, config=CONFIG)  # fmt: skip
+    assert topup.orders == []  # a held position keeps the cost rule
+    assert [o.symbol for o in topup.skipped] == ["IBIT"]
 
 
 def test_approve_uses_the_guard_and_fits_buys() -> None:
@@ -543,3 +561,24 @@ def test_invariants_of_submission(
         assert all(rules[c] == orders.KILL_SWITCH_RULE and kill for c in sent_ids)
     else:
         assert all(rules[c] != orders.KILL_SWITCH_RULE for c in sent_ids)
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    notional=st.floats(min_value=1.0, max_value=1e6, allow_nan=False),
+    equity=st.floats(min_value=10.0, max_value=1e6, allow_nan=False),
+    side=st.sampled_from(["buy", "sell"]),
+)
+def test_split_parts_add_up_and_each_fits_the_guard(
+    notional: float, equity: float, side: str
+) -> None:
+    """Invariant for code that moves money: splitting keeps the total, every part
+    fits the guard's size limit, and a buy without margin that fits in the equity
+    is never split."""
+    order = PlannedOrder("SPY", side, notional, False, "SPY", "ENTRY_HH55")  # type: ignore[arg-type]
+    parts = split_orders([order], equity, CONFIG)
+    assert sum(p.notional for p in parts) == pytest.approx(notional)
+    limit = guard.max_order_usd(order.side, equity, CONFIG)
+    assert all(p.notional <= limit for p in parts)
+    if side == "buy" and notional < equity:
+        assert len(parts) == 1
