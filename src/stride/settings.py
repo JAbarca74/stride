@@ -6,6 +6,7 @@ development. Values are `SecretStr`, so they never show up in a repr or a log li
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import SecretStr, field_validator
@@ -23,6 +24,22 @@ class MissingCredentialError(CredentialError):
     """A key is simply not in `.env` (as opposed to a key of the wrong kind)."""
 
 
+@dataclass(frozen=True)
+class IbkrConnection:
+    """Where IB Gateway listens and the one account an instance may trade. Not
+    secrets (the Gateway holds the login), but the account id is never logged."""
+
+    host: str
+    port: int
+    client_id: int
+    account: str
+
+    def __repr__(self) -> str:
+        return (
+            f"IbkrConnection(host=..., port={self.port}, client_id={self.client_id}, account=...)"
+        )
+
+
 class Secrets(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -34,6 +51,11 @@ class Secrets(BaseSettings):
     alpaca_dip_secret_key: SecretStr | None = None
     alert_telegram_token: SecretStr | None = None
     alert_telegram_chat_id: SecretStr | None = None
+    # IB Gateway (docs/design/ibkr_broker.md section 2). Machine-specific, not keys.
+    ibkr_host: str | None = None
+    ibkr_port: int | None = None
+    ibkr_client_id: int | None = None
+    ibkr_account: SecretStr | None = None
 
     @field_validator("*", mode="before")
     @classmethod
@@ -74,6 +96,27 @@ class Secrets(BaseSettings):
                 f"{prefix}_API_KEY is not a paper-trading key; refusing to use it"
             )
         return key, secret_key.get_secret_value()
+
+    def ibkr_connection(self) -> IbkrConnection:
+        """IB Gateway host, port, client id and account; refuses when one is missing."""
+        missing = [
+            name
+            for name, value in (
+                ("IBKR_HOST", self.ibkr_host),
+                ("IBKR_PORT", self.ibkr_port),
+                ("IBKR_CLIENT_ID", self.ibkr_client_id),
+                ("IBKR_ACCOUNT", self.ibkr_account),
+            )
+            if value is None
+        ]
+        if missing:
+            raise MissingCredentialError(f"{', '.join(missing)} not set in .env")
+        assert self.ibkr_host is not None and self.ibkr_port is not None
+        assert self.ibkr_client_id is not None and self.ibkr_account is not None
+        return IbkrConnection(
+            self.ibkr_host, self.ibkr_port, self.ibkr_client_id,
+            self.ibkr_account.get_secret_value().strip(),
+        )  # fmt: skip
 
 
 def load_secrets(env_file: str | Path = ".env") -> Secrets:

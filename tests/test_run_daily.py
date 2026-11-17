@@ -35,7 +35,7 @@ FAKE_SECRET = "PKFAKESECRETVALUE123"
 
 def _secrets(**values: SecretStr) -> Secrets:
     """No `.env`: only the values given."""
-    return Secrets(_env_file=None, **values)  # type: ignore[call-arg]
+    return Secrets(_env_file=None, **values)  # type: ignore[call-arg, arg-type]
 
 
 def _write_config(folder: Path, name: str = "config.paper_test.yaml", **changes: object) -> Path:
