@@ -105,7 +105,13 @@ def test_actions_run_uses_state_repo_and_never_live_keys() -> None:
     )
     assert loop.index("stride.run_risk") < loop.index("save_state.sh")
     assert "data/paper_risk.db" in _text("save_state.sh")
-    for name in ("config.paper_mc.yaml", "config.paper_risk.yaml"):
+    # And the parallel Kelly account (T23): after the others, never failing the run.
+    kelly = "python -m stride.run_daily --config config.paper_kelly.yaml --phase auto ||"
+    assert kelly in loop
+    assert "FAILED=1" not in next(line for line in loop.splitlines() if "paper_kelly" in line)
+    assert loop.index("config.paper_dip.yaml") < loop.index(kelly) < loop.index("save_state.sh")
+    assert "data/paper_kelly.db" in _text("save_state.sh")
+    for name in ("config.paper_mc.yaml", "config.paper_risk.yaml", "config.paper_kelly.yaml"):
         assert (ROOT / name).is_file()
     setup = _text("setup_actions.ps1")
     assert "--private" in setup and "IBKR" in setup and "never copied" in setup

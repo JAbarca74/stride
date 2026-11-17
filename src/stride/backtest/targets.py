@@ -8,10 +8,13 @@ the backtest would hold on the same day with the same inputs:
    weights from the closes up to and including day t and the risk-free rate the
    caller passes (the backtest passes the value known at t-1);
 2. the weights times the leverage (`fixed_leverage` when given, else
-   `experiments.allocation.leverage`), times the drawdown scaling when
+   `experiments.allocation.leverage`, or with `leverage_source: kelly` the
+   section 7 leverage of `kelly_level`), times the drawdown scaling when
    `drawdown_scaling` is enabled, become dollar exposures;
 3. the leveraged-ETF route (`risk/leverage.choose_instruments`, with its
    hysteresis and minimum hold) maps each asset to one instrument and its cash.
+   With `risk.allow_margin` (the parallel Kelly account) its capacity uses the
+   broker's margin leverage `risk.sim_broker_leverage` as L_borrow.
 
 Also here: `update_instruments` (held instruments and their hold days, and the
 switches of the day) and the state the paper run rebuilds from its database
@@ -28,7 +31,15 @@ import pandas as pd
 
 from stride.config import StrideConfig
 from stride.risk.kill_switch import TwrState, advance
-from stride.risk.leverage import HeldInstrument, InstrumentChoice, choose_instruments
+from stride.risk.leverage import (
+    KELLY_WINDOW_DAYS,
+    HeldInstrument,
+    InstrumentChoice,
+    choose_instruments,
+    effective_leverage,
+    forward_volatility,
+    kelly_estimate,
+)
 from stride.strategy.allocation import target_weights
 from stride.strategy.rules import HOLD
 
@@ -62,6 +73,53 @@ def drawdown_scale(drawdown: float, config: StrideConfig) -> float:
     return 1.0 - share * (1.0 - e.dd_scale_floor)
 
 
+def borrow_leverage(config: StrideConfig, equity: float) -> float:
+    """L_borrow: the broker's margin leverage when the account may borrow
+    (`allow_margin` and equity at least `margin_min_equity`), else 1 (no loan)."""
+    risk = config.risk
+    if risk.allow_margin and equity >= risk.margin_min_equity:
+        return risk.sim_broker_leverage
+    return 1.0
+
+
+def kelly_level(
+    config: StrideConfig,
+    closes: pd.DataFrame,
+    weights: Mapping[str, float],
+    risk_free: float,
+    *,
+    equity: float,
+    drawdown: float,
+) -> float:
+    """Pure. Section 7 leverage for the allocation's unlevered `weights` (T23).
+
+    The Kelly estimate uses the daily returns the same weights would have had over
+    the last 3 years of `closes` (which stop at day t); sigma_60 is the forward
+    EWMA volatility of those weights. The limits are those of
+    `risk/leverage.effective_leverage` with the broker's margin leverage when the
+    account may borrow. `drawdown` halves the leverage beyond `dd_delever_at`.
+    With no weights the leverage is 1 (nothing is held anyway)."""
+    held = {a: w for a, w in weights.items() if w > 0 and a in closes.columns}
+    if not held:
+        return 1.0
+    returns = closes[list(held)].pct_change(fill_method=None).iloc[1:]
+    returns = returns.dropna().iloc[-KELLY_WINDOW_DAYS:]
+    portfolio = returns.mul(pd.Series(held)).sum(axis=1)
+    kelly = kelly_estimate(portfolio, risk_free, config.risk.min_history_days_for_kelly)
+    span = config.risk.vol_span
+    sigma = forward_volatility(held, returns, span) if len(returns) >= span else 0.0
+    decision = effective_leverage(
+        kelly,
+        sigma=sigma,
+        broker_leverage=borrow_leverage(config, equity),
+        equity=max(equity, 0.0),
+        drawdown=min(max(drawdown, 0.0), 1.0),
+        delever_active=False,
+        risk=config.risk,
+    )
+    return decision.leverage
+
+
 def allocation_rules(weights: Mapping[str, float], previous: Mapping[str, float]) -> dict[str, str]:
     """ALLOCATE_IN when an asset enters, ALLOCATE_OUT when it leaves, else HOLD."""
     rules = {}
@@ -93,6 +151,10 @@ def allocation_targets(
     settings = config.experiments.allocation
     weights = target_weights(settings, closes, risk_free)
     level = fixed_leverage or settings.leverage
+    if fixed_leverage is None and settings.leverage_source == "kelly":
+        level = kelly_level(
+            config, closes, weights, risk_free, equity=equity, drawdown=scaling_drawdown
+        )
     scale = 1.0
     if "drawdown_scaling" in config.experiments.enabled:
         scale = drawdown_scale(scaling_drawdown, config)
@@ -104,7 +166,7 @@ def allocation_targets(
         current=held,
         switch=config.leverage_switch,
         max_etf_portfolio_leverage=config.risk.max_etf_portfolio_leverage,
-        borrow=1.0,
+        borrow=borrow_leverage(config, equity),
     )
     gross = sum(c.exposure_usd for c in choices.values()) / equity if equity > 0 else 0.0
     return AllocationTargets(
