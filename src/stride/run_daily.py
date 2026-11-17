@@ -349,6 +349,21 @@ def validate_instance(
     return texts, blocked_symbols(results)
 
 
+def cash_and_margin(
+    broker: Broker, config: StrideConfig, cash: float, data: MarketData
+) -> tuple[float, float]:
+    """The maintenance requirement and the dollars buys may spend. A cash account
+    (`allow_margin` off) gives (0, cash), as before T23. With margin (the parallel
+    Kelly account) the shadow broker is told the latest risk-free rate for the
+    interest on its loan, and its buying power includes the loan."""
+    if not config.risk.allow_margin:
+        return 0.0, cash
+    if isinstance(broker, ShadowBroker) and len(data.risk_free.dropna()):
+        broker.set_borrow_rate(max(float(data.risk_free.dropna().iloc[-1]), 0.0))
+    account = broker.get_account()
+    return account.margin_requirement, max(cash, account.buying_power)
+
+
 def closes_on(bars: Mapping[str, pd.DataFrame], day: date) -> dict[str, float]:
     """The last close on or before `day` per symbol (never a later one)."""
     stamp = pd.Timestamp(day)
@@ -604,6 +619,7 @@ class DailyJob:
             self.event("RESIZE_SKIPPED", f"{o.symbol} {o.side} {o.notional:.2f}: cost", day)
         underlying = guard.underlying_map(self.config)
         no_close = {underlying.get(s, s) for s in result.targets if not prev.get(s, 0) > 0}
+        requirement, spendable = cash_and_margin(self.broker, self.config, cash, data)
         ctx = guard.GuardContext(
             equity=equity,
             positions_usd=positions_usd,
@@ -611,8 +627,10 @@ class DailyJob:
             kill_switch_active=False,
             blocked=frozenset(blocked | no_close),
             halted=halted,
+            margin_requirement=requirement,
+            excess_liquidity=equity - requirement,
         )
-        approved = orders.approve(plan.orders, ctx, cash, self.config)
+        approved = orders.approve(plan.orders, ctx, spendable, self.config)
         priced, too_small = orders.price(
             approved, run_date=day, prev_close=prev,
             held_quantity={s: p.quantity for s, p in held.items()}, targets=result.targets,
@@ -703,12 +721,17 @@ class DailyJob:
         closes = self._stored_closes(evening, held, extra=[o.symbol for o in planned])
         equity_rows = store.read_equity(self.conn, end=evening)
         equity = float(equity_rows["equity"].iloc[-1]) if not equity_rows.empty else 0.0
+        requirement = (
+            self.broker.get_account().margin_requirement if self.config.risk.allow_margin else 0.0
+        )
         ctx = guard.GuardContext(
             equity=equity,
             positions_usd={s: p.quantity * closes[s] for s, p in held.items()},
             data_ok=True,
             kill_switch_active=False,
             halted=self.inst.halted(),
+            margin_requirement=requirement,
+            excess_liquidity=equity - requirement,
         )
         proposed = [guard.ProposedOrder(o.symbol, o.side, o.notional, o.switch) for o in planned]
         by_id = {id(d.order): d for d in guard.check_orders(proposed, ctx, self.config)}

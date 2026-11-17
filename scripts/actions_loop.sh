@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The paper run on GitHub Actions: ticks every 5 minutes for DURATION seconds.
-# One tick = `run_daily --phase auto` for both instances (the job itself decides,
+# One tick = `run_daily --phase auto` for B and DIP (the job itself decides,
 # in New York time, which phase is due), then `run_mc` for the Monte Carlo portfolio
 # (its own hourly job) and `run_risk` for the risk-allocation portfolio (its own daily
 # job), then the databases go to the state repo.
@@ -30,6 +30,10 @@ while [ "$(date +%s)" -lt "$END" ]; do
     # The risk-allocation paper portfolio (docs/design/mc_risk_paper.md): the same rules. A
     # no-op while its config says `enabled: false`, and it never marks the run as failed.
     python -m stride.run_risk --config config.paper_risk.yaml || echo "tick failed: config.paper_risk.yaml"
+    # The parallel Kelly paper account (SPEC 8, H3; task T23): a simulated shadow account
+    # with the DIP signals, $10,000 and margin. Like MC and RISK it never marks the run
+    # as failed, and it runs after B and DIP so it can never delay them.
+    python -m stride.run_daily --config config.paper_kelly.yaml --phase auto || echo "tick failed: config.paper_kelly.yaml"
     bash "$ROOT/scripts/save_state.sh" || FAILED=1
     # next 5-minute boundary plus 20 seconds, so a tick never lands before a window opens
     sleep $(( 300 - $(date +%s) % 300 + 20 ))

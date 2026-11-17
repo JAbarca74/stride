@@ -102,6 +102,12 @@ class RiskConfig(_Section):
     # unit on the same day and a cap is full. "signal_order" = the later signal
     # (behaviour before SPEC 1.5); "higher_vol_first" = the asset with the higher vol60.
     cap_tie_break: Literal["signal_order", "higher_vol_first"] = "signal_order"
+    # SPEC 1.5 (open question 4, task T23): margin in the simulated broker, used
+    # only when `allow_margin` is on (the parallel Kelly account; the real account
+    # never borrows). The broker's margin leverage L_borrow (Reg T: 2) and the
+    # maintenance requirement on long ETF value, times the ETF's leverage multiple.
+    sim_broker_leverage: Annotated[float, Field(ge=1, le=4)] = 2.0
+    sim_maintenance_margin: Annotated[float, Field(gt=0, le=1)] = 0.25
 
     @model_validator(mode="after")
     def _consistent_limits(self) -> Self:
@@ -247,6 +253,11 @@ class AllocationConfig(_Section):
     dip_drop: Fraction  # dip: buy once the close is this far below its recent high
     dip_window: Lookback  # dip: days behind that recent high
     take_profit: Fraction  # dip: sell once the close is this far above the buy close
+    # Task T23 (the parallel Kelly account, SPEC 8 and H3): where the leverage
+    # comes from. "fixed" = `leverage` (behaviour before T23); "kelly" = the
+    # section 7 leverage (`risk.kelly_fraction` x L*, vol target, caps) of the
+    # day's unlevered weights; see `backtest/targets.kelly_level`.
+    leverage_source: Literal["fixed", "kelly"] = "fixed"
 
     @model_validator(mode="after")
     def _skip_shorter(self) -> Self:

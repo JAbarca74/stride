@@ -56,6 +56,7 @@ from stride.backtest.targets import (
     ALLOCATE_OUT,
     allocation_period,
     allocation_targets,
+    borrow_leverage,
     drawdown_scale,
     update_instruments,
 )
@@ -63,7 +64,7 @@ from stride.config import StrideConfig
 from stride.data.calendar import trading_days
 from stride.data.leveraged import rate_known_at_t_minus_1
 from stride.execution.broker import OrderState, OrderType, Side
-from stride.execution.sim_broker import SimBroker
+from stride.execution.sim_broker import MARGIN_CALL_REASON, SimBroker
 from stride.indicators import (
     compute_indicators,
     ewma_volatility,
@@ -562,6 +563,8 @@ class Engine:
             )
             if interest > 0:
                 self.broker.credit_interest(interest)
+        if self.config.risk.allow_margin:  # T23: interest on negative cash
+            self.broker.set_borrow_rate(max(float(self.rate[day]), 0.0))
         for order in self.broker.step(day.date()):
             self._record_fill(day, order)
         amount = self.config.cash_flows.monthly_deposit_usd
@@ -939,7 +942,7 @@ class Engine:
         lev = effective_leverage(
             kelly,
             sigma=sigma,
-            broker_leverage=1.0,
+            broker_leverage=borrow_leverage(self.config, equity),
             equity=equity,
             drawdown=drawdown,
             delever_active=self.delever,
@@ -1006,15 +1009,19 @@ class Engine:
     ) -> list[str]:
         """Guard the planned orders, fit the approved buys to the cash the approved
         sells free, guard the result again (the batch changed), then submit."""
+        account = self.broker.get_account()
         ctx = guard.GuardContext(
             equity=equity,
             positions_usd=positions,
             data_ok=True,
             kill_switch_active=False,
             blocked=frozenset(blocked),
+            margin_requirement=account.margin_requirement,
+            excess_liquidity=equity - account.margin_requirement,
         )
         vetoes: list[str] = []
-        for plan, check in approve_batch(planned, ctx, cash, self.config):
+        spendable = max(cash, account.buying_power)  # T23: the margin loan, when allowed
+        for plan, check in approve_batch(planned, ctx, spendable, self.config):
             self._submit(day, plan, check, self.settings.order_type)
             if not check.approved:
                 vetoes.append(f"{plan.symbol}:{plan.side}:{'+'.join(check.reasons)}")
@@ -1061,9 +1068,10 @@ class Engine:
                 )
             return
         bars = self.data.bars[order.symbol]
+        margin_call = order.reason == MARGIN_CALL_REASON
         reference = (
             float(bars["open"].to_numpy()[bars.index.get_loc(day)])
-            if (order.type == "market")
+            if (order.type == "market" and not margin_call)
             else math.nan
         )
         previous_close = self._close(order.symbol, day - timedelta(days=1))
@@ -1071,7 +1079,9 @@ class Engine:
         spread = abs(order.average_price - reference) * order.filled_quantity
         if not math.isfinite(spread):  # a limit fill: the configured spread
             spread = notional * spread_bps(order.symbol, self.config) / BPS
-        if order.reason:
+        if margin_call:
+            self.rec.event(day, "MARGIN_CALL", f"{order.symbol} sold {notional:.2f} at the close")
+        elif order.reason:
             self.rec.event(
                 day,
                 "ORDER_PARTIAL",

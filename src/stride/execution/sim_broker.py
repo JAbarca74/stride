@@ -23,6 +23,17 @@ split into several orders included). Otherwise orders fill by `notional`: the
 simulation is always fractionable, so a given `quantity` only marks a full exit.
 Deposits and interest on idle cash are credited by the backtest engine
 (`deposit`, `credit_interest`).
+
+Margin (SPEC 1.5, task T23) is opt-in: only with `risk.allow_margin` on and
+equity at least `risk.margin_min_equity`. Cash may then go negative down to
+`-(L_borrow - 1) x equity` (`risk.sim_broker_leverage`); negative cash pays
+`costs.margin_interest` at the rate set with `set_borrow_rate`, charged per
+calendar day when the clock moves. The maintenance requirement is
+`risk.sim_maintenance_margin` of each long position's value times its leverage
+multiple; when equity falls below it after the day's fills, the simulator sells
+the largest positions first, at the day's close, until it is met or cash is no
+longer negative (a margin call, listed in `margin_calls`). Without margin the
+broker is cash only, as before.
 """
 
 from __future__ import annotations
@@ -34,7 +45,14 @@ from typing import Any
 
 import pandas as pd
 
-from stride.backtest.costs import BPS, commission, fill_price, max_commission_rate, spread_bps
+from stride.backtest.costs import (
+    BPS,
+    commission,
+    fill_price,
+    margin_interest,
+    max_commission_rate,
+    spread_bps,
+)
 from stride.config import StrideConfig
 from stride.data.calendar import is_trading_day
 from stride.execution.broker import (
@@ -48,6 +66,7 @@ from stride.execution.broker import (
 
 _DUST = 1e-12  # a remaining quantity this small counts as a closed position
 FULL_SELL_TOLERANCE_USD = 0.01  # the guard's rounding tolerance for sells
+MARGIN_CALL_REASON = "margin call"  # the reason of a forced sell (T23)
 
 
 class SimBroker(Broker):
@@ -70,15 +89,20 @@ class SimBroker(Broker):
         self._orders: dict[str, OrderState] = {}
         self._full_sells: set[str] = set()  # order ids that close the whole position
         self._client_ids: dict[str, str] = {}  # client order id -> order id
+        self._multiple = _multiples(config)
+        self._borrow_rate = 0.0  # annual risk-free rate for interest on negative cash
+        self.margin_calls: list[tuple[date, str, float]] = []  # day, symbol, quantity
 
     # Broker interface.
 
     def get_account(self) -> Account:
-        equity = self._cash + sum(
-            p.quantity * self._close(p.symbol, self._today) for p in self._positions.values()
+        equity = self._equity()
+        return Account(
+            equity=equity,
+            cash=self._cash,
+            buying_power=self._cash + self._borrow_room(equity),
+            margin_requirement=self._requirement(),
         )
-        return Account(equity=equity, cash=self._cash, buying_power=self._cash,
-                       margin_requirement=0.0)  # fmt: skip
 
     def get_positions(self) -> dict[str, Position]:
         return dict(self._positions)
@@ -152,6 +176,12 @@ class SimBroker(Broker):
             raise ValueError("a deposit must be positive")
         self._cash += float(amount)
 
+    def set_borrow_rate(self, annual_rate: float) -> None:
+        """The risk-free rate (annual fraction) of the interest on negative cash."""
+        if not annual_rate >= 0:
+            raise ValueError("the borrow rate must be a non-negative number")
+        self._borrow_rate = float(annual_rate)
+
     def credit_interest(self, amount: float) -> None:
         """Interest earned by idle cash (`costs.cash_interest`); never negative."""
         if amount < 0:
@@ -169,6 +199,7 @@ class SimBroker(Broker):
             "orders": [_order_json(o) for o in self._orders.values()],
             "full_sells": sorted(self._full_sells),
             "client_ids": dict(self._client_ids),
+            "borrow_rate": self._borrow_rate,
         }
 
     def restore(self, state: Mapping[str, Any]) -> None:
@@ -179,6 +210,7 @@ class SimBroker(Broker):
         self._orders = {o["order_id"]: _order_from_json(o) for o in state["orders"]}
         self._full_sells = set(state["full_sells"])
         self._client_ids = dict(state["client_ids"])
+        self._borrow_rate = float(state.get("borrow_rate", 0.0))
 
     # Simulation clock.
 
@@ -191,6 +223,9 @@ class SimBroker(Broker):
         first, then cancel what is left (day orders). Returns the orders handled."""
         if day <= self._today:
             raise ValueError("the simulation only moves forward")
+        if self._cash < 0:
+            days = (day - self._today).days
+            self._cash -= margin_interest(-self._cash, self._borrow_rate, days, self._config)
         self._today = day
         due = [o for o in self._orders.values() if o.status == "pending" and o.submitted < day]
         # Sells before buys, to free cash; a full exit after the other sells of its symbol.
@@ -200,7 +235,7 @@ class SimBroker(Broker):
             result = self._fill(order, day)
             self._orders[order.order_id] = result
             handled.append(result)
-        return handled
+        return handled + self._margin_call(day)
 
     # Internals.
 
@@ -276,7 +311,7 @@ class SimBroker(Broker):
                 return replace(order, status="rejected", reason="not enough cash")
         fee = commission(quantity, price, self._config)
         cash_change = -(quantity * price + fee) if order.side == "buy" else quantity * price - fee
-        if self._cash + cash_change < -_DUST:
+        if self._cash + cash_change < -_DUST - self._borrow_room(self._equity()):
             return replace(order, status="rejected", reason="not enough cash")
         self._cash += cash_change
         self._update_position(order.symbol, order.side, quantity, price)
@@ -292,11 +327,73 @@ class SimBroker(Broker):
         )
 
     def _affordable(self) -> float:
-        """The largest notional the cash pays, commission included (the commission
-        is at most `costs.max_commission_rate` of the notional)."""
-        if self._cash <= 0:
+        """The largest notional the cash (plus the margin loan, when allowed) pays,
+        commission included (at most `costs.max_commission_rate` of the notional)."""
+        spendable = self._cash + self._borrow_room(self._equity())
+        if spendable <= 0:
             return 0.0
-        return self._cash / (1 + max_commission_rate(self._config))
+        return spendable / (1 + max_commission_rate(self._config))
+
+    # Margin (opt-in).
+
+    def _equity(self) -> float:
+        return self._cash + sum(
+            p.quantity * self._close(p.symbol, self._today) for p in self._positions.values()
+        )
+
+    def _borrow_room(self, equity: float) -> float:
+        """Dollars that may be borrowed: (L_borrow - 1) x equity; 0 without margin."""
+        risk = self._config.risk
+        if not risk.allow_margin or equity < risk.margin_min_equity or equity <= 0:
+            return 0.0
+        return (risk.sim_broker_leverage - 1.0) * equity
+
+    def _requirement(self) -> float:
+        """Maintenance requirement; 0 for a cash account."""
+        risk = self._config.risk
+        if not risk.allow_margin:
+            return 0.0
+        return sum(
+            risk.sim_maintenance_margin
+            * self._multiple.get(p.symbol, 1)
+            * p.quantity
+            * self._close(p.symbol, self._today)
+            for p in self._positions.values()
+        )
+
+    def _margin_call(self, day: date) -> list[OrderState]:
+        """Force-sell, largest position first, while cash is negative and equity is
+        below the requirement. Fills at the day's close with spread and commission."""
+        forced: list[OrderState] = []
+        if not self._config.risk.allow_margin:
+            return forced
+        while self._cash < 0 and self._positions and self._equity() < self._requirement():
+            values = {s: p.quantity * self._close(s, day) for s, p in self._positions.items()}
+            symbol = max(values, key=lambda s: values[s])
+            held = self._positions.pop(symbol)
+            price = fill_price(self._close(symbol, day), "sell", symbol, self._config)
+            fee = commission(held.quantity, price, self._config)
+            self._cash += held.quantity * price - fee
+            order_id = f"margin-{len(self._orders) + 1}"
+            state = OrderState(
+                order_id=order_id,
+                symbol=symbol,
+                side="sell",
+                notional=held.quantity * price,
+                type="market",
+                limit_price=None,
+                submitted=day,
+                status="filled",
+                filled_quantity=held.quantity,
+                average_price=price,
+                commission=fee,
+                filled=day,
+                reason=MARGIN_CALL_REASON,
+            )
+            self._orders[order_id] = state
+            self.margin_calls.append((day, symbol, held.quantity))
+            forced.append(state)
+        return forced
 
     def _update_position(self, symbol: str, side: Side, quantity: float, price: float) -> None:
         held = self._positions.get(symbol)
@@ -314,6 +411,14 @@ class SimBroker(Broker):
             del self._positions[symbol]
         else:
             self._positions[symbol] = Position(symbol, remaining, held.average_price)
+
+
+def _multiples(config: StrideConfig) -> dict[str, int]:
+    """Exposure per dollar of each leveraged ETF; every other symbol counts 1."""
+    multiples: dict[str, int] = {}
+    for versions in config.leveraged_etfs.values():
+        multiples.update({etf: m for m, etf in versions.items()})
+    return multiples
 
 
 _DATE_FIELDS = ("submitted", "filled")

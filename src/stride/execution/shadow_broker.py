@@ -123,6 +123,11 @@ class ShadowBroker(Broker):
     def is_market_open(self, day: date) -> bool:
         return self._sim.is_market_open(day)
 
+    def set_borrow_rate(self, annual_rate: float) -> None:
+        """The rate of the interest on negative cash (T23, margin accounts only)."""
+        self._sim.set_borrow_rate(annual_rate)
+        self._save()
+
     def deposit(self, amount: float) -> None:
         """A simulated deposit (the owner's monthly $20 in a shadow account)."""
         self._sim.deposit(amount)
