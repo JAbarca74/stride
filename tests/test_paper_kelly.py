@@ -221,3 +221,38 @@ def test_kelly_level_reads_no_future_rows() -> None:
     level = kelly_level(KELLY, cut, weights, 0.01, equity=10_000, drawdown=0)
     again = kelly_level(KELLY, changed.iloc[:700], weights, 0.01, equity=10_000, drawdown=0)
     assert level == again
+
+
+# First start of a new instance (found 2026-11-17: an empty database made the
+# morning phase fail on every tick before the instance's first evening).
+
+
+@pytest.mark.parametrize(("hour", "minute"), [(9, 20), (12, 10), (16, 10)])
+def test_new_instance_waits_for_its_first_evening(tmp_path: Path, hour: int, minute: int) -> None:
+    from datetime import datetime  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    from stride.data import store  # noqa: PLC0415
+
+    (tmp_path / "config.paper_kelly.yaml").write_text(
+        (ROOT / "config.paper_kelly.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    instance = run_daily.load_instance(tmp_path / "config.paper_kelly.yaml")
+    alerts: list[Any] = []
+
+    class Alerts:
+        def send(self, alert: Any) -> None:
+            alerts.append(alert)
+
+    now = datetime(2026, 11, 17, hour, minute, tzinfo=ZoneInfo("America/New_York"))
+    deps = run_daily.Deps(now=lambda: now, alerter=Alerts(), git_hash=lambda: "abc1234")  # type: ignore[arg-type]
+    from stride.settings import Secrets  # noqa: PLC0415
+
+    secrets = Secrets(_env_file=None)  # type: ignore[call-arg]
+    assert run_daily.run_phase(instance, "auto", deps, secrets=secrets) == 0
+    assert not alerts
+    conn = store.connect(instance.db)
+    runs = store.read_runs(conn)
+    conn.close()
+    assert list(runs["status"]) == ["ok"]
+    assert run_daily.NOT_STARTED in next(iter(runs["detail"]))

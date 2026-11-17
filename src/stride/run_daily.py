@@ -216,6 +216,9 @@ class Instance:
         return f"STRIDE {self.name}" if self.name != "STRIDE" else "STRIDE"
 
 
+NOT_STARTED = "not started: waits for its first evening"
+
+
 def instance_name(config_path: Path) -> str:
     """`config.paper_b.yaml` -> "B", `config.paper_dip.yaml` -> "DIP", else "STRIDE"."""
     stem = config_path.name.removesuffix(".yaml")
@@ -403,6 +406,20 @@ class DailyJob:
                 raise RunError("no broker configured")
             self._broker = self.deps.broker(self.config, self.secrets, self.conn)
         return self._broker
+
+    def close_broker(self) -> None:
+        """Disconnect a broker that holds a connection (IBKR: one per phase)."""
+        close = getattr(self._broker, "close", None)
+        if callable(close):
+            close()
+
+    def _not_started(self) -> bool:
+        """A brand-new instance (no equity row and no stored price yet) starts at its
+        first evening, which downloads the prices: until then there is nothing to
+        trade or reconcile, and a shadow broker cannot exist without prices."""
+        if not store.read_equity(self.conn).empty:
+            return False
+        return all(store.last_price_date(self.conn, s) is None for s in self.config.universe)
 
     def alert(self, kind: AlertKind, text: str) -> None:
         message = scrub(f"{self.inst.title}: {text}", self.secrets)
@@ -696,6 +713,8 @@ class DailyJob:
     # Morning.
 
     def morning(self, day: date) -> str:
+        if self._not_started():
+            return NOT_STARTED
         evening = previous_trading_day(day)
         held = self.positions()
         if self.inst.killed():
@@ -773,6 +792,8 @@ class DailyJob:
     # Midday and close.
 
     def midday(self, day: date) -> str:
+        if self._not_started():
+            return NOT_STARTED
         held = self.positions()
         open_orders = store.read_orders(self.conn, statuses=("pending", "sending", "unknown"))
         closes = self._stored_closes(
@@ -782,6 +803,8 @@ class DailyJob:
         return f"{len(states)} orders checked"
 
     def close(self, day: date) -> str:
+        if self._not_started():
+            return NOT_STARTED
         cancelled = self.broker.cancel_all()
         held = self.positions()
         open_orders = store.read_orders(self.conn, statuses=("pending", "sending", "unknown"))
@@ -874,6 +897,7 @@ def run_phase(
     elif day is None:
         day = phase_day(phase, now)
     conn = store.connect(instance.db)
+    job: DailyJob | None = None
     try:
         pending = [(d, p) for d, p in due if not store.run_done(conn, d, p)]
         if due and pending:
@@ -909,6 +933,8 @@ def run_phase(
         logger.info("%s: %s %s ok: %s", instance.name, phase, day, scrub(detail, secrets))
         return 0
     finally:
+        if job is not None:
+            job.close_broker()
         conn.close()
 
 
@@ -996,6 +1022,15 @@ def default_deps(instance: Instance) -> Deps:
     )
 
 
+def stored_close(conn: sqlite3.Connection, symbol: str) -> float:
+    """The last stored close of `symbol`: the reference price of an IBKR
+    market-on-open order (design Q3). Raises when none is stored."""
+    bars = series_for(conn, symbol)
+    if bars.empty:
+        raise RunError(f"no stored close for {symbol}")
+    return float(bars.sort_index()["close"].iloc[-1])
+
+
 def traded_symbols(config: StrideConfig) -> list[str]:
     """The allocation symbols and their leveraged versions."""
     symbols = allocation_symbols(config)
@@ -1016,6 +1051,10 @@ def make_broker(config: StrideConfig, secrets: Secrets, conn: sqlite3.Connection
         raise RunError(f"no paper broker in mode {config.mode!r}")
     if config.execution.broker == "shadow":
         return ShadowBroker(config, conn, traded_symbols(config))
+    if config.execution.broker == "ibkr":
+        from stride.execution.ibkr_broker import IBKRBroker  # noqa: PLC0415 - optional extra
+
+        return IBKRBroker(config, secrets, last_close=lambda s: stored_close(conn, s))
     from stride.execution.alpaca_broker import AlpacaBroker  # noqa: PLC0415 - optional extra
 
     try:
