@@ -57,7 +57,7 @@ import pandas as pd
 from pydantic import SecretStr
 
 from stride.backtest.engine import BacktestSettings, MarketData, run_backtest
-from stride.backtest.run import format_summary, load_market, summarize
+from stride.backtest.run import format_summary, leveraged_etf_fees, load_market, summarize
 from stride.backtest.targets import (
     allocation_period,
     allocation_targets,
@@ -911,7 +911,8 @@ def run_backtest_mode(instance: Instance, deps: Deps, out: Callable[[str], None]
         config.data.history_start, last, config.cash_flows.initial_deposit_usd
     )
     result = run_backtest(data, config, settings)
-    for line in format_summary(summarize(result, data.bars, rate)):
+    fees = leveraged_etf_fees(config)
+    for line in format_summary(summarize(result, data.bars, rate, fees)):
         out(line)
     out(f"{instance.title} backtest {settings.start}..{settings.end}: ok")
     return 0

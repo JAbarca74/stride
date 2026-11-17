@@ -10,14 +10,16 @@ Exposure caps, in units, before leverage: per asset (`max_units_per_asset`), per
 correlated group (`max_units_group`; the `crypto` group uses `max_units_crypto`) and
 for the whole portfolio (`max_units_total`). Symbols in no group (DBC, UUP) only
 count towards their own and the total cap. When signals exceed a cap, the most
-recent units are cut first (last in, first out).
+recent units are cut first (last in, first out). Units added on the same day are
+cut in reverse signal order, or, with `risk.cap_tie_break: higher_vol_first`
+(SPEC 1.5), the asset with the higher vol60 first.
 """
 
 from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 
@@ -72,18 +74,34 @@ def group_limits(config: StrideConfig) -> tuple[dict[str, str], dict[str, int]]:
     return group_of, limits
 
 
-def apply_caps(lots: Iterable[UnitLot], config: StrideConfig) -> CapResult:
+def _order_key(
+    vol: Mapping[str, float] | None,
+) -> Callable[[UnitLot], tuple[date, float, int, str]]:
+    def key(lot: UnitLot) -> tuple[date, float, int, str]:
+        # An asset with no vol60 counts as the most volatile: it is cut first.
+        tie = 0.0 if vol is None else vol.get(lot.symbol, math.inf)
+        return (lot.added, tie, lot.seq, lot.symbol)
+
+    return key
+
+
+def apply_caps(
+    lots: Iterable[UnitLot], config: StrideConfig, vol: Mapping[str, float] | None = None
+) -> CapResult:
     """Keep units oldest first while every cap allows them; cut the rest.
 
     Accepting the oldest units first is the same as cutting the most recent ones
-    first: a unit is cut only if older units already fill one of its caps.
+    first: a unit is cut only if older units already fill one of its caps. With
+    `risk.cap_tie_break: higher_vol_first` and `vol` (vol60 per symbol), units of
+    the same day are accepted lowest volatility first; otherwise in signal order.
     """
+    use_vol = vol if config.risk.cap_tie_break == "higher_vol_first" else None
     group_of, group_cap = group_limits(config)
     per_asset: Counter[str] = Counter()
     per_group: Counter[str] = Counter()
     kept: list[UnitLot] = []
     trimmed: list[UnitLot] = []
-    for lot in sorted(lots):
+    for lot in sorted(lots, key=_order_key(use_vol)):
         group = group_of.get(lot.symbol)
         fits = (
             per_asset[lot.symbol] < config.strategy.max_units_per_asset

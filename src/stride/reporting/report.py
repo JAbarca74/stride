@@ -147,7 +147,11 @@ def build_report(
 
     universe = {s: _close(conn, s, date(1900, 1, 1), end) for s in config.universe}
     universe = {s: c for s, c in universe.items() if len(c) > 1}
-    correlation = correlation_matrix(universe, end) if len(universe) > 1 else None
+    correlation = (
+        correlation_matrix(universe, end, config.reporting.correlation_days)
+        if len(universe) > 1
+        else None
+    )
 
     table = deposits_vs_balance(equity["equity"], flows)
     first_balance = float(equity["equity"].iloc[0])
@@ -170,7 +174,9 @@ def build_report(
         balance=_usd(balance),
         gain=_usd(balance - deposited),
         correlation=correlation,
-        flagged=flag_pairs(correlation) if correlation is not None else [],
+        flagged=flag_pairs(correlation, config.reporting.correlation_flag)
+        if correlation is not None
+        else [],
     )
 
 

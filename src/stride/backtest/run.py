@@ -209,10 +209,51 @@ class Summary:
     switches: int
     switch_cost: float
     turnover_by_kind: dict[str, float]  # signal, resize, switch, kill switch
+    # SPEC 1.5 (open question 5): leveraged-ETF fees, USD per year, estimated as
+    # expense ratio x average value held. Already inside the ETF prices and the
+    # synthetic series, so reported apart and never added to the costs above.
+    etf_fee_estimate: float = 0.0
 
 
-def summarize(result: BacktestResult, bars: Mapping[str, pd.DataFrame], rate: pd.Series) -> Summary:
-    """Section 9 metrics of the run and of the benchmarks over the same days."""
+def leveraged_etf_fees(config: StrideConfig) -> dict[str, float]:
+    """The annual fee of every leveraged ETF in the config (`costs.leveraged_etf_fee`)."""
+    return {
+        etf: config.costs.leveraged_etf_fee
+        for versions in config.leveraged_etfs.values()
+        for etf in versions.values()
+    }
+
+
+def etf_fee_estimate(
+    fills: pd.DataFrame, bars: Mapping[str, pd.DataFrame], fees: Mapping[str, float],
+    days: pd.DatetimeIndex,
+) -> float:  # fmt: skip
+    """Estimated fees per year paid inside the leveraged ETFs held: for each ETF,
+    its annual fee x its average value held over `days` (quantity from the fills,
+    valued at each day's close). 0 when nothing was held."""
+    if fills.empty or len(days) == 0:
+        return 0.0
+    total = 0.0
+    for symbol, fee in fees.items():
+        rows = fills[fills["symbol"] == symbol]
+        if rows.empty or symbol not in bars:
+            continue
+        signed = rows["quantity"].where(rows["side"] == "buy", -rows["quantity"])
+        held = signed.groupby(pd.DatetimeIndex(rows["date"])).sum().cumsum()
+        held = held.reindex(days, method="ffill").fillna(0.0).clip(lower=0.0)
+        close = bars[symbol]["close"].reindex(days).ffill().fillna(0.0)
+        total += fee * float((held * close).mean())
+    return total
+
+
+def summarize(
+    result: BacktestResult,
+    bars: Mapping[str, pd.DataFrame],
+    rate: pd.Series,
+    fees: Mapping[str, float] | None = None,
+) -> Summary:
+    """Section 9 metrics of the run and of the benchmarks over the same days.
+    `fees` (leveraged ETF -> annual fee) adds the ETF fee estimate."""
     returns = result.returns
     rf = rate_known_at_t_minus_1(rate, pd.DatetimeIndex(returns.index))
     days = pd.DatetimeIndex(result.equity.index)
@@ -254,6 +295,7 @@ def summarize(result: BacktestResult, bars: Mapping[str, pd.DataFrame], rate: pd
         switches=int(result.switches["switches"].sum()) if not result.switches.empty else 0,
         switch_cost=float(result.switches["cost_usd"].sum()) if not result.switches.empty else 0.0,
         turnover_by_kind=turnover_by_kind(result),
+        etf_fee_estimate=etf_fee_estimate(fills, bars, fees, days) if fees else 0.0,
     )
 
 
@@ -282,6 +324,8 @@ def format_summary(summary: Summary) -> list[str]:
         f"orders {summary.orders}, vetoed {summary.vetoes}, rejected by the broker "
         f"{summary.rejected}",
         f"instrument switches {summary.switches}, cost ${summary.switch_cost:,.2f}",
+        f"leveraged ETF fees ${summary.etf_fee_estimate:,.2f}/yr "
+        "(estimate, already in the prices, not added to costs)",
         "turnover by kind: "
         + ", ".join(f"{k} {_num(v)}x/yr" for k, v in summary.turnover_by_kind.items()),
         f"kill switch: {summary.kill_switch or 'never fired'}",
@@ -354,7 +398,7 @@ def main(
             write_report(out, config, settings.start, settings.end, args.report, risk_free=rf)
     finally:
         out.close()
-    for line in format_summary(summarize(result, data.bars, rate)):
+    for line in format_summary(summarize(result, data.bars, rate, leveraged_etf_fees(config))):
         _print(line)
     _print(f"results written to {out_db}")
     return 0

@@ -36,6 +36,7 @@ strategy:
   stop_n: 2.0
   pyramid_step_n: 0.5
   max_units_per_asset: 4
+  stop_basis: daily_n             # SPEC 1.5: daily_n | entry_n (the N of the stop and pyramid step)
 
 risk:
   risk_per_unit: 0.01
@@ -54,6 +55,8 @@ risk:
   min_history_days_for_kelly: 250
   reconciliation_tolerance: 0.01   # SPEC 1.3: per symbol, with a dollar floor
   reconciliation_floor_usd: 1.0
+  vol_span: 60                     # SPEC 1.5: EWMA span of vol60 (sigma_60 of the vol target)
+  cap_tie_break: signal_order      # SPEC 1.5: signal_order | higher_vol_first (same-day cap ties)
 
 execution:
   rebalance_band: 0.20
@@ -64,6 +67,7 @@ execution:
   max_resize_cost_pct: 0.005       # skip HOLD top-up buys costing more (added 2026-10-23, owner request)
   broker: alpaca                   # paper: alpaca | shadow (SimBroker on stored prices) (A2, 2026-10-24)
   alpaca_key_env: ALPACA           # paper keys read from .env: ALPACA_* or ALPACA_DIP_* (A2)
+  sim_limit_fill: limit_plus_spread  # SPEC 1.5: limit_plus_spread | spread_in_trigger (SimBroker limits)
 
 cash_flows:
   initial_deposit_usd: 100         # SPEC 2: starting capital (added 2026-10-23, owner decision)
@@ -143,3 +147,7 @@ experiments:                       # owner request 2026-10-23; measured in valid
     dip_window: 90
     take_profit: 0.30              # target 30% above the buy close (owner: 10k -> 13k),
                                    # then held until a close below the prior `exit`-day low
+
+reporting:                         # SPEC 1.5: reporting only, never changes a trade
+  correlation_days: 756            # 3 years of daily returns
+  correlation_flag: 0.7            # pairs above this are flagged

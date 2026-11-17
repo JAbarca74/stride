@@ -54,5 +54,5 @@ def generate_signals(
             (close, sma200, hh55, ll20, n, decision.rule, state.units,
              decision.target_units, decision.last_entry)
         )  # fmt: skip
-        state = PositionState(decision.target_units, decision.last_entry)
+        state = PositionState(decision.target_units, decision.last_entry, decision.entry_n)
     return pd.DataFrame(rows, index=frame.index, columns=list(SIGNAL_COLUMNS))

@@ -9,7 +9,11 @@ the cash pays, commission included, and sells are capped at the shares held.
 
 Limit orders: a buy fills at the open if the open is at or below the limit,
 otherwise at the limit if the day's low reaches it; sells mirror this with the
-high. Spread is applied to the fill price in both cases.
+high. Spread is applied to the fill price in both cases. With
+`execution.sim_limit_fill: spread_in_trigger` (SPEC 1.5) the limit is the final
+price instead: a buy fills at the open plus spread if that is at or below the
+limit, otherwise at the limit if the low reaches `limit x (1 - spread)`; a sell
+mirrors this with the high and `limit x (1 + spread)`.
 
 A sell that, with the other sells of the symbol sent the same day, covers the
 whole position at that day's close (within `FULL_SELL_TOLERANCE_USD`), or whose
@@ -30,7 +34,7 @@ from typing import Any
 
 import pandas as pd
 
-from stride.backtest.costs import commission, fill_price, max_commission_rate
+from stride.backtest.costs import BPS, commission, fill_price, max_commission_rate, spread_bps
 from stride.config import StrideConfig
 from stride.data.calendar import is_trading_day
 from stride.execution.broker import (
@@ -225,14 +229,40 @@ class SimBroker(Broker):
             return open_
         return limit if high >= limit else None
 
+    def _limit_final_price(self, order: OrderState, bar: pd.Series) -> float | None:
+        """SPEC 1.5 `spread_in_trigger`: the fill price, spread included, or None."""
+        limit = order.limit_price
+        assert limit is not None
+        open_, high, low = float(bar["open"]), float(bar["high"]), float(bar["low"])
+        move = spread_bps(order.symbol, self._config) / BPS
+        at_open = fill_price(open_, order.side, order.symbol, self._config)
+        if order.side == "buy":
+            if at_open <= limit:
+                return at_open
+            return limit if low <= limit * (1 - move) else None
+        if at_open >= limit:
+            return at_open
+        return limit if high >= limit * (1 + move) else None
+
+    def _price(self, order: OrderState, bar: pd.Series) -> float | None:
+        if (
+            self._config.execution.sim_limit_fill == "spread_in_trigger"
+            and order.type == "limit"
+            and order.limit_price is not None
+        ):
+            return self._limit_final_price(order, bar)
+        reference = self._reference(order, bar)
+        if reference is None:
+            return None
+        return fill_price(reference, order.side, order.symbol, self._config)
+
     def _fill(self, order: OrderState, day: date) -> OrderState:
         bar = self._bar(order.symbol, day)
         if bar is None:
             return replace(order, status="cancelled", reason="no bar on the fill day")
-        reference = self._reference(order, bar)
-        if reference is None:
+        price = self._price(order, bar)
+        if price is None:
             return replace(order, status="cancelled", reason="limit not reached")
-        price = fill_price(reference, order.side, order.symbol, self._config)
         held = self._positions.get(order.symbol)
         if order.side == "sell":
             quantity = min(order.notional / price, held.quantity if held else 0.0)

@@ -3,12 +3,14 @@
 **STRIDE** — *Systematic Trend & Risk-Integrated Daily Execution*
 A systematic trend-following trading system with volatility-based risk management.
 
-- Version: 1.4
-- Date: 2026-10-19
+- Version: 1.5
+- Date: 2026-11-17
 - Author: Jefferson Abarca
 - Status: Approved for Phase 1 (Foundations)
 
 This document is the single source of truth for the system. If code and spec disagree, the spec wins until it is explicitly changed. Any ambiguity must be raised as a question, never resolved by guessing.
+
+**Changes in 1.5** (owner accepted the proposals of `docs/design/open_questions.md` on 2026-11-17). Behaviour changes are opt-in keys whose default is the behaviour before 1.5, so no running paper instance restarts: `vol60` defined exactly and its span read from `risk.vol_span` (section 6); `strategy.stop_basis: entry_n` makes the 2N stop and the 0.5N pyramid step use the N known at the last entry, while `last_entry` stays the close of the signal day and pyramiding stays one unit per day (section 6); interest accrues actual/360 (section 9); the Sharpe denominator is the standard deviation of excess returns and a deposit counts on day t as `r_t = (E_t - F_t) / E_{t-1} - 1` (section 9); `execution.sim_limit_fill: spread_in_trigger` makes a simulated limit the final price (section 9); `risk.cap_tie_break: higher_vol_first` cuts the higher-`vol60` asset first on same-day cap ties (section 6); leveraged-ETF fees are reported as an estimate, never added to costs (section 9); the correlation window and flag live under `reporting:` (section 10). Margin in the simulator for the Kelly account (question 4) ships with task T23.
 
 **Changes in 1.4** (owner decisions on the risk-module review): leverage capacity = L_borrow × `max_etf_portfolio_leverage` with a new `allow_margin` parameter (section 7, step 2); a same-day instrument switch is allowed under three conditions (section 7, step 3); a reconciliation break now **halts** the system instead of liquidating it, and only the −40% drawdown liquidates (section 7, step 4).
 
@@ -218,7 +220,7 @@ Each asset goes through the same state machine every day after the close. The ou
 | `HH55` | Highest high of the previous 55 days (excluding t) | Turtles, system 2 |
 | `LL20` | Lowest low of the previous 20 days (excluding t) | Turtles, system 2 |
 | `N` | 20-day ATR (Wilder / exponential average of true range) | Turtles |
-| `vol60` | 60-day annualized volatility (EWMA) | Volatility targeting |
+| `vol60` | Annualized EWMA volatility of daily simple returns, zero mean, span `risk.vol_span` = 60 (a = 2/61, half-life about 21 days), weights normalized over the available history, defined after 60 returns (SPEC 1.5) | Volatility targeting |
 
 **Rules per asset, in priority order**
 
@@ -447,7 +449,7 @@ Note on commissions: with small orders, IBKR's 1%-of-trade-value cap is the bind
 | --- | --- |
 | CAGR | Compound annual growth rate (time-weighted) |
 | Volatility | Annualized std of daily returns |
-| Sharpe | (Return − risk-free) / volatility |
+| Sharpe | Mean excess return over the risk-free rate / standard deviation of excess returns, annualized (SPEC 1.5) |
 | Sortino | Like Sharpe, downside volatility only |
 | Max drawdown | Largest peak-to-trough fall |
 | Calmar | CAGR / max drawdown |

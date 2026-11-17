@@ -1,6 +1,6 @@
 # Open spec questions, collected from the PRs
 
-Status: **for the owner to decide**. Each question was left open in a merged PR; the code already does something, described under "Current code". Each has a proposed answer. Accepted answers become a SPEC 1.5 change; anything that changes `config.yaml` parameters or a human-reviewed module (`risk/leverage.py`) is done only after your go-ahead.
+Status: **decided 2026-11-17: the owner accepted every proposal below; applied in SPEC 1.5** as opt-in keys whose defaults keep the behaviour before 1.5 (`strategy.stop_basis`, `risk.vol_span`, `risk.cap_tie_break`, `execution.sim_limit_fill`, `reporting:`); question 4 ships with task T23. Original text kept for the record. Each question was left open in a merged PR; the code already does something, described under "Current code". Each has a proposed answer. Accepted answers become a SPEC 1.5 change; anything that changes `config.yaml` parameters or a human-reviewed module (`risk/leverage.py`) is done only after your go-ahead.
 
 Questions about `orders.py` and `ibkr_broker.py` are in [`execution_modules.md`](execution_modules.md) (Q1-Q8), not repeated here. Questions already answered by SPEC 1.2-1.4 (per-ETF fees, ETHU, TLT 1x -> 3x, the five risk-module questions, breaks on different symbols) are left out.
 
