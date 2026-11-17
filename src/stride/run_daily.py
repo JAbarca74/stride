@@ -216,6 +216,9 @@ class Instance:
         return f"STRIDE {self.name}" if self.name != "STRIDE" else "STRIDE"
 
 
+NOT_STARTED = "not started: waits for its first evening"
+
+
 def instance_name(config_path: Path) -> str:
     """`config.paper_b.yaml` -> "B", `config.paper_dip.yaml` -> "DIP", else "STRIDE"."""
     stem = config_path.name.removesuffix(".yaml")
@@ -409,6 +412,14 @@ class DailyJob:
         close = getattr(self._broker, "close", None)
         if callable(close):
             close()
+
+    def _not_started(self) -> bool:
+        """A brand-new instance (no equity row and no stored price yet) starts at its
+        first evening, which downloads the prices: until then there is nothing to
+        trade or reconcile, and a shadow broker cannot exist without prices."""
+        if not store.read_equity(self.conn).empty:
+            return False
+        return all(store.last_price_date(self.conn, s) is None for s in self.config.universe)
 
     def alert(self, kind: AlertKind, text: str) -> None:
         message = scrub(f"{self.inst.title}: {text}", self.secrets)
@@ -702,6 +713,8 @@ class DailyJob:
     # Morning.
 
     def morning(self, day: date) -> str:
+        if self._not_started():
+            return NOT_STARTED
         evening = previous_trading_day(day)
         held = self.positions()
         if self.inst.killed():
@@ -779,6 +792,8 @@ class DailyJob:
     # Midday and close.
 
     def midday(self, day: date) -> str:
+        if self._not_started():
+            return NOT_STARTED
         held = self.positions()
         open_orders = store.read_orders(self.conn, statuses=("pending", "sending", "unknown"))
         closes = self._stored_closes(
@@ -788,6 +803,8 @@ class DailyJob:
         return f"{len(states)} orders checked"
 
     def close(self, day: date) -> str:
+        if self._not_started():
+            return NOT_STARTED
         cancelled = self.broker.cancel_all()
         held = self.positions()
         open_orders = store.read_orders(self.conn, statuses=("pending", "sending", "unknown"))
