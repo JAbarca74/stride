@@ -408,7 +408,9 @@ def test_round_four_uses_the_twelve_month_window_and_two_levels() -> None:
 
 
 def test_round_five_is_a_twenty_percent_crypto_sleeve_without_leverage() -> None:
-    names = [n for n in v.strategy_candidates(CONFIG) if n.startswith("crypto_")]
+    names = [
+        n for n in v.strategy_candidates(CONFIG) if n.startswith("crypto_") and n not in v.ROUND_7
+    ]
     assert names == list(v.ROUND_5)
     for name in names:
         assert v.candidate_levels(name, (1.5, 2.0)) == (1.0,)
