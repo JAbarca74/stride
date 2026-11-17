@@ -19,6 +19,10 @@ Solo con `risk.allow_margin: true` (esta cuenta; B y DIP siguen siendo de contad
 - Requisito de mantenimiento: 25% del valor de cada posición, por su múltiplo en ETFs apalancados. Si el patrimonio cae por debajo, el simulador vende la posición más grande al cierre (evento `MARGIN_CALL`).
 - El guard sigue exigiendo el colchón del 25% de liquidez sobrante: es lo que limita el apalancamiento en la práctica.
 
+Una llamada de margen en esta cuenta simulada cambia posiciones sin una orden registrada, así que aparece como `RECONCILIATION_BREAK` y deja en HALT solo a esta instancia (falla segura). Si pasa, revísala antes de quitar el `HALT_KELLY`.
+
+Una instancia nueva espera a su primera tarde (18:00 de Nueva York): hasta entonces sus fases de mañana, mediodía y cierre quedan como "not started" (PR #119).
+
 ## Dónde corre
 
 En el mismo bucle de GitHub Actions (`scripts/actions_loop.sh`), después de B y DIP; un fallo suyo nunca marca el run como fallido. Su base se guarda en `JAbarca74/stride-state` con las demás.
