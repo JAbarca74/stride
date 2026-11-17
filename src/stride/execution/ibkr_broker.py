@@ -82,7 +82,7 @@ class OrderTooSmall(BrokerError):
 
 # The client is an `ib_async.IB` (or a fake with the same methods in tests): connect,
 # disconnect, isConnected, managedAccounts, accountSummary, positions,
-# qualifyContracts, reqContractDetails, placeOrder, trades, openTrades,
+# qualifyContracts, reqContractDetails, placeOrder, trades, openTrades, fills,
 # reqAllOpenOrders, reqCompletedOrders and cancelOrder.
 IbClient = Any
 
@@ -316,8 +316,18 @@ class IBKRBroker(Broker):
         return str(perm_id)
 
     def get_order(self, order_id: str) -> OrderState:
+        """The order with this `permId`: from this session's trades first, then from
+        the Gateway's open and completed orders (each phase opens a new session, so
+        a morning order is looked up again at midday and at the close)."""
         for trade in self._all_trades():
             if str(trade.order.permId) == order_id:
+                return self._state(trade)
+
+        def fetch() -> list[Any]:
+            return [*self._ib.reqAllOpenOrders(), *self._ib.reqCompletedOrders(apiOnly=True)]
+
+        for trade in self._read("get_order", fetch):
+            if str(trade.order.permId) == order_id and trade.order.account == self._account:
                 return self._state(trade)
         raise BrokerError("ibkr get_order failed: unknown order id")
 
@@ -389,6 +399,15 @@ class IBKRBroker(Broker):
             self._sizes[symbol] = (increment, min_size)
         return self._sizes[symbol]
 
+    def _commission(self, trade: Any) -> float:
+        """From the trade's own fills, or, for an order of an earlier session (whose
+        trade object has none), from the session's executions with its `permId`."""
+        if trade.fills:
+            return commission_of(trade.fills)
+        perm_id = trade.order.permId
+        fills = self._read("fills", self._ib.fills)
+        return commission_of(f for f in fills if getattr(f.execution, "permId", None) == perm_id)
+
     def _state(self, trade: Any) -> OrderState:
         order, status = trade.order, trade.orderStatus
         side: Side = "buy" if order.action == "BUY" else "sell"
@@ -409,7 +428,7 @@ class IBKRBroker(Broker):
             status=map_status(status.status),
             filled_quantity=float(status.filled or 0.0),
             average_price=price,
-            commission=commission_of(trade.fills),
+            commission=self._commission(trade),
             filled=filled_day,
             reason=str(status.status),
             client_order_id=order.orderRef or None,

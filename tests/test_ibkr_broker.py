@@ -82,6 +82,8 @@ class FakeIB:
         self.next_perm = 1000
         self.fail_place = False
         self.disconnects = 0
+        self.executions: list[Fill] = []
+        self.session_trades: list[Trade] | None = None
 
     def connect(self, host: str, port: int, **kwargs: Any) -> None:
         self.connect_args = {"host": host, "port": port, **kwargs}
@@ -122,6 +124,8 @@ class FakeIB:
         return trade
 
     def trades(self) -> list[Trade]:
+        if self.session_trades is not None:
+            return list(self.session_trades)
         return [*self.open, *self.completed]
 
     def openTrades(self) -> list[Trade]:
@@ -135,6 +139,9 @@ class FakeIB:
 
     def cancelOrder(self, order: Any) -> None:
         self.cancelled.append(order)
+
+    def fills(self) -> list[Fill]:
+        return list(self.executions)
 
 
 def _broker(
@@ -435,3 +442,27 @@ def test_live_phases_stay_refused() -> None:
     live = run_daily.Instance(instance.config_path, _live(PAPER), instance.name)
     with pytest.raises(run_daily.RunError, match="live"):
         run_daily.run_phase(live, "evening", run_daily.Deps())
+
+
+def test_get_order_of_an_earlier_session_and_its_commission() -> None:
+    morning, fake = _broker()
+    order_id = morning.submit_order("SPY", "buy", 1_000.0, client_order_id="stride-m")
+    morning.close()
+    trade = fake.open.pop()
+    trade.orderStatus.status, trade.orderStatus.filled = "Filled", 10
+    trade.orderStatus.avgFillPrice = 100.0
+    trade.fills.clear()  # a completed order from the Gateway carries no fills
+    fake.completed.append(trade)
+    fake.session_trades = []  # the new session has no trades of its own
+    execution = Execution(permId=trade.order.permId)
+    fake.executions = [
+        Fill(Contract(), execution, CommissionReport(commission=0.35), datetime.now(UTC)),
+        Fill(Contract(), execution, CommissionReport(commission=0.10), datetime.now(UTC)),
+        Fill(Contract(), Execution(permId=1), CommissionReport(commission=9.0), datetime.now(UTC)),
+    ]
+    midday, _ = _broker(fake)
+    state = midday.get_order(order_id)
+    assert (state.status, state.filled_quantity) == ("filled", 10)
+    assert state.commission == pytest.approx(0.45)
+    with pytest.raises(BrokerError, match="unknown order id"):
+        midday.get_order("424242")
