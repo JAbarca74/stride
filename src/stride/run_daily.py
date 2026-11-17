@@ -404,6 +404,12 @@ class DailyJob:
             self._broker = self.deps.broker(self.config, self.secrets, self.conn)
         return self._broker
 
+    def close_broker(self) -> None:
+        """Disconnect a broker that holds a connection (IBKR: one per phase)."""
+        close = getattr(self._broker, "close", None)
+        if callable(close):
+            close()
+
     def alert(self, kind: AlertKind, text: str) -> None:
         message = scrub(f"{self.inst.title}: {text}", self.secrets)
         try:
@@ -874,6 +880,7 @@ def run_phase(
     elif day is None:
         day = phase_day(phase, now)
     conn = store.connect(instance.db)
+    job: DailyJob | None = None
     try:
         pending = [(d, p) for d, p in due if not store.run_done(conn, d, p)]
         if due and pending:
@@ -909,6 +916,8 @@ def run_phase(
         logger.info("%s: %s %s ok: %s", instance.name, phase, day, scrub(detail, secrets))
         return 0
     finally:
+        if job is not None:
+            job.close_broker()
         conn.close()
 
 
@@ -996,6 +1005,15 @@ def default_deps(instance: Instance) -> Deps:
     )
 
 
+def stored_close(conn: sqlite3.Connection, symbol: str) -> float:
+    """The last stored close of `symbol`: the reference price of an IBKR
+    market-on-open order (design Q3). Raises when none is stored."""
+    bars = series_for(conn, symbol)
+    if bars.empty:
+        raise RunError(f"no stored close for {symbol}")
+    return float(bars.sort_index()["close"].iloc[-1])
+
+
 def traded_symbols(config: StrideConfig) -> list[str]:
     """The allocation symbols and their leveraged versions."""
     symbols = allocation_symbols(config)
@@ -1016,6 +1034,10 @@ def make_broker(config: StrideConfig, secrets: Secrets, conn: sqlite3.Connection
         raise RunError(f"no paper broker in mode {config.mode!r}")
     if config.execution.broker == "shadow":
         return ShadowBroker(config, conn, traded_symbols(config))
+    if config.execution.broker == "ibkr":
+        from stride.execution.ibkr_broker import IBKRBroker  # noqa: PLC0415 - optional extra
+
+        return IBKRBroker(config, secrets, last_close=lambda s: stored_close(conn, s))
     from stride.execution.alpaca_broker import AlpacaBroker  # noqa: PLC0415 - optional extra
 
     try:

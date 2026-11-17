@@ -37,7 +37,7 @@ DAY1, DAY2 = date(2026, 10, 22), date(2026, 10, 23)
 
 
 def _secrets(**values: str) -> Secrets:
-    return Secrets(_env_file=None, **{k: SecretStr(v) for k, v in values.items()})  # type: ignore[call-arg]
+    return Secrets(_env_file=None, **{k: SecretStr(v) for k, v in values.items()})  # type: ignore[call-arg, arg-type]
 
 
 def _paper(name: str) -> StrideConfig:

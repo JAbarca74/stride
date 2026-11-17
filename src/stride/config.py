@@ -134,7 +134,7 @@ class ExecutionConfig(_Section):
     # Paper instances (owner approval A2, 2026-10-24): the broker a paper run
     # uses ("alpaca", or "shadow": a SimBroker on the stored prices) and which
     # Alpaca paper keys in `.env` it reads (ALPACA_* or ALPACA_DIP_*).
-    broker: Literal["alpaca", "shadow"] = "alpaca"
+    broker: Literal["alpaca", "shadow", "ibkr"] = "alpaca"
     alpaca_key_env: Literal["ALPACA", "ALPACA_DIP"] = "ALPACA"
     # SPEC 1.5 (open question 8): how the simulated broker fills a limit order.
     # "limit_plus_spread": the trigger is the raw limit and the spread is added to

@@ -1,6 +1,6 @@
 # Design proposal v2: `execution/ibkr_broker.py`
 
-Status: **proposal, not approved** (2026-11-11). It replaces section 2 of
+Status: **approved and implemented** (owner go-ahead 2026-11-17, every proposal of section 9 accepted; rollout steps 1-3 in `execution/ibkr_broker.py`, `settings.py`, `run_daily.make_broker` and `config.paper_ibkr.yaml`; owner steps in `docs/handoff_ibkr.es.md`). Proposal first written 2026-11-11. It replaces section 2 of
 [`execution_modules.md`](execution_modules.md), which was written before the `Broker`
 interface gained `find_order`, `is_fractionable`, `client_order_id` and `quantity`.
 `ibkr_broker.py` is a human-reviewed module (CLAUDE.md rule 7): no code is written until
