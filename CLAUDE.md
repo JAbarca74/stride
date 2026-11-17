@@ -41,4 +41,4 @@ mypy src
 
 ## Current phase
 
-Phase 1 — Foundations (SPEC section 12). Backlog tasks T01–T07, T19, T21.
+Phase 4 — Paper trading (SPEC section 12), as of 2026-11-17. Backlog T01–T23 done. Running on GitHub Actions: B, DIP, the Kelly account (T23), MC and RISK. Built but run only by the owner: the IBKR broker (`config.paper_ibkr.yaml`, needs IB Gateway). Phase 5 (live) is the owner's step: `run_daily.run_phase` still refuses `mode: live`.
