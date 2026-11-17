@@ -244,7 +244,7 @@ class AllocationConfig(_Section):
     core: list[Ticker]
     core_leverage: Annotated[float, Field(gt=0, le=3)]  # multiplies the core weights only
     sleeve: Fraction
-    signal: Literal["hold", "trend", "breakout", "range", "dip"]
+    signal: Literal["hold", "trend", "breakout", "range", "dip", "mean_reversion"]
     trend_sma: Lookback  # trend: in while the close is above this average
     entry: Lookback  # breakout: close above the prior high; range: at the prior low
     exit: Lookback  # breakout: close below the prior low; range: at the prior high
@@ -253,6 +253,11 @@ class AllocationConfig(_Section):
     dip_drop: Fraction  # dip: buy once the close is this far below its recent high
     dip_window: Lookback  # dip: days behind that recent high
     take_profit: Fraction  # dip: sell once the close is this far above the buy close
+    # mean_reversion (round 7, docs/design/strategy_search_round7.md): in once the close
+    # is `mr_entry_z` standard deviations below the mean of the prior `mr_window`
+    # closes, out once it is back at or above that mean.
+    mr_window: Lookback = 25
+    mr_entry_z: Annotated[float, Field(gt=0, le=5)] = 2.0
     # Task T23 (the parallel Kelly account, SPEC 8 and H3): where the leverage
     # comes from. "fixed" = `leverage` (behaviour before T23); "kelly" = the
     # section 7 leverage (`risk.kelly_fraction` x L*, vol target, caps) of the

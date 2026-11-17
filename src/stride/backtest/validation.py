@@ -689,12 +689,15 @@ ROUND_3_LEVERAGE = 1.5
 ROUND_4 = ("spy_levered_12m", "qqq_levered_12m")
 ROUND_4_LEVELS = (1.5, 2.0)
 ROUND_4_SCALE_WINDOW = 252
-SEARCH_UNIVERSE_CANDIDATES = (*ROUND_2, "qqq_levered_12m", "qqq_core_dip")
+SEARCH_UNIVERSE_CANDIDATES = (*ROUND_2, "qqq_levered_12m", "qqq_core_dip", "qqq_core_mr")
 # Round 5 (docs/design/strategy_search_round5.md): 80% SPY, 20% crypto sleeve.
 ROUND_5 = ("crypto_hold", "crypto_trend", "crypto_breakout", "crypto_range", "crypto_dip")
 # Round 6 (docs/design/strategy_search_round6.md): option B, the round 4 QQQ core at
 # 1.5x with the 12-month drawdown window plus the round 5 crypto dip sleeve.
 ROUND_6 = ("qqq_core_dip",)
+# Round 7 (docs/design/strategy_search_round7.md): the owner's 25-day mean reversion
+# in place of the dip rule, on the round 5 and round 6 portfolios.
+ROUND_7 = ("crypto_mr", "qqq_core_mr")
 DSR_PASS = 0.95
 SEARCH_MAX_DRAWDOWN = 0.40
 EULER_GAMMA = 0.5772156649015329
@@ -740,6 +743,18 @@ def strategy_candidates(config: StrideConfig) -> dict[str, dict[str, object]]:
             "kelly_window": 504, "dip_drop": 0.25, "dip_window": 90, "take_profit": 0.30,
             "rebalance": "daily",
         },
+        "crypto_mr": {
+            "mode": "sleeve", "core": ["SPY"], "assets": ["IBIT", "ETHA"],
+            "sleeve": 0.20, "signal": "mean_reversion", "trend_sma": 200,
+            "entry": 55, "exit": 20, "kelly_fraction": 0.0, "kelly_window": 504,
+            "mr_window": 25, "mr_entry_z": 2.0, "rebalance": "daily",
+        },
+        "qqq_core_mr": {
+            "mode": "sleeve", "core": ["QQQ"], "core_leverage": 1.5,
+            "assets": ["IBIT", "ETHA"], "sleeve": 0.20, "signal": "mean_reversion",
+            "trend_sma": 200, "entry": 55, "exit": 20, "kelly_fraction": 0.0,
+            "kelly_window": 504, "mr_window": 25, "mr_entry_z": 2.0, "rebalance": "daily",
+        },
     }  # fmt: skip
 
 
@@ -747,7 +762,7 @@ def candidate_config(config: StrideConfig, name: str) -> StrideConfig:
     """The configuration one candidate runs with (round 2 and QQQ on the search
     universe; round 4 with the 12-month drawdown window)."""
     base = with_search_universe(config) if name in SEARCH_UNIVERSE_CANDIDATES else config
-    if name in (*ROUND_4, *ROUND_6):
+    if name in (*ROUND_4, *ROUND_6, "qqq_core_mr"):
         base = with_values(base, "experiments", dd_scale_window=ROUND_4_SCALE_WINDOW)
     return with_allocation(base, **strategy_candidates(config)[name])
 
@@ -759,7 +774,7 @@ def candidate_levels(name: str, levels: Sequence[float]) -> tuple[float, ...]:
         return (ROUND_3_LEVERAGE,)
     if name in ROUND_4:
         return ROUND_4_LEVELS
-    if name in (*ROUND_5, *ROUND_6):
+    if name in (*ROUND_5, *ROUND_6, *ROUND_7):
         return (1.0,)
     if name in ROUND_2:
         return tuple(x for x in levels if x <= ROUND_2_MAX_LEVERAGE)

@@ -259,6 +259,24 @@ def dip_on(close: pd.Series, *, drop: float, window: int, take_profit: float, tr
     return not math.isnan(bought)
 
 
+def mean_reversion_on(close: pd.Series, *, window: int, entry_z: float) -> bool:
+    """The owner's 25-day mean reversion (round 7): in once the close is `entry_z`
+    standard deviations below the mean of the prior `window` closes (day t is not
+    in its own mean), out once a close is at or above that mean. No stop."""
+    clean = close.dropna()
+    prior = clean.shift(1).rolling(window)
+    mean, std = prior.mean().to_numpy(), prior.std(ddof=1).to_numpy()
+    holding = False
+    for price, mu, sigma in zip(clean.to_numpy(), mean, std, strict=True):
+        if not (math.isfinite(mu) and math.isfinite(sigma)):
+            continue
+        if holding:
+            holding = price < mu
+        elif sigma > 0 and price <= mu - entry_z * sigma:
+            holding = True
+    return holding
+
+
 def kelly_share(close: pd.Series, risk_free: float, *, fraction: float, window: int) -> float:
     """`fraction` of the Kelly weight (excess return / variance, annualized) from
     the last `window` daily returns, clipped to [0, 1]; 1 when `fraction` is 0
@@ -292,6 +310,8 @@ def sleeve(
     dip_window: int = 90,
     take_profit: float = 0.30,
     core_leverage: float = 1.0,
+    mr_window: int = 25,
+    mr_entry_z: float = 2.0,
 ) -> dict[str, float]:
     """Core plus a sleeve: `core` assets split 1 - `share`, times `core_leverage`;
     each sleeve asset may use `share` / len(assets) while its signal is on, times
@@ -316,6 +336,8 @@ def sleeve(
             and dip_on(
                 close, drop=dip_drop, window=dip_window, take_profit=take_profit, trail=exit
             ),
+            "mean_reversion": signal == "mean_reversion"
+            and mean_reversion_on(close, window=mr_window, entry_z=mr_entry_z),
         }[signal]
         if not on:
             continue
@@ -346,6 +368,8 @@ def target_weights(  # noqa: PLR0911 - one return per mode
             dip_window=settings.dip_window,
             take_profit=settings.take_profit,
             core_leverage=settings.core_leverage,
+            mr_window=settings.mr_window,
+            mr_entry_z=settings.mr_entry_z,
         )
     if settings.mode == "hold":
         return hold(closes, risk_free, assets=settings.assets)
