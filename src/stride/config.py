@@ -66,6 +66,10 @@ class StrategyConfig(_Section):
     stop_n: Annotated[float, Field(gt=0, le=5)]
     pyramid_step_n: Annotated[float, Field(gt=0, le=5)]
     max_units_per_asset: Annotated[int, Field(ge=1, le=4)]
+    # SPEC 1.5 (open question 2): the N the 2N stop and the pyramid step use.
+    # "daily_n" = N of day t (behaviour before SPEC 1.5); "entry_n" = the N known
+    # at the last entry or add, stored with `last_entry` (the Turtle rule).
+    stop_basis: Literal["daily_n", "entry_n"] = "daily_n"
 
     @model_validator(mode="after")
     def _exit_shorter_than_entry(self) -> Self:
@@ -91,6 +95,13 @@ class RiskConfig(_Section):
     min_history_days_for_kelly: Annotated[int, Field(ge=1)]
     reconciliation_tolerance: Fraction
     reconciliation_floor_usd: NonNegative
+    # SPEC 1.5 (open question 1): EWMA span of vol60, the volatility of the vol
+    # target (`sigma_60`). 60 is the value used since SPEC 1.3.
+    vol_span: Annotated[int, Field(ge=2)] = 60
+    # SPEC 1.5 (open question 9): which unit is cut first when two assets add a
+    # unit on the same day and a cap is full. "signal_order" = the later signal
+    # (behaviour before SPEC 1.5); "higher_vol_first" = the asset with the higher vol60.
+    cap_tie_break: Literal["signal_order", "higher_vol_first"] = "signal_order"
 
     @model_validator(mode="after")
     def _consistent_limits(self) -> Self:
@@ -119,6 +130,11 @@ class ExecutionConfig(_Section):
     # Alpaca paper keys in `.env` it reads (ALPACA_* or ALPACA_DIP_*).
     broker: Literal["alpaca", "shadow"] = "alpaca"
     alpaca_key_env: Literal["ALPACA", "ALPACA_DIP"] = "ALPACA"
+    # SPEC 1.5 (open question 8): how the simulated broker fills a limit order.
+    # "limit_plus_spread": the trigger is the raw limit and the spread is added to
+    # the fill (behaviour before SPEC 1.5); "spread_in_trigger": the limit is the
+    # final price and the spread is in the trigger (a limit never fills worse).
+    sim_limit_fill: Literal["limit_plus_spread", "spread_in_trigger"] = "limit_plus_spread"
 
 
 class CashFlowsConfig(_Section):
@@ -273,6 +289,14 @@ class ExperimentsConfig(_Section):
         return self
 
 
+class ReportingConfig(_Section):
+    """Reporting parameters (SPEC 1.5, open question 10). Changing them never
+    changes a trade, so it never restarts an experiment."""
+
+    correlation_days: Annotated[int, Field(ge=20)] = 756  # 3 years of daily returns
+    correlation_flag: Fraction = 0.7  # pairs above this are flagged
+
+
 class StrideConfig(_Section):
     mode: Literal["backtest", "paper", "live"]
     universe: Annotated[list[Ticker], Field(min_length=1)]
@@ -287,6 +311,7 @@ class StrideConfig(_Section):
     costs: CostsConfig
     data: DataConfig
     experiments: ExperimentsConfig
+    reporting: ReportingConfig = ReportingConfig()
 
     @model_validator(mode="after")
     def _consistent_symbols(self) -> Self:

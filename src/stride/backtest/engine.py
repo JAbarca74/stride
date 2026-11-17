@@ -64,7 +64,12 @@ from stride.data.calendar import trading_days
 from stride.data.leveraged import rate_known_at_t_minus_1
 from stride.execution.broker import OrderState, OrderType, Side
 from stride.execution.sim_broker import SimBroker
-from stride.indicators import compute_indicators, highest_high_before, lowest_low_before
+from stride.indicators import (
+    compute_indicators,
+    ewma_volatility,
+    highest_high_before,
+    lowest_low_before,
+)
 from stride.risk import guard
 from stride.risk.kill_switch import TwrState, advance, kill_switch_decision
 from stride.risk.leverage import (
@@ -363,7 +368,7 @@ def _prepare_assets(data: MarketData, config: StrideConfig) -> dict[str, _Asset]
 
 
 def combine_systems(
-    decisions: Sequence[Decision], current: PositionState, close: float
+    decisions: Sequence[Decision], current: PositionState, close: float, n: float = math.nan
 ) -> Decision:
     """Ensemble experiment: the asset's target units are the rounded mean of the
     breakout systems' targets (half up), so an entry needs most systems to agree.
@@ -373,11 +378,24 @@ def combine_systems(
     target = math.floor(mean + 0.5)
     if target > current.units:
         rule = next(d.rule for d in decisions if d.target_units > current.units)
-        return Decision(rule, target, close)
+        return Decision(rule, target, close, n)
     if target < current.units:
         rule = next((d.rule for d in decisions if d.target_units < current.units), HOLD)
-        return Decision(rule, target, current.last_entry if target else None)
-    return Decision(HOLD, target, current.last_entry if target else None)
+        kept = current.entry_n if target else None
+        return Decision(rule, target, current.last_entry if target else None, kept)
+    kept = current.entry_n if target else None
+    return Decision(HOLD, target, current.last_entry if target else None, kept)
+
+
+def _tie_break_vol(
+    data: MarketData, config: StrideConfig, assets: Mapping[str, object]
+) -> dict[str, pd.Series]:
+    """vol60 series per asset for the cap tie-break (SPEC 1.5); empty when ties
+    keep the signal order."""
+    if config.risk.cap_tie_break != "higher_vol_first":
+        return {}
+    span = config.risk.vol_span
+    return {a: ewma_volatility(data.bars[a].sort_index()["close"], span) for a in assets}
 
 
 def _rotation_average(data: MarketData, config: StrideConfig) -> dict[pd.Timestamp, float]:
@@ -454,8 +472,8 @@ class Engine:
             s: (pd.DatetimeIndex(b.sort_index().index), b.sort_index()["close"].to_numpy(float))
             for s, b in data.bars.items()
         }
-        self.underlying = guard.underlying_map(config)
-        self.multiple = guard.multiple_map(config)
+        self.vol60 = _tie_break_vol(data, config, self.assets)
+        self.underlying, self.multiple = guard.underlying_map(config), guard.multiple_map(config)
         tradable = {s: b for s, b in data.bars.items() if s in self.underlying}
         self.broker = SimBroker(
             tradable, config, settings.initial_cash, self.days[0].date() - timedelta(days=1)
@@ -486,6 +504,14 @@ class Engine:
         self.rec = _Recorder()
 
     # Market helpers (only rows on or before the day).
+
+    def _tie_vol(self, day: pd.Timestamp) -> dict[str, float] | None:
+        """vol60 per asset on day t for the cap tie-break (SPEC 1.5), or None when
+        ties keep the signal order."""
+        if not self.vol60:
+            return None
+        known = {a: float(v.get(day, math.nan)) for a, v in self.vol60.items()}
+        return {a: v for a, v in known.items() if math.isfinite(v)}
 
     def _close(self, symbol: str, day: pd.Timestamp) -> float:
         index, values = self.closes[symbol]
@@ -650,7 +676,7 @@ class Engine:
             if decision.target_units > state.units:
                 held = sum(lot.symbol == asset for lot in lots)
                 lots += [UnitLot(day.date(), seq, asset)] * (decision.target_units - held)
-        caps = apply_caps(lots, self.config)
+        caps = apply_caps(lots, self.config, self._tie_vol(day))
         self.lots = caps.kept
         units = caps.units()
         rules = {}
@@ -658,11 +684,15 @@ class Engine:
             kept = units.get(asset, 0)
             capped = kept < decision.target_units
             if not capped:
-                self.state[asset] = PositionState(decision.target_units, decision.last_entry)
+                self.state[asset] = PositionState(
+                    decision.target_units, decision.last_entry, decision.entry_n
+                )
             elif kept == state.units:  # the add was cut: nothing changes
                 self.state[asset] = state
             else:  # cannot happen (one add per day), kept for safety
-                self.state[asset] = PositionState(kept, decision.last_entry if kept else None)
+                self.state[asset] = PositionState(
+                    kept, decision.last_entry if kept else None, decision.entry_n if kept else None
+                )
             rules[asset] = decision.rule
             close, sma200, hh55, ll20, n = row
             self.rec.signals.append(
@@ -694,8 +724,10 @@ class Engine:
             decide(close, Indicators(sma200, hh, ll, n), sys_state, self.config.strategy)
             for (hh, ll), sys_state in zip(channels, self.system_state[asset], strict=True)
         ]
-        self.system_state[asset] = [PositionState(d.target_units, d.last_entry) for d in per_system]
-        return combine_systems(per_system, state, close)
+        self.system_state[asset] = [
+            PositionState(d.target_units, d.last_entry, d.entry_n) for d in per_system
+        ]
+        return combine_systems(per_system, state, close, n)
 
     def _targets(self, day: pd.Timestamp, equity: float, blocked: set[str]) -> dict[str, float]:
         """Unlevered dollar targets from the units (SPEC 6), with the last known
@@ -718,7 +750,7 @@ class Engine:
             return 0.0
         end = self.return_rows[day] + 1 if day in self.return_rows else 0
         history = self.returns.iloc[max(end - COVARIANCE_WINDOW_DAYS, 1) : end][held]
-        return forward_volatility(weights, history)
+        return forward_volatility(weights, history, self.config.risk.vol_span)
 
     # Leverage, instruments, orders.
 

@@ -1,7 +1,9 @@
 """Correlation matrix of the universe (SPEC section 10, task T20). Pure, no I/O.
 
 Pearson correlation of daily returns over the last 3 years (756 trading days)
-up to a given day; pairs above 0.7 are flagged as highly correlated.
+up to a given day; pairs above 0.7 are flagged as highly correlated. The report
+reads both from `reporting.correlation_days` and `reporting.correlation_flag`
+(SPEC 1.5); the constants below are the defaults.
 """
 
 from __future__ import annotations
