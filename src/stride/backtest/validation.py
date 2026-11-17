@@ -907,7 +907,7 @@ def _search_markdown(results: Sequence[SearchResult]) -> list[str]:
         "",
         (
             "## 10. Pre-registered strategy search (docs/design/strategy_search.md,"
-            + " strategy_search_round2.md to strategy_search_round6.md)"
+            + " strategy_search_round2.md to strategy_search_round7.md)"
         ),
         "",
         (

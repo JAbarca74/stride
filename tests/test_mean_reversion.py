@@ -47,7 +47,7 @@ def test_needs_a_full_window() -> None:
 
 def test_reads_no_future_closes() -> None:
     rng = np.random.default_rng(3)
-    values = list(100 * np.cumprod(1 + rng.normal(0, 0.03, 300)))
+    values = [float(v) for v in 100 * np.cumprod(1 + rng.normal(0, 0.03, 300))]
     for cut in range(30, 300, 17):
         past = mean_reversion_on(_series(values[:cut]), window=25, entry_z=2.0)
         changed = [*values[:cut], *(v * 5 for v in values[cut:])]
@@ -65,9 +65,8 @@ def test_sleeve_uses_the_signal() -> None:
 
 
 def test_round_7_candidates_change_only_the_signal() -> None:
-    candidates = strategy_candidates(BASE)
     pairs = {"crypto_mr": "crypto_dip", "qqq_core_mr": "qqq_core_dip"}
-    assert set(ROUND_7) == set(pairs)
+    assert set(ROUND_7) == set(pairs) <= set(strategy_candidates(BASE))
     for name, earlier in pairs.items():
         mr = candidate_config(BASE, name).experiments
         dip = candidate_config(BASE, earlier).experiments
