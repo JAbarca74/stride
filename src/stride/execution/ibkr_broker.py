@@ -36,7 +36,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable
 from datetime import date
-from typing import Any, Protocol, TypeVar
+from typing import Any, TypeVar
 
 from ib_async import LimitOrder, MarketOrder, Order, Stock
 
@@ -80,32 +80,11 @@ class OrderTooSmall(BrokerError):
     """The order rounds below the contract's minimum size: nothing was sent."""
 
 
-class IbClient(Protocol):
-    """The `ib_async.IB` methods this broker uses (a fake implements them in tests)."""
-
-    def connect(
-        self,
-        host: str,
-        port: int,
-        *,
-        clientId: int,
-        timeout: float,
-        readonly: bool,
-        account: str,
-    ) -> Any: ...
-    def disconnect(self) -> Any: ...
-    def isConnected(self) -> bool: ...
-    def managedAccounts(self) -> list[str]: ...
-    def accountSummary(self, account: str) -> list[Any]: ...
-    def positions(self, account: str) -> list[Any]: ...
-    def qualifyContracts(self, *contracts: Any) -> list[Any]: ...
-    def reqContractDetails(self, contract: Any) -> list[Any]: ...
-    def placeOrder(self, contract: Any, order: Any) -> Any: ...
-    def trades(self) -> list[Any]: ...
-    def openTrades(self) -> list[Any]: ...
-    def reqAllOpenOrders(self) -> list[Any]: ...
-    def reqCompletedOrders(self, apiOnly: bool) -> list[Any]: ...
-    def cancelOrder(self, order: Any) -> Any: ...
+# The client is an `ib_async.IB` (or a fake with the same methods in tests): connect,
+# disconnect, isConnected, managedAccounts, accountSummary, positions,
+# qualifyContracts, reqContractDetails, placeOrder, trades, openTrades,
+# reqAllOpenOrders, reqCompletedOrders and cancelOrder.
+IbClient = Any
 
 
 def _error(call: str, exc: BaseException) -> BrokerError:

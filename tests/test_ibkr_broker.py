@@ -419,13 +419,11 @@ def test_make_broker_builds_ibkr_for_broker_ibkr(monkeypatch: pytest.MonkeyPatch
 
     built: dict[str, Any] = {}
 
-    class Recorder(IBKRBroker):
-        def __init__(
-            self, config: StrideConfig, secrets: Secrets, last_close: Any, **_: Any
-        ) -> None:
-            built["config"], built["close"] = config, last_close
+    def recorder(config: StrideConfig, secrets: Secrets, last_close: Any, **_: Any) -> Any:
+        built["config"], built["close"] = config, last_close
+        return object()
 
-    monkeypatch.setattr("stride.execution.ibkr_broker.IBKRBroker", Recorder)
+    monkeypatch.setattr("stride.execution.ibkr_broker.IBKRBroker", recorder)
     run_daily.make_broker(PAPER, _secrets(), store.connect(":memory:"))
     assert built["config"] is PAPER
     with pytest.raises(run_daily.RunError, match="no stored close"):
