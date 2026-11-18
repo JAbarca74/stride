@@ -49,7 +49,11 @@ def test_sends_a_test_message_to_the_bot() -> None:
     TelegramAlerter(FAKE_TOKEN, FAKE_CHAT, session).send(Alert("TEST", "hello"))
     [(url, payload)] = session.calls
     assert url == f"https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage"
-    assert payload == {"chat_id": FAKE_CHAT, "text": "STRIDE [paper] TEST: hello"}
+    assert payload["chat_id"] == FAKE_CHAT
+    assert payload["text"] == (
+        "STRIDE · Mensaje de prueba\n(prueba en papel: dinero simulado)\n\nhello\n\n"
+        "Qué hacer: Nada: confirma que el bot funciona."
+    )
 
 
 @pytest.mark.parametrize("outcome", [401, requests.ConnectionError(f"boom {FAKE_TOKEN}")])
@@ -74,7 +78,8 @@ def test_missing_token_is_rejected() -> None:
 def test_log_alerter_writes_a_warning(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="stride.reporting.alerts"):
         LogAlerter().send(Alert("ORDER_VETOED", "SPY too large", mode="backtest"))
-    assert "STRIDE [backtest] ORDER_VETOED: SPY too large" in caplog.text
+    assert "Una orden fue bloqueada por el control de riesgo" in caplog.text
+    assert "(simulación histórica)" in caplog.text and "SPY too large" in caplog.text
 
 
 def test_alerter_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,7 +111,7 @@ def test_cli_sends_with_configuration(
     monkeypatch.setattr("stride.reporting.alerts.requests.Session", lambda: session)
     assert main(["test"]) == 0
     assert "sent" in capsys.readouterr().out
-    assert session.calls[0][1]["text"].endswith("test message, alerts are working")
+    assert "Las alertas funcionan." in session.calls[0][1]["text"]
     session.outcome = 500
     assert main(["test"]) == 1
 
@@ -152,3 +157,13 @@ def test_log_alerter_logs_the_document(caplog: pytest.LogCaptureFixture) -> None
     with caplog.at_level(logging.WARNING):
         LogAlerter().send_document("r.html", b"", "STRIDE daily")
     assert "STRIDE daily" in caplog.text and "not sent" in caplog.text
+
+
+def test_alert_names_the_account_and_says_what_to_do() -> None:
+    text = Alert("RUN_FAILED", "No se pudo completar la mañana.", instance="STRIDE KELLY").text()
+    assert text.startswith("STRIDE KELLY · Falló una tarea del día\n")
+    assert "(prueba en papel: dinero simulado)" in text
+    assert "Qué hacer:" in text
+    assert "RUN_FAILED" not in text  # no internal codes in the title
+    live = Alert("KILL_SWITCH", "x", mode="live", instance="STRIDE B").text()
+    assert "(DINERO REAL)" in live

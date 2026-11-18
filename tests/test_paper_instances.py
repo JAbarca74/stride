@@ -294,7 +294,7 @@ def test_both_instances_run_the_same_day_without_sharing_anything(tmp_path: Path
         conn.close()
         assert run_daily.run_phase(instance, "auto", deps(instance), secrets=keys) == 0
     assert used == {"B": ["ShadowBroker"], "DIP": ["ShadowBroker"]}
-    titles = sorted(caption.split(" [")[0] for _, caption in recorder.documents)
+    titles = sorted(caption.split(" · ")[0] for _, caption in recorder.documents)
     assert titles == ["STRIDE B", "STRIDE DIP"]
     b_conn, dip_conn = store.connect(b.db), store.connect(dip.db)
     b_orders = set(store.read_orders(b_conn)["symbol"])

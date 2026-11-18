@@ -275,7 +275,7 @@ def test_first_tick_starts_the_account_and_later_ticks_replay_new_slots(tmp_path
     assert statuses == {"ok"}
     summaries = [a for a in rig.recorder.alerts if a.kind == "INFO"]
     assert len(summaries) == 1  # one summary, at the close
-    assert "equity" in summaries[0].message
+    assert "Valor de la cuenta" in summaries[0].message
 
 
 def test_a_clear_uptrend_is_bought_with_costs_and_weights_from_the_forecast(
@@ -401,8 +401,8 @@ def test_the_report_summarizes_the_account(tmp_path: Path) -> None:
     rig.tick(at(21, 30))
     lines: list[str] = []
     assert rig.job.report(lines.append) == 0
-    assert "equity" in lines[0]
-    assert "Positions" in lines[0]
+    assert "Valor de la cuenta" in lines[0]
+    assert "Posiciones" in lines[0]
 
 
 def test_a_slow_first_download_continues_over_several_ticks(tmp_path: Path) -> None:

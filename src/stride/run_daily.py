@@ -97,6 +97,7 @@ from stride.execution.kill_switch_file import (
 )
 from stride.execution.shadow_broker import ShadowBroker
 from stride.reporting import daily
+from stride.reporting import messages as msg
 from stride.reporting.alerts import Alert, Alerter, AlertError, AlertKind, alerter_from_env
 from stride.risk import guard
 from stride.risk.kill_switch import (
@@ -422,9 +423,9 @@ class DailyJob:
         return all(store.last_price_date(self.conn, s) is None for s in self.config.universe)
 
     def alert(self, kind: AlertKind, text: str) -> None:
-        message = scrub(f"{self.inst.title}: {text}", self.secrets)
+        message = scrub(text, self.secrets)
         try:
-            self.alerter.send(Alert(kind, message))
+            self.alerter.send(Alert(kind, message, mode=self.config.mode, instance=self.inst.title))
         except AlertError as exc:
             logger.warning("alert not sent: %s", scrub(str(exc), self.secrets))
 
@@ -463,7 +464,11 @@ class DailyJob:
                 raise _NoData(f"no bar for {day} after 20:00: {', '.join(missing)}") from exc
             raise
         for text in texts:
-            self.alert("DATA_FAILED", text)
+            self.alert(
+                "DATA_FAILED",
+                "Un control de calidad de los precios dio un aviso (el detalle dice si bloquea"
+                f" algún activo hoy).\nDetalle técnico: {text}",
+            )
             self.event("DATA_FAILED", text, day)
 
         data = self.market()
@@ -479,16 +484,26 @@ class DailyJob:
             twr, self.config.risk.kill_switch_dd, self._breaks(day), self._breaks_before(day)
         )
         if fire(self.conn, decision, self.inst.kill_switch):
-            self.alert("KILL_SWITCH", f"kill switch fired; drawdown {decision.drawdown:.2%}")
+            self.alert(
+                "KILL_SWITCH",
+                f"La cuenta cayó {msg.pct(decision.drawdown, signed=False)} desde su máximo"
+                f" (límite {msg.pct(self.config.risk.kill_switch_dd, signed=False)}).",
+            )
         if halt(self.conn, decision, self.inst.halt):
-            self.alert("RECONCILIATION", "halted: reconciliation breaks on two consecutive days")
+            self.alert(
+                "RECONCILIATION",
+                "Esta cuenta quedó DETENIDA (halt): sus posiciones no cuadraron con el broker"
+                " dos días seguidos. No opera hasta que se revise.",
+            )
         killed, halted = self.inst.killed(), self.inst.halted()
         drawdown = min(max(twr.drawdown, 0.0), 1.0) if math.isfinite(twr.drawdown) else 1.0
         before = store.read_table(self.conn, "risk_decisions")
         before = before[pd.DatetimeIndex(before["date"]) < pd.Timestamp(day)]
         was = float(before["drawdown"].iloc[-1]) if not before.empty else 0.0
         if drawdown >= self.config.risk.dd_delever_at > was:  # SPEC 10: crossing -20%
-            self.alert("DRAWDOWN", f"drawdown {drawdown:.2%}")
+            self.alert(
+                "DRAWDOWN", f"Caída actual desde el máximo: {msg.pct(drawdown, signed=False)}."
+            )
         if killed:
             self.broker.cancel_all()
             store.delete_unsent_orders(self.conn, day)
@@ -554,7 +569,11 @@ class DailyJob:
             return 0.0
         kind = "deposit" if change > 0 else "withdrawal"
         store.record_cash_flow(self.conn, day, abs(change), kind, "cash change without a trade")
-        self.alert("CASH_FLOW", f"{kind} detected: {abs(change):.2f} USD")
+        self.alert(
+            "CASH_FLOW",
+            f"{'Entró' if change > 0 else 'Salió'} efectivo sin una operación:"
+            f" {msg.usd(abs(change))} ({'depósito' if change > 0 else 'retiro'}).",
+        )
         return change
 
     def _advance_twr(self, day: date, equity: float, flow: float) -> TwrState:
@@ -661,7 +680,7 @@ class DailyJob:
         vetoes = [f"{o.symbol}:{o.side}:{'+'.join(d.reasons)}" for o, d in priced if not d.approved]
         for veto in vetoes:
             self.event("VETO", veto, day)
-            self.alert("ORDER_VETOED", f"order vetoed {veto}")
+            self.alert("ORDER_VETOED", f"No se envió la {msg.veto(veto)}.")
         self._risk_row(day, result.gross, BINDING, drawdown, vetoes)
         return sum(d.approved for _, d in priced)
 
@@ -730,7 +749,7 @@ class DailyJob:
                 config=self.config, limits=lambda _: False, fractionable=lambda _: True,
             )  # fmt: skip
             sent = self._submit([o for o, _ in priced], [d for _, d in priced], day)
-            self.alert("KILL_SWITCH", f"liquidation: {sent} sells sent")
+            self.alert("KILL_SWITCH", f"Se enviaron {sent} órdenes de venta para cerrar todo.")
             return f"kill switch: {sent} liquidation sells sent"
         stored = store.read_orders(self.conn, statuses=("planned", "sending", "unknown"),
                                    day=evening)  # fmt: skip
@@ -769,11 +788,16 @@ class DailyJob:
         for s in out:
             if s.status in {"failed", "unknown"}:
                 self.alert(
-                    "ORDER_PROBLEM", f"order {s.order.client_id} {s.status}: {'+'.join(s.reasons)}"
+                    "ORDER_PROBLEM",
+                    f"La {msg.side(s.order.side)} de {s.order.symbol} no se pudo confirmar"
+                    f" ({msg.reasons('+'.join(s.reasons)) or s.status}).\n"
+                    f"Detalle técnico: {s.order.client_id} {s.status}",
                 )
             if s.status == "vetoed":
                 self.alert(
-                    "ORDER_VETOED", f"vetoed at send time {s.order.symbol}: {'+'.join(s.reasons)}"
+                    "ORDER_VETOED",
+                    f"Al momento de enviarla se bloqueó la {msg.side(s.order.side)} de"
+                    f" {s.order.symbol}. Motivo: {msg.reasons('+'.join(s.reasons))}.",
                 )
         return sum(s.status == "pending" for s in out)
 
@@ -816,7 +840,11 @@ class DailyJob:
         breaks = self._reconcile(day, held, closes)
         resend = orders.mark_resends(self.conn, previous_trading_day(day))
         if resend:
-            self.alert("ORDER_PROBLEM", f"unfilled exits resent tomorrow at market: {resend}")
+            self.alert(
+                "ORDER_PROBLEM",
+                f"Unas ventas de hoy no se ejecutaron ({resend}); mañana se envían otra vez"
+                " a precio de mercado.",
+            )
         return f"{cancelled} cancelled; breaks {breaks or 'none'}; resend {resend or 'none'}"
 
     def _reconcile(
@@ -854,7 +882,11 @@ class DailyJob:
         store.save_positions(self.conn, day, expected)
         if breaks:
             self.event(RECONCILIATION_BREAK, ",".join(breaks), day)
-            self.alert("RECONCILIATION", f"reconciliation break: {', '.join(breaks)}")
+            self.alert(
+                "RECONCILIATION",
+                "Lo que el sistema esperaba tener no coincide con el broker en: "
+                f"{', '.join(breaks)}.",
+            )
         return breaks
 
 
@@ -921,13 +953,13 @@ def run_phase(
             return 0
         except _NoData as exc:
             record("no_data", str(exc))
-            job.alert("DATA_FAILED", f"no trading today: {exc}")
+            job.alert("DATA_FAILED", f"Hoy no se opera: faltan precios.\nDetalle técnico: {exc}")
             return 0
         except Exception as exc:
             text = scrub(f"{phase} failed: {type(exc).__name__}: {exc}", secrets)
             logger.error("%s: %s", instance.name, text)
             record("error", text)
-            job.alert("RUN_FAILED", text)
+            job.alert("RUN_FAILED", msg.failed(phase, f"{type(exc).__name__}: {exc}"))
             return 1
         record("ok", detail)
         logger.info("%s: %s %s ok: %s", instance.name, phase, day, scrub(detail, secrets))
