@@ -280,8 +280,10 @@ def test_first_ticks_start_the_account_and_fill_at_the_next_open(tmp_path: Path)
     assert rig.statuses() == ["ok", "ok"]
     info = [a for a in rig.recorder.alerts if a.kind == "INFO"]
     assert len(info) == 2
-    assert info[-1].message.startswith("RISK: close " + DAYS[1].isoformat())
-    assert "Weights:" in info[-1].message
+    day = DAYS[1].isoformat()
+    assert info[-1].instance == "STRIDE RISK"
+    assert info[-1].message.startswith(f"Cierre del {day[8:10]}/{day[5:7]}/{day[:4]}")
+    assert "Reparto:" in info[-1].message
 
 
 def test_a_job_that_missed_days_ends_in_the_same_account(tmp_path: Path) -> None:

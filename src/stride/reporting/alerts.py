@@ -21,6 +21,7 @@ from typing import Literal, Protocol, cast
 
 import requests
 
+from stride.reporting.messages import alert_text
 from stride.settings import load_secrets
 
 logger = logging.getLogger(__name__)
@@ -77,9 +78,12 @@ class Alert:
     kind: AlertKind
     message: str
     mode: str = "paper"
+    instance: str = ""  # "STRIDE B", "STRIDE MC", ...: the account the alert is about
 
     def text(self) -> str:
-        body = f"STRIDE [{self.mode}] {self.kind}: {self.message}"
+        """Plain Spanish for the owner (`reporting/messages.py`): the account, whether
+        the money is simulated, what happened and what to do."""
+        body = alert_text(self.kind, self.message, self.mode, self.instance)
         return body if len(body) <= MAX_LENGTH else body[: MAX_LENGTH - 3] + "..."
 
 
@@ -163,7 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stdout.write("ALERT_TELEGRAM_TOKEN and ALERT_TELEGRAM_CHAT_ID are not set in .env\n")
         return 2
     try:
-        alerter.send(Alert("TEST", "test message, alerts are working"))
+        alerter.send(Alert("TEST", "Las alertas funcionan.", instance="STRIDE"))
     except AlertError as exc:
         sys.stdout.write(f"error: {exc}\n")
         return 1

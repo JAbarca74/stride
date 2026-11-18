@@ -53,6 +53,7 @@ from stride.forecast.config import McConfig, McConfigError, load_mc_config
 from stride.forecast.returns import ReturnPanel, build_panel
 from stride.forecast.summary import Forecast
 from stride.forecast.walkforward import CostModel, Trader, forecast_at
+from stride.reporting import messages as msg
 from stride.reporting.alerts import Alert, Alerter, AlertError, AlertKind, alerter_from_env
 from stride.risk.kill_switch import KillDecision
 from stride.settings import CredentialError, load_secrets
@@ -307,7 +308,7 @@ class McJob:
     def alert(self, kind: AlertKind, text: str) -> None:
         """Send an alert tagged MC; a delivery failure is logged, never raised."""
         try:
-            self.deps.alerter(self.root).send(Alert(kind, f"MC: {text}"))
+            self.deps.alerter(self.root).send(Alert(kind, text, instance="STRIDE MC"))
         except AlertError:
             logger.warning("alert could not be delivered: %s", kind)
 
@@ -370,7 +371,7 @@ class McJob:
                     self.deps.git_hash(),
                     f"{type(exc).__name__}: {exc}",
                 )
-                self.alert("RUN_FAILED", f"unexpected {type(exc).__name__}; see the log")
+                self.alert("RUN_FAILED", msg.failed("mc", f"{type(exc).__name__} (ver el log)"))
                 out(f"STRIDE MC: unexpected error: {type(exc).__name__}")
                 return 2
             status = "no_data" if detail.startswith("no data") else "ok"
@@ -592,8 +593,9 @@ class McJob:
         if fire(conn, decision, self.kill_file):
             self.alert(
                 "KILL_SWITCH",
-                f"drawdown {drawdown:.1%} reached the {self.config.kill_switch_dd:.0%} limit; "
-                "selling everything at the next open and stopping",
+                f"La cuenta cayó {msg.pct(drawdown, signed=False)} desde su máximo y llegó al"
+                f" límite de {msg.pct(self.config.kill_switch_dd, signed=False)}: vende todo en"
+                " la próxima apertura y se detiene.",
             )
 
     # --- reports --------------------------------------------------------------
@@ -606,7 +608,7 @@ class McJob:
             " ORDER BY slot_end DESC LIMIT 1"
         ).fetchone()
         if row is None:
-            return "no equity recorded yet"
+            return "Todavía no hay valores registrados."
         state = json.loads(_read_state(conn, "trader") or "{}")
         held = [
             f"{symbol} {shares:.3f}"
@@ -621,14 +623,19 @@ class McJob:
         ).fetchone()
         started = conn.execute("SELECT MIN(slot_end) FROM mc_equity").fetchone()[0]
         total = row[1] / cfg.capital_usd - 1.0
-        text = (
-            f"close {row[0]}: equity {row[1]:.2f} USD ({total:+.2%} since the start, "
-            f"{started}), cash {row[2]:.2f}, invested {row[3]:.0%}, drawdown {row[4]:.1%}. "
-            f"Trades today: {trades[0]} (costs {trades[1]:.2f} USD). "
-            f"Positions: {', '.join(held) if held else 'none (cash)'}."
+        text = "\n".join(
+            [
+                f"Cierre del {msg.day_es(row[0])}",
+                f"Valor de la cuenta: {msg.usd(row[1])} ({msg.pct(total)} desde que empezó,"
+                f" el {msg.day_es(started)})",
+                f"En efectivo: {msg.usd(row[2])}. Invertido: {msg.pct(row[3], signed=False)}",
+                f"Caída desde el máximo: {msg.pct(row[4], signed=False)}",
+                f"Operaciones hoy: {trades[0]} (costos {msg.usd(trades[1])})",
+                f"Posiciones (acciones): {', '.join(held) or 'ninguna, todo en efectivo'}",
+            ]
         )
         if state.get("stopped"):
-            text += " STOPPED by the kill switch."
+            text += "\nDETENIDA por el freno de emergencia (STOPPED)."
         return text
 
     def report(self, out: Callable[[str], None]) -> int:

@@ -55,7 +55,9 @@ from stride.data.store import (
     read_prices,
     read_table,
 )
+from stride.reporting import messages
 from stride.reporting.alerts import Alert, AlertError, LogAlerter, alerter_from_env
+from stride.reporting.messages import SIDES, VETOES
 
 OK = "OK"
 ATTENTION = "ATENCIÓN"
@@ -64,7 +66,6 @@ KILLED = "KILL SWITCH"
 NO_RUN = "SIN CORRIDA"
 _STATUS_CLASS = {OK: "ok", ATTENTION: "warn", HALTED: "bad", KILLED: "bad", NO_RUN: "bad"}
 
-SIDES = {"buy": "compra", "sell": "venta"}
 RULES = {
     "TREND_FILTER": "filtro de tendencia",
     "STOP_2N": "stop 2N",
@@ -72,22 +73,6 @@ RULES = {
     "ENTRY_HH55": "entrada por máximo de 55 días",
     "PYRAMID": "piramidación",
     "HOLD": "sin cambio",
-}
-VETOES = {
-    "SHORT": "vendería más de lo que se tiene",
-    "ORDER_TOO_LARGE": "orden mayor al límite por orden",
-    "TOO_MANY_ORDERS": "se llegó al máximo de órdenes del día",
-    "SAME_DAY_REVERSAL": "compra y venta del mismo activo el mismo día",
-    "MARGIN_BUFFER": "margen insuficiente",
-    "DATA_FAILED": "los datos del día no pasaron la validación",
-    "SYMBOL_BLOCKED": "símbolo bloqueado por datos",
-    "KILL_SWITCH": "kill switch activo",
-    "HALTED": "sistema detenido (halt)",
-    "UNKNOWN_SYMBOL": "símbolo desconocido",
-    "INVALID_ORDER": "orden inválida",
-    "ORDER_TOO_SMALL": "menos de una acción entera al cierre anterior",
-    "SEND_FAILED": "el envío falló y el broker no tiene la orden",
-    "SEND_UNKNOWN": "el envío falló y no se pudo confirmar con el broker",
 }
 # Order statuses that mean the order did not reach the broker (execution/orders.py).
 NOT_SENT = {
@@ -333,14 +318,32 @@ def render_daily(summary: DailySummary) -> str:
     )
 
 
+STATUS_TEXT = {
+    OK: "todo funcionó",
+    ATTENTION: 'hubo algo que revisar (ver la lista "No hecho" del archivo)',
+    HALTED: "cuenta detenida: las posiciones no cuadraban con el broker",
+    KILLED: "freno de emergencia activo: la cuenta vendió todo y está parada",
+    NO_RUN: "no hubo corrida registrada este día",
+}
+
+
 def caption(summary: DailySummary, title: str = "STRIDE") -> str:
-    """One line for the Telegram message that carries the file; `title` names the
-    instance ("STRIDE B", "STRIDE DIP")."""
-    parts = [f"{title} [{summary.mode}] {summary.day}: {summary.status}"]
+    """The Telegram message that carries the daily file, in plain Spanish; `title`
+    names the instance ("STRIDE B", "STRIDE DIP")."""
+    lines = [
+        f"{title} · Resumen del {messages.day_es(summary.day)}",
+        f"({messages.MODES.get(summary.mode, summary.mode)})",
+        "",
+        f"Estado: {summary.status}, {STATUS_TEXT.get(summary.status, '')}".rstrip(", "),
+    ]
     if summary.equity is not None:
-        parts.append(f"equity {_usd(summary.equity)} ({_pct(summary.day_return)})")
-    parts.append(f"{len(summary.done)} hechas, {len(summary.not_done)} no hechas")
-    return "; ".join(parts)
+        today = "" if summary.day_return is None else f" ({messages.pct(summary.day_return)} hoy)"
+        lines.append(f"Valor de la cuenta: {messages.usd(summary.equity)}{today}")
+    if summary.drawdown is not None and math.isfinite(summary.drawdown):
+        lines.append(f"Caída desde el máximo: {messages.pct(summary.drawdown, signed=False)}")
+    lines.append(f"Hecho hoy: {len(summary.done)}. Sin hacer o con aviso: {len(summary.not_done)}.")
+    lines.append("El detalle está en el archivo adjunto (ábrelo en el navegador).")
+    return "\n".join(lines)
 
 
 def write_daily(conn: sqlite3.Connection, day: date, mode: str, path: str | Path) -> DailySummary:
@@ -434,11 +437,19 @@ def evaluate_phase4(
         if passed
         else "Buena prueba amigo, pero el syp500 es mejor"
     )
-    message = (
-        f"{lead} ({title}, {len(window)} días hábiles): "
-        f"TWR {strategy_return:+.2%} vs SPY {spy_return:+.2%}; "
-        f"Sharpe {_num(strategy_sharpe)} vs SPY {_num(spy_sharpe)}; "
-        f"drawdown máx {max_dd:.2%}."
+    message = "\n".join(
+        [
+            f"{lead} ({title}, {len(window)} días hábiles).",
+            "",
+            f"- Ganancia de la estrategia: {messages.pct(strategy_return)} (sin contar depósitos)",
+            f"- Ganancia de SPY en los mismos días: {messages.pct(spy_return)}",
+            f"- Retorno por unidad de riesgo (Sharpe, más alto es mejor): "
+            f"{_num(strategy_sharpe)} contra {_num(spy_sharpe)} de SPY",
+            f"- Peor caída desde un máximo: {messages.pct(max_dd, signed=False)}"
+            f" (límite {messages.pct(PHASE4_MAX_DRAWDOWN, signed=False)})",
+            f"- Operación limpia (sin freno de emergencia, halt ni descuadres): "
+            f"{'sí' if clean_operations else 'no'}",
+        ]
     )
 
     return Phase4Verdict(

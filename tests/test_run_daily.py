@@ -241,7 +241,7 @@ def test_every_phase_runs_end_to_end(tmp_path: Path) -> None:
     assert list(store.read_runs(conn)["status"]) == ["ok"]
     assert len(store.read_equity(conn)) == 1
     assert not store.read_table(conn, "signals").empty
-    assert world.recorder.documents[0][1].startswith("STRIDE TEST [paper] 2026-10-22")
+    assert world.recorder.documents[0][1].startswith("STRIDE TEST · Resumen del 22/10/2026")
 
     world.at(DAY2, 9, 20)  # morning: send last evening's orders
     assert world.run() == 0

@@ -44,6 +44,7 @@ from stride.forecast.daily import build_daily_panel, eligible
 from stride.forecast.returns import ReturnPanel
 from stride.forecast.risk_walkforward import RiskTrader, step_session
 from stride.forecast.walkforward import CostModel, seed_for
+from stride.reporting import messages as msg
 from stride.reporting.alerts import Alert, Alerter, AlertError, AlertKind, alerter_from_env
 from stride.risk.kill_switch import KillDecision
 from stride.risk_paper.config import RiskPaperConfig, load_risk_config
@@ -205,7 +206,7 @@ class RiskJob:
     def alert(self, kind: AlertKind, text: str) -> None:
         """Send an alert tagged RISK; a delivery failure is logged, never raised."""
         try:
-            self.deps.alerter(self.root).send(Alert(kind, f"RISK: {text}"))
+            self.deps.alerter(self.root).send(Alert(kind, text, instance="STRIDE RISK"))
         except AlertError:
             logger.warning("alert could not be delivered: %s", kind)
 
@@ -272,7 +273,7 @@ class RiskJob:
                 logger.exception("the RISK tick failed")
                 record("error", f"{type(exc).__name__}: {exc}")
                 waiting()
-                self.alert("RUN_FAILED", f"unexpected {type(exc).__name__}; see the log")
+                self.alert("RUN_FAILED", msg.failed("risk", f"{type(exc).__name__} (ver el log)"))
                 out(f"STRIDE RISK: unexpected error: {type(exc).__name__}")
                 return 2
             no_data = detail.startswith("no data")
@@ -545,8 +546,9 @@ class RiskJob:
         if fire(conn, decision, self.kill_file):
             self.alert(
                 "KILL_SWITCH",
-                f"drawdown {drawdown:.1%} reached the {self.config.kill_switch_dd:.0%} limit; "
-                "selling everything at the next open and stopping",
+                f"La cuenta cayó {msg.pct(drawdown, signed=False)} desde su máximo y llegó al"
+                f" límite de {msg.pct(self.config.kill_switch_dd, signed=False)}: vende todo en"
+                " la próxima apertura y se detiene.",
             )
 
     # --- reports --------------------------------------------------------------
@@ -559,7 +561,7 @@ class RiskJob:
             " ORDER BY day DESC LIMIT 1"
         ).fetchone()
         if row is None:
-            return "no equity recorded yet"
+            return "Todavía no hay valores registrados."
         log = conn.execute(
             "SELECT scale, held_q01, weights FROM risk_log WHERE day = ?", (row[0],)
         ).fetchone()
@@ -574,22 +576,31 @@ class RiskJob:
         worst = conn.execute("SELECT MAX(drawdown) FROM risk_equity").fetchone()[0]
         started = conn.execute("SELECT MIN(day) FROM risk_equity").fetchone()[0]
         total = row[1] / cfg.capital_usd - 1.0
-        text = (
-            f"close {row[0]}: equity {row[1]:.2f} USD ({total:+.2%} since {started}), "
-            f"cash {row[2]:.2f}, invested {row[3]:.0%}, drawdown {row[4]:.1%} "
-            f"(worst {worst:.1%}). Fills today: {trades[0]} (costs {trades[1]:.2f} USD; "
-            f"{costs:.2f} USD since the start)."
-        )
+        lines = [
+            f"Cierre del {msg.day_es(row[0])}",
+            f"Valor de la cuenta: {msg.usd(row[1])} ({msg.pct(total)} desde que empezó,"
+            f" el {msg.day_es(started)})",
+            f"En efectivo: {msg.usd(row[2])}. Invertido: {msg.pct(row[3], signed=False)}",
+            f"Caída desde el máximo: {msg.pct(row[4], signed=False)}"
+            f" (la peor hasta ahora: {msg.pct(worst, signed=False)})",
+            f"Operaciones hoy: {trades[0]} (costos {msg.usd(trades[1])};"
+            f" {msg.usd(costs)} en total)",
+        ]
         if log is not None:
             weights: dict[str, float] = json.loads(log[2])
-            held = ", ".join(f"{symbol} {weight:.1%}" for symbol, weight in weights.items())
-            text += (
-                f" Brake factor {log[0]:.2f}; simulated 5-session loss (1% tail) of what is "
-                f"held {max(0.0, -log[1]):.1%}. Weights: {held or 'none (cash)'}."
+            held = ", ".join(
+                f"{symbol} {msg.pct(weight, signed=False)}" for symbol, weight in weights.items()
             )
+            lines += [
+                f"Freno de tendencia: {log[0]:.2f} (1 = sin freno, 0 = todo en efectivo)",
+                f"Pérdida posible en 5 sesiones en un mal escenario (1 de cada 100):"
+                f" {msg.pct(max(0.0, -log[1]), signed=False)}",
+                f"Reparto: {held or 'ninguno, todo en efectivo'}",
+            ]
+        text = "\n".join(lines)
         state = json.loads(_read_state(conn, "trader") or "{}")
         if state.get("trader", {}).get("stopped"):
-            text += " STOPPED by the kill switch."
+            text += "\nDETENIDA por el freno de emergencia (STOPPED)."
         return text
 
     def report(self, out: Callable[[str], None]) -> int:

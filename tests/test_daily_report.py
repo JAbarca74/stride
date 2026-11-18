@@ -155,9 +155,11 @@ def test_quiet_day_is_ok(tmp_path: Path) -> None:
     assert s.status == daily.OK and s.done == [] and s.not_done == [] and s.day_return is None
     html = daily.render_daily(s)
     assert "Nada que hacer hoy" in html and "Todo lo planificado se ejecutó" in html
-    assert (
-        daily.caption(s)
-        == "STRIDE [backtest] 2026-10-22: OK; equity $100.00 (n/d); 0 hechas, 0 no hechas"
+    assert daily.caption(s) == (
+        "STRIDE · Resumen del 22/10/2026\n(simulación histórica)\n\n"
+        "Estado: OK, todo funcionó\nValor de la cuenta: 100,00 USD\n"
+        "Hecho hoy: 0. Sin hacer o con aviso: 0.\n"
+        "El detalle está en el archivo adjunto (ábrelo en el navegador)."
     )
     conn.close()
 
