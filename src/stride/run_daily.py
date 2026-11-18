@@ -466,7 +466,8 @@ class DailyJob:
         for text in texts:
             self.alert(
                 "DATA_FAILED",
-                f"Un precio no pasó los controles de calidad.\nDetalle técnico: {text}",
+                "Un control de calidad de los precios dio un aviso (el detalle dice si bloquea"
+                f" algún activo hoy).\nDetalle técnico: {text}",
             )
             self.event("DATA_FAILED", text, day)
 

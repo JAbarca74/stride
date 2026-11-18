@@ -41,8 +41,10 @@ KINDS: dict[str, tuple[str, str]] = {
         "Pídele a Claude que revise el bucle de GitHub Actions.",
     ),
     "DATA_FAILED": (
-        "Problema con los precios del día",
-        "Nada: ese día no se opera con datos dudosos. Si se repite varios días, pide una revisión.",
+        "Aviso sobre los precios del día",
+        "Nada: el mensaje dice si el día (o algún activo) quedó sin operar; si no lo dice,"
+        " es solo un aviso y la cuenta opera normal. Si se repite varios días, pide una"
+        " revisión.",
     ),
     "ORDER_VETOED": (
         "Una orden fue bloqueada por el control de riesgo",
