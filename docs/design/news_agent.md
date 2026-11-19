@@ -77,3 +77,8 @@ All four must hold:
 4. at least 10 round trips (fewer cannot be judged).
 
 If they fail it is stopped (`enabled: false`). Its rules are not tuned while it runs: tuning restarts the experiment.
+
+## 8. Amendments before any backtest run (2026-11-19)
+
+- **History.** Alpaca's free news history starts on 2026-04-29: requests for March 2024, June 2025 or March 2026 return no article. The 2021-2023 / 2024-today split of section 6 is therefore impossible. The backtest covers 2026-05-06 (once 5 sessions of news exist) to the last stored bar, one window of about 140 sessions: far too short to judge an edge. It is a sanity check (do the rules fire, do the trades and costs look right), not evidence. The forward paper test of section 7 is the real test.
+- **Precision of the rules**, found on 600 recent headlines before any backtest and fixed in the code: beats and misses need an earnings word (`Q1`-`Q4`, earnings, EPS, revenue, sales, results) or an expectations word (estimate, expectations, consensus); guidance must be the company's own (not "forecast for Apple" by a bank); a regulator event needs the company to face it (faces, under, charged, accused); tickers match in capitals only (`COST` is not "cost", `CAT` is not "cat").
