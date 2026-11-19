@@ -51,7 +51,7 @@ Issues = "https://github.com/JAbarca74/stride/issues"
 stride-data = "stride.data.update:main"
 
 [project.optional-dependencies]
-alpaca = ["alpaca-py>=0.44.0"]
+alpaca = ["alpaca-py>=0.45.0"]
 ibkr = ["ib_async>=2.1.0"]
 dev = [
     "pytest>=9.2.0",
