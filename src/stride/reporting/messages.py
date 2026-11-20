@@ -83,6 +83,9 @@ PHASES = {
     "midday": "el mediodía (revisión de órdenes)",
     "close": "el cierre (cuadre con el broker)",
     "evening": "la tarde (precios del día y cálculo de órdenes)",
+    "mc": "el ciclo horario de la cartera Monte Carlo",
+    "risk": "el cierre diario de la cartera por riesgo",
+    "news": "la lectura de noticias",
 }
 
 MODES = {

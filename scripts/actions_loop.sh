@@ -34,6 +34,9 @@ while [ "$(date +%s)" -lt "$END" ]; do
     # with the DIP signals, $10,000 and margin. Like MC and RISK it never marks the run
     # as failed, and it runs after B and DIP so it can never delay them.
     python -m stride.run_daily --config config.paper_kelly.yaml --phase auto || echo "tick failed: config.paper_kelly.yaml"
+    # The news agent (docs/design/news_agent.md): reads Alpaca news every tick, trades
+    # simulated money after 18:00 New York. Never marks the run as failed.
+    python -m stride.run_news --config config.paper_news.yaml || echo "tick failed: config.paper_news.yaml"
     bash "$ROOT/scripts/save_state.sh" || FAILED=1
     # next 5-minute boundary plus 20 seconds, so a tick never lands before a window opens
     sleep $(( 300 - $(date +%s) % 300 + 20 ))

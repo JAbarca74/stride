@@ -1,0 +1,90 @@
+# STRIDE news agent (docs/design/news_agent.md, owner request 2026-11-19): a rule-based
+# reader of Alpaca/Benzinga headlines that buys and sells 40 large US stocks with
+# 10,000 simulated USD. Never sends orders. Changing a value restarts the experiment.
+
+enabled: true
+db_path: data/paper_news.db
+capital_usd: 10000
+
+# Decisions (design section 4).
+score_window_sessions: 5      # events count for this many sessions
+buy_score: 2.0                # buy at or above this score
+sell_score: -1.0              # sell at or below this score
+max_positions: 10
+position_weight: 0.10         # of equity per buy, cash only
+max_hold_sessions: 20
+stop_loss: 0.10               # sell when the previous close is this far below the entry
+kill_switch_dd: 0.20
+brake_symbol: SPY             # no new buys while its previous close is below its average
+brake_sma: 200
+decision_cutoff: "09:30"      # New York: news before this time decides the session
+
+# Costs (IBKR Pro Tiered, as the other accounts).
+spread_bps: 5
+tiered_per_share: 0.0035
+tiered_min_per_order: 0.35
+tiered_max_pct_of_value: 0.01
+tiered_third_party_per_share: 0.003
+
+# Strong events sent to Telegram right away.
+alert_points: 2.0
+
+# Event points (design section 3).
+points:
+  INSIDER_BUY: 2.0
+  STAKE_UP: 2.0
+  UPGRADE: 1.0
+  GUIDANCE_UP: 1.0
+  BEAT: 1.0
+  BUYBACK: 1.0
+  TARGET_UP: 0.5
+  TARGET_DOWN: -0.5
+  DOWNGRADE: -1.0
+  DOWNGRADE_SELL: -2.0
+  STAKE_DOWN: -1.0
+  MISS: -1.0
+  GUIDANCE_DOWN: -1.5
+  REGULATOR: -2.0
+
+# The names a headline uses for each stock (the ticker always counts too).
+universe:
+  AAPL: [Apple]
+  MSFT: [Microsoft]
+  NVDA: [NVIDIA, Nvidia]
+  AMZN: [Amazon, Amazon.com]
+  GOOGL: [Alphabet, Google]
+  META: [Meta Platforms, Meta]
+  TSLA: [Tesla]
+  AVGO: [Broadcom]
+  JPM: [JPMorgan Chase, JPMorgan, JP Morgan]
+  V: [Visa]
+  MA: [Mastercard]
+  UNH: [UnitedHealth Group, UnitedHealth]
+  XOM: [Exxon Mobil, ExxonMobil, Exxon]
+  JNJ: [Johnson & Johnson]
+  PG: [Procter & Gamble]
+  HD: [Home Depot]
+  COST: [Costco Wholesale, Costco]
+  ABBV: [AbbVie]
+  MRK: [Merck & Co, Merck]
+  PEP: [PepsiCo]
+  KO: [Coca-Cola, Coca Cola]
+  WMT: [Walmart]
+  BAC: [Bank of America, BofA]
+  CVX: [Chevron]
+  LLY: [Eli Lilly and Company, Eli Lilly, Lilly]
+  ORCL: [Oracle]
+  CRM: [Salesforce]
+  ADBE: [Adobe]
+  AMD: [Advanced Micro Devices, AMD]
+  NFLX: [Netflix]
+  INTC: [Intel]
+  CSCO: [Cisco Systems, Cisco]
+  QCOM: [Qualcomm, QUALCOMM]
+  TXN: [Texas Instruments]
+  IBM: [International Business Machines, IBM]
+  DIS: [Walt Disney, Disney]
+  NKE: [Nike]
+  MCD: [McDonald's, McDonalds]
+  CAT: [Caterpillar]
+  GS: [Goldman Sachs]
