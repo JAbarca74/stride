@@ -13,11 +13,11 @@ import json
 import logging
 import sqlite3
 import subprocess
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any
 
 import pandas as pd
 
@@ -83,12 +83,10 @@ EVENT_TEXT = {
 }
 
 
-class NewsFeed(Protocol):
-    def articles(self, symbols: Sequence[str], start: pd.Timestamp) -> Iterable[Article]: ...
-
-
-class BarSource(Protocol):
-    def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame: ...
+# The news feed is an `AlpacaNews` (`articles(symbols, start)`) and the bar source an
+# `AlpacaSource` (`fetch(symbol, start, end)`), or fakes with the same methods in tests.
+NewsFeed = Any
+BarSource = Any
 
 
 def _keys(root: Path) -> tuple[str, str]:
@@ -280,12 +278,10 @@ class NewsJob:
         return done
 
     def _download_bars(self, conn: sqlite3.Connection, target: date) -> None:
-        last = conn.execute("SELECT MAX(date) FROM news_bars").fetchone()[0]
-        start = (
-            (date.fromisoformat(last) - timedelta(days=5))
-            if last
-            else (target - timedelta(days=BAR_HISTORY_DAYS))
-        )
+        # The whole history every time: adjusted prices are revised after dividends and
+        # splits, and the 200-day brake must never mix two adjustment bases.
+        start = target - timedelta(days=BAR_HISTORY_DAYS)
+        conn.execute("DELETE FROM news_bars")
         source = self.deps.bars(self.root)
         for symbol in [*self.config.symbols, self.config.brake_symbol]:
             frame = source.fetch(symbol, start, target)

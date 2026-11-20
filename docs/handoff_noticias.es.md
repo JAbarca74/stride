@@ -15,7 +15,7 @@ Escrito en español a propósito: es para el dueño. Diseño completo (en inglé
 ## Lo que hay que saber
 
 - Las reglas confirman que la empresa es la afectada y no la que actúa: "JPMorgan baja a Expedia" no cuenta para JPMorgan.
-- Alpaca gratis solo guarda unos 7 meses de noticias, así que la prueba con el pasado fue corta (138 sesiones) y **salió mal**: -9,1% contra -2,0% de SPY. Es muy poco tiempo para concluir, pero conviene saberlo. No cambié las reglas para que el pasado saliera bien, porque eso engaña.
+- Alpaca gratis solo guarda unos 7 meses de noticias, así que la prueba con el pasado fue corta (138 sesiones) y **salió mal**: -12,2% contra -2,0% de SPY. Es muy poco tiempo para concluir, pero conviene saberlo. No cambié las reglas para que el pasado saliera bien, porque eso engaña.
 - La prueba real es hacia adelante: se juzga a las **60 sesiones** (unos 3 meses) con cuatro criterios: sin freno de emergencia, ganarle a SPY, costos bajo 2% y al menos 10 operaciones completas.
 - La SEC (avisos oficiales de compras de más de 5%) queda fuera por ahora: exige un nombre y un correo de contacto en cada consulta. Si quieres sumarla, dime qué contacto usar.
 

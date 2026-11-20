@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import pandas as pd
 import requests
@@ -23,8 +23,8 @@ RETRIES = 3
 BACKOFF_SECONDS = 2.0
 
 
-class Session(Protocol):
-    def get(self, url: str, *, params: Any, headers: Any, timeout: float) -> Any: ...
+# A `requests.Session` (or a fake with the same `get` in tests).
+Session = Any
 
 
 @dataclass(frozen=True)

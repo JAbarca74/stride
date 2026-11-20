@@ -89,10 +89,11 @@ If they fail it is stopped (`enabled: false`). Its rules are not tuned while it 
 
 | | CAGR | Sharpe | Max drawdown | Total |
 | --- | --- | --- | --- | --- |
-| news agent | -16.1% | -1.08 | 16.7% | -9.1% |
+| news agent | -21.2% | -1.50 | 17.4% | -12.2% |
 | SPY | -3.6% | -0.18 | 8.1% | -2.0% |
 | equal-weight 40 stocks | -1.0% | -0.01 | 6.7% | -0.5% |
 
-- The mechanics work: 56 buys, sells by time (27, average +3.7%), stop (13, average -12.5%, gaps at the open made several stops much worse than -10%) and score (6); costs 86 USD, 0.86% of capital.
+- The mechanics work: 56 buys, sells by time (26), stop (13; gaps at the open made several stops much worse than -10%) and score (7); costs 85 USD, 0.85% of capital.
+- Figures after the review fixes of PR #129 (exact score window in the first sessions, last known close for a missing mark). The first run, before those fixes, gave -9.1%; the fixes are corrections of the code to the design, not tuning.
 - The rules lost money in this window. Most buys reached +2 through several price-target raises (0.5 each), which tend to come after a stock already rose; stake and insider events were rare (17 and 0).
 - 138 sessions is far too short to conclude anything either way. Nothing was tuned after reading it: changing the rules now would fit them to these 7 months. The forward paper test (section 7) decides.

@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from stride.data.calendar import previous_trading_day
 from stride.news.config import NewsConfig
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -40,13 +41,15 @@ def scores(
     [cutoff of the session `score_window_sessions` before, cutoff of this one).
     `events` has columns `ts` (UTC), `symbol`, `points`."""
     end = cutoff(sessions[index], config)
-    first = max(index - config.score_window_sessions, 0)
-    start = cutoff(sessions[first], config) if index - config.score_window_sessions >= 0 else None
+    # The NYSE session `score_window_sessions` before, from the calendar, so the window is
+    # also exact during the first sessions (when `sessions` does not reach that far back).
+    earliest = sessions[index]
+    for _ in range(config.score_window_sessions):
+        earliest = previous_trading_day(earliest)
+    start = cutoff(earliest, config)
     if events.empty:
         return {}
-    window = events[events["ts"] < end]
-    if start is not None:
-        window = window[window["ts"] >= start]
+    window = events[(events["ts"] < end) & (events["ts"] >= start)]
     return {str(s): float(v) for s, v in window.groupby("symbol")["points"].sum().items()}
 
 
@@ -65,6 +68,7 @@ class Holding:
     shares: float
     entry: float  # fill price of the buy
     bought: int  # session index of the buy
+    mark: float = math.nan  # last known close; a day without a close keeps it
 
 
 @dataclass(frozen=True)
@@ -89,7 +93,10 @@ class Book:
     kill_pending: bool = False
 
     def equity(self, prices: Mapping[str, float]) -> float:
-        return self.cash + sum(h.shares * prices.get(s, h.entry) for s, h in self.holdings.items())
+        return self.cash + sum(
+            h.shares * prices.get(s, h.mark if math.isfinite(h.mark) else h.entry)
+            for s, h in self.holdings.items()
+        )
 
 
 def _fill(price: float, side: str, config: NewsConfig) -> float:
@@ -185,7 +192,12 @@ def open_session(book: Book, s: SessionInputs, config: NewsConfig) -> list[Trade
 
 def close_session(book: Book, closes: Mapping[str, float], config: NewsConfig) -> float:
     """Equity at the close; arms the kill switch for the next open when the
-    drawdown from the peak reaches `kill_switch_dd`."""
+    drawdown from the peak reaches `kill_switch_dd`. A holding without a close today
+    keeps its last known close (never its entry price)."""
+    for symbol, held in book.holdings.items():
+        price = closes.get(symbol, math.nan)
+        if math.isfinite(price) and price > 0:
+            held.mark = price
     equity = book.equity(closes)
     book.peak = max(book.peak, equity)
     if not book.stopped and book.peak > 0 and equity <= book.peak * (1 - config.kill_switch_dd):

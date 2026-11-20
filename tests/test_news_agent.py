@@ -313,3 +313,45 @@ def test_cli_report_without_database(tmp_path: Path) -> None:
 def test_config_has_no_leverage_and_every_event() -> None:
     assert CONFIG.max_positions * CONFIG.position_weight <= 1
     assert len(CONFIG.universe) == 40
+
+
+# Review fixes (Codex on #129).
+
+
+def test_first_sessions_use_the_exact_window_too() -> None:
+    # Session index 0 is 2026-11-02; 5 sessions before it is 2026-10-26.
+    ev = _events([
+        ("2026-10-27 12:00", "AAPL", 1.0),  # inside: after the cutoff of 2026-10-26
+        ("2026-10-20 12:00", "AAPL", 9.0),  # older than the window: never counts
+    ])  # fmt: skip
+    assert scores(ev, DAYS, 0, CONFIG) == {"AAPL": 1.0}
+
+
+def test_a_missing_close_keeps_the_last_mark_not_the_entry() -> None:
+    book = Book(cash=0.0, holdings={"TSLA": Holding(10.0, 100.0, 0)}, peak=1_000.0)
+    assert close_session(book, {"TSLA": 150.0}, CONFIG) == pytest.approx(1_500.0)
+    assert close_session(book, {}, CONFIG) == pytest.approx(1_500.0)  # no close today
+    assert not book.kill_pending
+
+
+def test_bars_are_refreshed_in_full_each_time(tmp_path: Path) -> None:
+    clock = {"now": datetime(2026, 11, 16, 15, 0, tzinfo=UTC)}
+    calls: list[date] = []
+
+    class Counting(FakeBars):
+        def fetch(self, symbol: str, start: date, end: date) -> pd.DataFrame:
+            calls.append(start)
+            return super().fetch(symbol, start, end)
+
+    rec = Recorder()
+    job = _job(tmp_path, clock, FakeFeed([]), rec)
+    job.deps.bars = lambda _: Counting()
+    job.run(lambda _: None)
+    for when in (
+        datetime(2026, 11, 17, 23, 30, tzinfo=UTC),
+        datetime(2026, 11, 18, 23, 30, tzinfo=UTC),
+    ):
+        clock["now"] = when
+        job.run(lambda _: None)
+    starts = sorted(set(calls))
+    assert len(starts) == 2 and all((date(2026, 11, 18) - s).days >= 400 for s in starts)
