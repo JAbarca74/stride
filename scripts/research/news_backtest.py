@@ -39,8 +39,8 @@ from stride.news.strategy import (  # noqa: E402
 )
 from stride.settings import load_secrets  # noqa: E402
 
-START = date(2021, 1, 4)
-HOLDOUT = date(2024, 1, 1)
+NEWS_START = date(2021, 1, 4)  # where the download asks from (the free plan keeps less)
+START = date(2026, 5, 6)  # design amendment 8: first session with 5 sessions of news
 BARS_START = date(2020, 1, 1)
 DB = ROOT / "data" / "news_research.db"
 
@@ -63,7 +63,7 @@ def connect() -> sqlite3.Connection:
 def download(conn: sqlite3.Connection, config: NewsConfig) -> None:
     key, secret = load_secrets(ROOT / ".env").alpaca_paper_keys("ALPACA")
     last = conn.execute("SELECT MAX(ts) FROM articles").fetchone()[0]
-    start = pd.Timestamp(last) if last else pd.Timestamp(START.isoformat(), tz="UTC")
+    start = pd.Timestamp(last) if last else pd.Timestamp(NEWS_START.isoformat(), tz="UTC")
     news = AlpacaNews(key, secret)
     count = 0
     batch: list[tuple[int, str, str, str]] = []
@@ -82,12 +82,12 @@ def download(conn: sqlite3.Connection, config: NewsConfig) -> None:
     source = AlpacaSource(api_key=key, secret_key=secret)
     for symbol in [*config.symbols, config.brake_symbol]:
         frame = source.fetch(symbol, BARS_START, date.today())
-        rows = [(symbol, d.date().isoformat(), float(o), float(c))
-                for d, o, c in zip(frame.index, frame["open"], frame["close"], strict=True)]  # fmt: skip
+        pairs = zip(frame.index, frame["open"], frame["close"], strict=True)
+        rows = [(symbol, d.date().isoformat(), float(o), float(c)) for d, o, c in pairs]
         conn.executemany("INSERT OR REPLACE INTO bars VALUES (?,?,?,?)", rows)
         conn.commit()
     print(
-        f"downloaded {count + len(batch)} new articles and bars for {len(config.symbols) + 1} symbols"
+        f"downloaded {count + len(batch)} new articles; bars for {len(config.symbols) + 1} symbols"
     )
 
 
@@ -180,12 +180,8 @@ def main() -> int:
     ev, opens, closes = load(conn, Classifier.from_config(config))
     print(f"events: {len(ev)}; by kind: {ev['kind'].value_counts().to_dict()}")
     last = opens.index.max().date()
-    for name, first, end in (
-        ("2021-2023", START, date(2023, 12, 29)),
-        ("holdout 2024-today", HOLDOUT, last),
-    ):
-        curve, trades = simulate(config, ev, opens, closes, first=first, last=end)
-        report(name, curve, trades, closes, config)
+    curve, trades = simulate(config, ev, opens, closes, first=START, last=last)
+    report("sanity window (amendment 8)", curve, trades, closes, config)
     return 0
 
 

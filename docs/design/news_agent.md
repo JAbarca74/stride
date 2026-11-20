@@ -82,3 +82,17 @@ If they fail it is stopped (`enabled: false`). Its rules are not tuned while it 
 
 - **History.** Alpaca's free news history starts on 2026-04-29: requests for March 2024, June 2025 or March 2026 return no article. The 2021-2023 / 2024-today split of section 6 is therefore impossible. The backtest covers 2026-05-06 (once 5 sessions of news exist) to the last stored bar, one window of about 140 sessions: far too short to judge an edge. It is a sanity check (do the rules fire, do the trades and costs look right), not evidence. The forward paper test of section 7 is the real test.
 - **Precision of the rules**, found on 600 recent headlines before any backtest and fixed in the code: beats and misses need an earnings word (`Q1`-`Q4`, earnings, EPS, revenue, sales, results) or an expectations word (estimate, expectations, consensus); guidance must be the company's own (not "forecast for Apple" by a bank); a regulator event needs the company to face it (faces, under, charged, accused); tickers match in capitals only (`COST` is not "cost", `CAT` is not "cat").
+
+## 9. Sanity backtest result (run once, 2026-11-19, `scripts/research/news_backtest.py`)
+
+2026-05-06 to 2026-11-19, 138 sessions, local copy of Alpaca news (13,139 articles, 832 events) and bars:
+
+| | CAGR | Sharpe | Max drawdown | Total |
+| --- | --- | --- | --- | --- |
+| news agent | -16.1% | -1.08 | 16.7% | -9.1% |
+| SPY | -3.6% | -0.18 | 8.1% | -2.0% |
+| equal-weight 40 stocks | -1.0% | -0.01 | 6.7% | -0.5% |
+
+- The mechanics work: 56 buys, sells by time (27, average +3.7%), stop (13, average -12.5%, gaps at the open made several stops much worse than -10%) and score (6); costs 86 USD, 0.86% of capital.
+- The rules lost money in this window. Most buys reached +2 through several price-target raises (0.5 each), which tend to come after a stock already rose; stake and insider events were rare (17 and 0).
+- 138 sessions is far too short to conclude anything either way. Nothing was tuned after reading it: changing the rules now would fit them to these 7 months. The forward paper test (section 7) decides.

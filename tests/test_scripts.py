@@ -111,7 +111,15 @@ def test_actions_run_uses_state_repo_and_never_live_keys() -> None:
     assert "FAILED=1" not in next(line for line in loop.splitlines() if "paper_kelly" in line)
     assert loop.index("config.paper_dip.yaml") < loop.index(kelly) < loop.index("save_state.sh")
     assert "data/paper_kelly.db" in _text("save_state.sh")
-    for name in ("config.paper_mc.yaml", "config.paper_risk.yaml", "config.paper_kelly.yaml"):
+    # And the news agent: after the others, never failing the run.
+    news = "python -m stride.run_news --config config.paper_news.yaml ||"
+    assert news in loop and loop.index(news) < loop.index("save_state.sh")
+    assert "FAILED=1" not in next(line for line in loop.splitlines() if "run_news" in line)
+    assert "data/paper_news.db" in _text("save_state.sh")
+    for name in (
+        "config.paper_mc.yaml", "config.paper_risk.yaml", "config.paper_kelly.yaml",
+        "config.paper_news.yaml",
+    ):  # fmt: skip
         assert (ROOT / name).is_file()
     setup = _text("setup_actions.ps1")
     assert "--private" in setup and "IBKR" in setup and "never copied" in setup
